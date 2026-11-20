@@ -12,6 +12,7 @@ Two 2026-11-20 documents record the postmortem of the first YoChat implementatio
 - Cite the published postmortem as `docs/evaluations/2026-11-20-yochat-postmortem/draft.md#<heading>`.
 - Cite the session as `docs/evaluations/2026-11-20-cfa-session/transcript.md`; the full tool inputs/outputs and thinking are in `session.json`.
 - Both are **external observations**, not an independent code audit. The postmortem never read the code or specs; implementation claims are the author's self-report. Keep that caveat when citing.
+- Links inside `draft.md`, `transcript.md`, and `session.json` are quoted source text, not repository links. The only local asset is the postmortem diagram `2026-11-20-yochat-postmortem/yochat-loop.png`; paths mentioned by the session's tool results may not exist in this repo.
 
 ## Redaction
 
