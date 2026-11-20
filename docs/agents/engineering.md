@@ -79,16 +79,16 @@ All waits, queues, retries, broadcasts, and background steps are bounded. Every 
 
 ## Performance
 
-- 1,000 messages end-to-end <5s on the S1 setup; cold start p50 ≤2s / p95 ≤4s (calibrate after the first spike); idle memory ≤800MB.
+- 1,000 messages end-to-end <5s on the S1 setup and idle memory ≤800MB are hard gates, not calibrated. Cold start p50 ≤2s / p95 ≤4s is measured by the shell spike and calibrated once.
 - Measure with a fixed seed, fixed data, isolated processes, and no heavy concurrent load. Report median and p95, not a single best run.
 - Performance results go into check receipts; a number in a document is not a gate.
 
 ## A-first and B fallback
 
-A-first means no Rust in our product code. The JVM-only path must prove:
+A-first means no Rust in our product code. The A-first transport/crypto spike must prove:
 
-1. S1 acceptance end to end;
-2. the security gates (key separation, E2E, signature verification, replay rejection);
-3. the performance gates above.
+1. relay-only transport with two client JVMs; 100 messages plus reconnect; 1,000 messages <5s;
+2. invitation/reply, E2E, signature verification, replay/tamper rejection, key separation;
+3. no Rust dependency.
 
-If a time-boxed spike cannot prove these, write an ADR with the evidence and switch to B: iroh/p2panda as an external sidecar with a narrow IPC contract. Do not start writing Rust in this repo as an unplanned escape hatch.
+Cold start, idle memory, SQLCipher/restart, Pekko/Electron/Laminar are separate spikes; their failures do not automatically trigger B. The final ratchet/forward-secrecy scheme is a separate design gate: the spike's symmetric chain is not the final protocol. If the named A-first gates fail, write an ADR and switch to B (iroh/p2panda sidecar, narrow IPC). If the final scheme gate fails, redesign or revisit B with a new ADR. Do not start writing Rust in this repo as an unplanned escape hatch.

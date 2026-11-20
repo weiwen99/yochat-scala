@@ -61,6 +61,20 @@ rg -o '^\s*(it|test)\(' ui/tests -g '*.test.ts' | wc -l
 | 加密篡改、重放、签名 | `core/tests/reply.rs`（2 个篡改 proptest）、`envelope.rs`（12 + 1 proptest）、`core/src/message_order/tests.rs`（7，含签名/篡改）、`protocol/tests/live_authentication.rs`（3）、`inbound_gate.rs`（10）；`authenticity.qnt`（1）、`shared_prekeys.qnt`（1）、`buffered_decryption.qnt`（3）；19 个 Kani harness | 旧 E2E 没有“篡改密文/签名被拒”的端到端场景；这一层是 S1 新契约。 |
 | Relay、发现、诊断 | `e2e/diagnostics`（4）、`log-secrets`（2）；旧 `yochat-net` 125 个 test 属性（iroh/QUIC/PKARR） | 旧传输是 p2p+relay 回退，S1 是 relay-only；只保留“内容不可读、未授权不响应、发现不发布直接地址”的性质。 |
 
+### 1.3 Quint KEEP/DROP 映射
+
+S1 只冻结 5 个新模型。下表先列每个新模型的性质来源与显式 DROP；170 个旧模型/334 条配置的逐行 KEEP/DROP 在实现期继续追加，**未签字不得 DROP**。
+
+| 新模型 | 覆盖 | 旧模型/性质来源 | 处理 | 理由 | 人签字 |
+| --- | --- | --- | --- | --- | --- |
+| `Q1` 邀请/应答 | 一次性密钥、签名、双方确认、拒绝静默 | `exchange.qnt` 的 `relationshipConsistency`、`responderFollowsInitiator`、`responderSilentWhileConfirmed`、`noBundleUsedTwice`；`shared_prekeys.qnt` 的 `noDoubleUse`；`authenticity.qnt` | `KEEP`（一对一性质）；group/welcome `OMIT` | S1 是定向邀请、两方关系；group/welcome 属 S2 | |
+| `Q2` 排序/去重 | 同作者顺序、去重、缺失检测 | `message_order.qnt`、`cursor.qnt` | `KEEP` | S1 只保证同一作者顺序 | |
+| `Q2` 跨作者全序 | GBNV 的最终全序 | `order_content.qnt`、`order_frontier.qnt` 的全序部分 | `DROP` → S2 | S1 不实现 GBNV；T1 标记为不等价，不得静默忽略 | |
+| `Q3` 等待/重发 | 超时结束、有界重发、发送方兜底 | `resend.qnt`、`send_retry.qnt`、`retransmit_dispatch.qnt` | `KEEP`（有界与截止）；history/native 批准队列 `OMIT` | S1 只保留单会话小范围重发 | |
+| `Q4` 重连 | 重连后重放未确认消息 | `handshake_reconnect.qnt`、`e2e_restart_generation.qnt`、`packet_journal.qnt` | `KEEP`（重连/journal 语义）；历史同步 `OMIT` | S1 是完整进程重启后消息仍在，不做历史同步 | |
+| `Q5` 通道重建 | 解密失败→重建→重传未确认、限频 | `rebuild.qnt` | `KEEP`（重建有界与不静默分叉）；群 epoch 细节 `OMIT` | S1 是两方 ratchet/通道重建，不是群 epoch | |
+| 无模型槽 | 身份创建、空闲自动锁定 | `identity_creation.qnt`、`idle_autolock.qnt` | `REWRITE` 为 Scala 属性 | 5 个协议模型没有这两个槽位；是否加模型预算需人裁决 | |
+
 ## 2. 40 条 S1 需求映射
 
 需求 ID 省略公共前缀 `REQ_20260918_`。旧测试计数是声明数，不是运行数。40 行中有 34 行 `FULL`、5 行 `PARTIAL`、1 行 `NOT YET`；`PARTIAL`/`NOT YET` 表示尚未逐测试清点，不能当作已完成映射。
@@ -150,7 +164,7 @@ rg -o '^\s*(it|test)\(' ui/tests -g '*.test.ts' | wc -l
 | 篡改密文/签名/重放被拒（契约 #10/#11），单元/模型层 | `reply.rs` 2 个篡改 proptest；`envelope.rs` 12 + proptest；`message_order/tests.rs` 7；`live_authentication.rs` 3；`inbound_gate.rs` 10；19 个 Kani harness；`authenticity.qnt`、`shared_prekeys.qnt`、`buffered_decryption.qnt` | Rust prop + Quint + Kani | `VEC-tamper`；`SM-crypto-reject`；`E2E#10/#11` | `PORT` | 属性与向量层可移植；Kani 层无 Scala 等价，记 `GAP` 并用属性测试补足。 | FULL | |
 | 篡改密文/签名/重放被拒（契约 #10/#11），E2E 层 | 无旧 E2E 场景 | E2E | `E2E#10/#11` | `GAP` | 旧项目没有从真实 UI/传输注入篡改密文或签名的端到端测试；必须新增。 | FULL | |
 | 100 条有序无重复；1,000 条吞吐（契约 #7/#8） | 旧 `e2e/scale` 6（100,000 条历史）、`history-reading` 等；旧性能门不是 S1 拓扑 | E2E + perf | `E2E#7`；`E2E#8` + 性能回执 | `GAP` | 100k 属 S3；旧 scale 不是 S1 的两进程、1,000 条拓扑。T1 不把它当等价移植，性能门按 ADR-0004 单独出数值回执。 | PARTIAL | |
-| 联系人删除/拉黑（契约 #12） | `e2e/contact-removal` 3、`blocking` 3、`blocking-recovery` 2；S3 需求 `REQ_20260918_ZWMFKB381M0AKCYN`、`REQ_20260918_F7ZBKSBAC1N4KM2K`、`REQ_20260918_SD1XKGXS4DBG5ZTE` | E2E | 无 S1 计划 | `OMIT` | **不在 40 条 S1 需求里**。ADR-0003 的非目标也未包含联系人删除/拉黑；`verification.md` 的契约 #12 与 S1 范围冲突。先由人裁决：从 S1 门禁删除，或把该功能加进 S1 并补需求与测试。 | FULL | |
+| 联系人删除/拉黑（原契约 #12） | `e2e/contact-removal` 3、`blocking` 3、`blocking-recovery` 2；S3 需求 `REQ_20260918_ZWMFKB381M0AKCYN`、`REQ_20260918_F7ZBKSBAC1N4KM2K`、`REQ_20260918_SD1XKGXS4DBG5ZTE` | E2E | 无 S1 计划 | `OMIT` | **不在 40 条 S1 需求里**。ADR-0003 已把删除/拉黑列为 S3；`verification.md` 已把契约 #12 改为日志/诊断内容边界。此 OMIT 待签字。 | FULL | |
 
 ## 3. 不可移植与 S1 范围外
 
@@ -188,7 +202,7 @@ rg -o '^\s*(it|test)\(' ui/tests -g '*.test.ts' | wc -l
 
 1. **Quint 层缺口**：设计只冻结 5 个协议模型；旧 `identity_creation.qnt`（2 配置）与 `idle_autolock.qnt`（1 配置）属于 KEEP 功能但没有模型槽位。是接受“Scala 属性等价”并签字，还是把模型预算加到 7 个？
 2. **REWRITE 的等价标准**：`DCNS`、`2MTC`、`VBRZ`、`W5CA`、`P7X1`、`QZGW` 的旧测试绑定旧群棘轮/p2p/重试 job。需要逐条确认“性质等价、实现不同”可接受，还是要求更强的场景等价。
-3. **契约 #12 与 S1 范围冲突**：`verification.md` 要求联系人删除/拉黑，但 40 条 S1 与 ADR-0003 非目标都没有它。决定从 S1 门禁删除，或把删除/拉黑加入 S1（会新增表、协议状态与 S3 需求）。
+3. **契约 #12 与 S1 范围冲突**：已按 40 条 S1 清单把联系人删除/拉黑移出 S1，`verification.md` 的 #12 改为日志/诊断内容边界；`test-parity.md` 对应行改为 `OMIT`。此范围裁决待签字。
 4. **Kani 缺口**：19 个 harness 无 Scala 等价。逐条决定用哪类属性测试补足，哪些边界接受未证明；不得静默写成“已覆盖”。
 5. **等待活性口径**：`BXC7` 旧模型 `waitEventuallyEnds` 依赖 `weakFair`；新验证规则要求显式公平性前提并配安全对偶。确认“自行结束”是公平调度下的超时结束，还是要求无条件结束。
 6. **逐测试登记方式**：本文按 40 条需求映射，`FULL` 行已到文件/场景级，`PARTIAL`/`NOT YET` 行尚未逐测试登记。确认实现期按 ADR-0004 追加逐测试行，并在合入前做到无未签字的 `OMIT`/`REWRITE`。

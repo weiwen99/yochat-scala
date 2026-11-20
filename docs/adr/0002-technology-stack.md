@@ -21,19 +21,26 @@
 - **UI**：ScalaJS + Laminar，复用 CFA 的组件与协议 ADT；不做 Svelte 第二套 UI。
 - **桌面壳**：Electron 只承担窗口、通知、钥匙串、单实例与进程生命周期；业务逻辑全在 JVM 服务。
 - **存储**：SQLite；JDBC 驱动与加密方式由 spike 决定（SQLCipher native 或应用层 AEAD），不假设。
-- **密码学**：BouncyCastle 提供 Ed25519、X25519、ChaCha20-Poly1305、HKDF、Argon2id；不手写原语。邀请/应答与设备组所需的棘手状态机在 `core/` 中以纯函数实现，并有 Quint 模型与测试向量。
+- **密码学**：JDK 25 JCE 提供 Ed25519、X25519、ChaCha20-Poly1305；HKDF 用本地 RFC 5869 实现。BouncyCastle 只用于 JCE 缺少的算法（如 Argon2id）或作为经过审查的备选；不手写原语。邀请/应答与两方 ratchet 所需的状态机在 `core/` 中以纯函数实现，并有 Quint 模型与测试向量。
 - **网络（v1）**：relay-only。客户端通过 WebSocket/TCP 连接中继，中继转发密文；不做 NAT 打洞、不做直连。中继可见端点、时间、字节数，内容端到端加密。
-- **A-first**：JVM-only。若在时间盒内无法通过 S1 验收、安全门与性能门，切 B：iroh/p2panda 作为外部 sidecar，经窄 IPC 调用；产品代码仍不写 Rust。
+- **A-first**：JVM-only。若 A-first 传输/加密 spike 的命名 gate 失败，切 B：iroh/p2panda 作为外部 sidecar，经窄 IPC 调用；产品代码仍不写 Rust。冷启动/内存、存储/重启、壳/UI 的失败各自走自己的 spike 决策，不自动触发 B。
 
 ## A → B 的触发条件
 
-A 必须在计划 0001 的 spike 中证明：
+A-first **传输/加密** spike（5 人日）必须证明：
 
-1. S1 端到端验收（两台设备、100 条消息、重启、断网重连）；
-2. 安全门（密钥分离、E2E、签名验证、重放拒绝、篡改拒绝）；
-3. 性能门（1,000 条 <5s、冷启动 p50/p95、空闲内存）。
+1. relay-only 传输，两个独立 client JVM；100 条消息 + 重连；1,000 条 <5s；
+2. 安全门：邀请/应答签名、端到端加密、重放/篡改拒绝、密钥分离；
+3. 无 Rust 依赖。
 
-任一项在时间盒内无证据，写 ADR 记录证据并切 B。不得以「Rust 库更成熟」为理由在没有 spike 证据时直接切 B，也不得在 A 明显失败后继续加人日硬扛。
+以下**不是** A/B 触发项，各有自己的 spike / 设计 gate：
+
+- 冷启动 p50/p95 与空闲内存：含 Electron 壳的 shell spike；
+- SQLCipher/重启/应用锁：storage/state spike；
+- Pekko、ScalaJS/Laminar、Electron 集成：M3/M4；
+- 最终两方棘轮/前向保密：最终方案设计 gate。spike 的对称 hash chain 只是 harness，不是最终协议。
+
+只有 A-first 的三项 named gate 失败才写 ADR 记录证据并切 B。最终方案 gate 失败时，重新设计或按新 ADR 再评估 B；不得把「ratchet 做不出来」记成「JVM/relay 路线不可行」。1,000 条 <5s 与 ≤800MB 是硬门，不校准；只有冷启动按 ADR-0004 校准一次。不得以「Rust 库更成熟」为理由在没有 spike 证据时直接切 B，也不得在 A 明显失败后继续加人日硬扛。
 
 ## 备选与否决
 
@@ -46,6 +53,6 @@ A 必须在计划 0001 的 spike 中证明：
 ## 后果
 
 - v1 不是「完全 p2p」：没有中心账号服务器，但有一个中继。产品文案必须如实描述。
-- JVM + Electron 的包体与空闲内存高于 Tauri；性能门按这个形态校准。
-- SQLCipher/JDBC、JVM 群棘轮、Electron↔JVM 生命周期、Laminar 长列表都是 spike；没有通过 spike 之前不写实现。
+- JVM + Electron 的包体与空闲内存高于 Tauri；冷启动由含壳的 spike 校准一次，内存是硬门。
+- SQLCipher/JDBC、两方 ratchet/FS、Electron↔JVM 生命周期、Laminar 长列表都是 spike；没有通过 spike 之前不写实现。
 - B 是受控回退，不是第二条并行路径；同一时间只有一条网络实现。

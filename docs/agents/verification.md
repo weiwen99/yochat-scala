@@ -13,9 +13,10 @@ Three layers, each with a different job. A pass at one layer never substitutes f
 
 ## Protocol layer
 
-- Model the kept protocol surface only. v1 has one path: direct attempts fall back to a relay, single chat, write-before-send, offline retry.
+- Model the kept protocol surface only. v1 has one path: relay-only (no direct attempts, no NAT traversal), single chat, write-before-send, offline retry.
 - Time is explicit: every wait is a timeout action that can fire at any time, any number of times. Do not assume a wait eventually ends. Do not assume every device comes online.
 - Liveness properties state fairness premises; each has a safety dual that does not depend on them. Remove the fairness premise as a negative control and confirm the property is falsified.
+- `REQ_20260918_BXC7RNH3YCQZ9BQY` is read as "the wait ends under the stated fairness premise", with a safety dual. Do not claim unconditional termination.
 - Retry, rebuild, and broadcast counts are bounded in every connected epoch or sliding window.
 - After the design freezes, the model freezes. The implementation may follow the model; model edits are a separate, human-signed round with re-verification.
 - A model check needs a clear `[ok]` verdict. Exit code 0 alone, a type check, a trace sample, or a finite-state exploration is not a proof.
@@ -31,7 +32,7 @@ Quint registry: `models/checks.json` with the main module, backend, invariants, 
 
 ## Behavior contracts
 
-About 15 E2E scenarios for S1, fixed across refactors:
+14 E2E scenarios for S1, fixed across refactors:
 
 1. first invitation and reply;
 2. add contact and show it on both sides;
@@ -44,9 +45,11 @@ About 15 E2E scenarios for S1, fixed across refactors:
 9. wrong/expired invitation rejected;
 10. tampered ciphertext rejected;
 11. tampered signature rejected;
-12. contact removal / blocked sender behavior;
+12. log and diagnostics contain no message content, contact names, public keys, or key material;
 13. app lock and unlock;
 14. a message that cannot be decrypted triggers channel rebuild, not silent loss.
+
+Contact removal and blocking are S3, not S1; they are not a behavior contract for v1.
 
 Unit tests may be rewritten. Every bug fix starts with a failing case. Do not chase coverage percentages.
 
