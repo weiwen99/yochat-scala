@@ -1,0 +1,16 @@
+package build
+
+import mill.*
+import scalalib.*
+
+object spike extends ScalaModule:
+  def scalaVersion = "3.10.1"
+
+  def scalacOptions = Seq(
+    "-deprecation",
+    "-feature",
+    "-unchecked",
+    "-Werror",
+  )
+
+  def mainClass = Some("yochat.spike.SpikeMain")
