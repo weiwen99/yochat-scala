@@ -22,11 +22,20 @@ the recorded measurements.
 ## Commands
 
 ```bash
-mill spike.run crypto
-mill spike.run demo --messages 100 --reconnect
-mill spike.run demo --messages 1000
-mill spike.run demo --messages 1000 --reconnect
+./mill spike.run crypto
+./mill spike.run demo --messages 100 --reconnect
+./mill spike.run demo --messages 1000
+./mill spike.run demo --messages 1000 --reconnect
 ```
+
+## Style gates
+
+`./check.sh` is the gate: scalafmt check, scalafix check, compile with
+`-Werror`/`-Wunused:all`, the crypto harness, and a 100-message reconnect
+smoke. `./fix.sh` applies scalafix and scalafmt fixes. The spike follows the
+same Scala rules as the final project: no `var`, `while`, `null`, bare clock,
+unsafe `.get`, or `sealed trait` in main sources; protocol state transitions
+are immutable and errors use `Either`.
 
 `crypto` prints `CRYPTO_CHECKS PASS`. `demo` prints one `SPIKE ...` line and
 exits non-zero on failure. The relay/peer subcommands are used by `demo`;
@@ -44,4 +53,4 @@ external crypto review. These are separate spikes or design work.
 The A/B question is whether the JVM can provide the S1 crypto and transport
 without a Rust sidecar. Using JDK 25 JCE and JDK sockets isolates that
 question from Pekko, ScalaJS and Electron. The final service still uses Pekko;
-the final core is a pure state machine, not the mutable chains in this spike.
+the final core is a pure state machine; the spike only shows that immutable chain helpers and JDK sockets are feasible.

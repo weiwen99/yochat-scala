@@ -1,16 +1,28 @@
+//| mill-jvm-version: system
+//| mvnDeps:
+//| - "com.goyeau::mill-scalafix::0.6.2"
+//| - "ch.epfl.scala:scalafix-interfaces:0.14.9"
+
 package build
 
+import com.goyeau.mill.scalafix.ScalafixModule
 import mill.*
 import scalalib.*
+import scalalib.scalafmt.*
 
-object spike extends ScalaModule:
+object spike extends ScalaModule with ScalafmtModule with ScalafixModule:
+
   def scalaVersion = "3.10.1"
 
   def scalacOptions = Seq(
     "-deprecation",
+    "-encoding", "UTF-8",
     "-feature",
     "-unchecked",
+    "-Wunused:all",
     "-Werror",
+    "-source", "future",
+    "-Xmax-inlines", "64"
   )
 
   def mainClass = Some("yochat.spike.SpikeMain")

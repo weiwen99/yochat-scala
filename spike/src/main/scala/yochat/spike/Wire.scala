@@ -4,11 +4,10 @@ import java.io.{ByteArrayInputStream, ByteArrayOutputStream, DataInputStream, Da
 import java.nio.charset.StandardCharsets
 import java.security.KeyPair
 
-/** Binary wire formats for the spike. Lengths are bounded; the relay and
-  * clients never accept an unbounded blob.
+/** Binary wire formats for the spike. Lengths are bounded; the relay and clients never accept an unbounded blob.
   */
 object Wire:
-  private val Utf8   = StandardCharsets.UTF_8
+  private val Utf8    = StandardCharsets.UTF_8
   private val MaxBlob = 8 * 1024 * 1024
 
   def writeBytes(out: DataOutputStream, bytes: Array[Byte]): Unit =
@@ -18,7 +17,7 @@ object Wire:
   def readBytes(in: DataInputStream): Array[Byte] =
     val length = in.readInt()
     require(length >= 0 && length <= MaxBlob, s"invalid blob length $length")
-    val bytes = new Array[Byte](length)
+    val bytes  = new Array[Byte](length)
     in.readFully(bytes)
     bytes
 
@@ -49,10 +48,11 @@ object Wire:
     channelAccount: String,
     expiresAt: Long,
     ephemeralPub: Array[Byte],
-    note: String,
+    note: String
   )
 
   final case class Invitation(fields: InvitationFields, payload: Array[Byte], signature: Array[Byte]):
+
     def text: String = Crypto.base64(Wire.encode { out =>
       Wire.writeBytes(out, payload)
       Wire.writeBytes(out, signature)
@@ -61,6 +61,7 @@ object Wire:
     def hash: Array[Byte] = Crypto.sha256(payload)
 
   object Invitation:
+
     def create(
       user: KeyPair,
       device: KeyPair,
@@ -68,9 +69,9 @@ object Wire:
       channelLabel: String,
       channelAccount: String,
       expiresAt: Long,
-      note: String,
+      note: String
     ): Invitation =
-      val fields = InvitationFields(
+      val fields    = InvitationFields(
         version = 1,
         userPub = Crypto.publicBytes(user.getPublic),
         devicePub = Crypto.publicBytes(device.getPublic),
@@ -78,20 +79,22 @@ object Wire:
         channelAccount = channelAccount,
         expiresAt = expiresAt,
         ephemeralPub = Crypto.publicBytes(ephemeral.getPublic),
-        note = note,
+        note = note
       )
       val payload   = encodeInvitationPayload(fields)
       val signature = Crypto.sign(user.getPrivate, payload)
       Invitation(fields, payload, signature)
 
     def parse(text: String, now: Long): Invitation =
-      val bytes = Crypto.unbase64(text)
-      val (payload, signature) = Wire.decode(bytes) { in =>
+      val bytes     = Crypto.unbase64(text)
+      val decoded   = Wire.decode(bytes) { in =>
         (Wire.readBytes(in), Wire.readBytes(in))
       }
-      val fields = decodeInvitationPayload(payload)
+      val payload   = decoded._1
+      val signature = decoded._2
+      val fields    = decodeInvitationPayload(payload)
       require(fields.version == 1, s"unsupported invitation version ${fields.version}")
-      val verifier = Crypto.ed25519Public(fields.userPub)
+      val verifier  = Crypto.ed25519Public(fields.userPub)
       require(Crypto.verify(verifier, payload, signature), "invitation signature does not verify")
       require(fields.expiresAt > now, "invitation expired")
       Invitation(fields, payload, signature)
@@ -118,7 +121,7 @@ object Wire:
           channelAccount = Wire.readString(in),
           expiresAt = in.readLong(),
           ephemeralPub = Wire.readBytes(in),
-          note = Wire.readString(in),
+          note = Wire.readString(in)
         )
       }
 
@@ -128,10 +131,11 @@ object Wire:
     devicePub: Array[Byte],
     channelLabel: String,
     channelAccount: String,
-    note: String,
+    note: String
   )
 
   object ReplyFields:
+
     def encode(fields: ReplyFields): Array[Byte] =
       Wire.encode { out =>
         Wire.writeBytes(out, fields.invitationHash)
@@ -150,11 +154,12 @@ object Wire:
           devicePub = Wire.readBytes(in),
           channelLabel = Wire.readString(in),
           channelAccount = Wire.readString(in),
-          note = Wire.readString(in),
+          note = Wire.readString(in)
         )
       }
 
   final case class ReplyEnvelope(ephemeralPub: Array[Byte], nonce: Array[Byte], ciphertext: Array[Byte]):
+
     def text: String = Crypto.base64(Wire.encode { out =>
       Wire.writeBytes(out, ephemeralPub)
       Wire.writeBytes(out, nonce)
@@ -162,6 +167,7 @@ object Wire:
     })
 
   object ReplyEnvelope:
+
     def parse(text: String): ReplyEnvelope =
       val bytes = Crypto.unbase64(text)
       Wire.decode(bytes) { in =>
@@ -169,6 +175,7 @@ object Wire:
       }
 
   final case class Message(seq: Long, nonce: Array[Byte], ciphertext: Array[Byte]):
+
     def bytes: Array[Byte] = Wire.encode { out =>
       out.writeLong(seq)
       Wire.writeBytes(out, nonce)
@@ -176,6 +183,7 @@ object Wire:
     }
 
   object Message:
+
     def decode(bytes: Array[Byte]): Message =
       Wire.decode(bytes) { in =>
         Message(in.readLong(), Wire.readBytes(in), Wire.readBytes(in))

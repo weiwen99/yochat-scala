@@ -2,10 +2,11 @@ package yochat.spike
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
-import java.security.KeyPair
-import java.util.Arrays
-import java.util.concurrent.TimeUnit
+import java.time.{Clock, Instant}
+import java.util.concurrent.{CountDownLatch, TimeUnit}
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
+import java.util.Arrays
+
 import scala.annotation.tailrec
 import scala.jdk.CollectionConverters.*
 import scala.util.control.NonFatal
@@ -14,12 +15,13 @@ object SpikeMain:
   private val Utf8 = StandardCharsets.UTF_8
 
   def main(args: Array[String]): Unit =
+    val clock = Clock.systemUTC()
     args.toList match
-      case "crypto" :: Nil => CryptoChecks.run()
-      case "relay" :: rest  => runRelay(parseArgs(rest))
-      case "peer" :: rest   => runPeer(parseArgs(rest))
-      case "demo" :: rest   => runDemo(parseArgs(rest))
-      case _ =>
+      case "crypto" :: Nil => CryptoChecks.run(clock)
+      case "relay" :: rest => runRelay(parseArgs(rest))
+      case "peer" :: rest  => runPeer(parseArgs(rest), clock)
+      case "demo" :: rest  => runDemo(parseArgs(rest), clock)
+      case _               =>
         println(usage)
         sys.exit(2)
 
@@ -36,156 +38,198 @@ object SpikeMain:
     rest match
       case key :: value :: tail if key.startsWith("--") =>
         parseArgs(tail, acc + (key.drop(2) -> value))
-      case key :: Nil if key.startsWith("--") =>
+      case key :: Nil if key.startsWith("--")           =>
         parseArgs(Nil, acc + (key.drop(2) -> "true"))
-      case _ :: tail =>
+      case _ :: tail                                    =>
         parseArgs(tail, acc)
-      case Nil =>
+      case Nil                                          =>
         acc
 
   private def runRelay(args: Map[String, String]): Unit =
     val relay = new RelayServer(args.get("port").map(_.toInt).getOrElse(0))
     relay.start()
     println(s"RELAY_READY port=${relay.port}")
-    while true do Thread.sleep(3600_000)
+    new CountDownLatch(1).await()
 
-  private def runPeer(args: Map[String, String]): Unit =
+  private def runPeer(args: Map[String, String], clock: Clock): Unit =
     val role       = args.getOrElse("role", throw new IllegalArgumentException("--role is required"))
     val port       = args("port").toInt
     val messages   = args.getOrElse("messages", "0").toInt
-    val invitation = Wire.Invitation.parse(readFile(args("invitation")), System.currentTimeMillis())
+    val invitation = Wire.Invitation.parse(readFile(args("invitation")), Instant.now(clock).toEpochMilli())
 
     role match
-      case "bob" =>
-        val user      = Crypto.ed25519KeyPair()
-        val device    = Crypto.ed25519KeyPair()
-        val ephemeral = Crypto.x25519KeyPair()
-        val reply     = Reply.create(invitation, user, device, ephemeral, "wechat", "bob", "spike")
-        writeFile(args("reply-out"), reply.text)
+      case "bob"   => runBob(args, port, messages, invitation)
+      case "alice" => runAlice(args, port, messages, invitation)
+      case other   => throw new IllegalArgumentException(s"unknown role $other")
 
-        val receiver = new ReceiverChain(reply.session.a2b)
-        val sender   = new SenderChain(reply.session.b2a)
-        val received = new AtomicInteger(0)
-        val errors   = new AtomicReference[String](null)
-        val ref      = new ClientRef
+  private def runBob(args: Map[String, String], port: Int, messages: Int, invitation: Wire.Invitation): Unit =
+    val user      = Crypto.ed25519KeyPair()
+    val device    = Crypto.ed25519KeyPair()
+    val ephemeral = Crypto.x25519KeyPair()
+    val reply     = Reply.create(invitation, user, device, ephemeral, "wechat", "bob", "spike")
+    writeFile(args("reply-out"), reply.text)
 
-        val client = RelayClient.connect(
-          "127.0.0.1",
-          port,
-          Crypto.publicBytes(device.getPublic),
-          (from, payload) =>
-            try
-              val message = Wire.Message.decode(payload)
-              val text    = new String(MessageCrypto.decrypt(receiver, message), Utf8)
-              if text.startsWith("MSG:") then
-                received.incrementAndGet()
-                val seq = text.split(":")(1)
-                val ack = MessageCrypto.encrypt(sender, s"ACK:$seq".getBytes(Utf8))
-                if ref.client != null then ref.client.send(from, ack.bytes)
-            catch
-              case NonFatal(error) => errors.compareAndSet(null, error.toString)
-        )
-        ref.client = client
-        writeFile(args("ready"), "ready")
-        waitFor(() => received.get >= messages || errors.get != null, 30000L, "bob messages")
-        Thread.sleep(200)
-        writeFile(
-          args("result"),
-          s"received=${received.get}\nerrors=${Option(errors.get).getOrElse("")}\n",
-        )
+    val sender      = SenderChain(reply.session.b2a)
+    val receiver    = ReceiverChain(reply.session.a2b)
+    val senderRef   = new AtomicReference[SenderChain](sender)
+    val receiverRef = new AtomicReference[ReceiverChain](receiver)
+    val received    = new AtomicInteger(0)
+    val errors      = new AtomicReference[Option[String]](None)
+    val ref         = new AtomicReference[Option[RelayClient]](None)
+
+    val client = RelayClient.connect(
+      "127.0.0.1",
+      port,
+      Crypto.publicBytes(device.getPublic),
+      messageCallback(
+        receiverRef,
+        errors,
+        (from, text) =>
+          if text.startsWith("MSG:") then
+            received.incrementAndGet()
+            sendAck(senderRef, ref, from, text.split(":")(1))
+      )
+    )
+    ref.set(Some(client))
+    writeFile(args("ready"), "ready")
+    waitFor(() => received.get() >= messages || errors.get().nonEmpty, 30000L, "bob messages")
+    Thread.sleep(200)
+    writeFile(
+      args("result"),
+      s"received=${received.get()}\nerrors=${errors.get().getOrElse("")}\n"
+    )
+    client.close()
+    if errors.get().nonEmpty || received.get() < messages then sys.exit(1)
+
+  private def runAlice(args: Map[String, String], port: Int, messages: Int, invitation: Wire.Invitation): Unit =
+    val ephemeralPrivate = Crypto.x25519Private(Files.readAllBytes(Paths.get(args("ephemeral-key"))))
+    val reply            = Reply.accept(invitation, readFile(args("reply")), PrivateKeyLike(ephemeralPrivate))
+    val sender           = SenderChain(reply.session.a2b)
+    val receiver         = ReceiverChain(reply.session.b2a)
+    val receiverRef      = new AtomicReference[ReceiverChain](receiver)
+    val acked            = new AtomicInteger(0)
+    val errors           = new AtomicReference[Option[String]](None)
+    val ref              = new AtomicReference[Option[RelayClient]](None)
+
+    val client = RelayClient.connect(
+      "127.0.0.1",
+      port,
+      invitation.fields.devicePub,
+      messageCallback(
+        receiverRef,
+        errors,
+        (_, text) => if text.startsWith("ACK:") then acked.incrementAndGet()
+      )
+    )
+    ref.set(Some(client))
+    writeFile(args("ready"), "ready")
+
+    val reconnect     = args.get("reconnect").contains("true")
+    val started       = System.nanoTime()
+    val afterMessages = (1 to messages).foldLeft(sender) { (chain, index) =>
+      val encrypted = MessageCrypto.encrypt(chain, s"MSG:$index:hello".getBytes(Utf8))
+      ref.get() match
+        case Some(client) => client.send(reply.fields.devicePub, encrypted._2.bytes)
+        case None         => throw new IllegalStateException("alice client is not connected")
+      encrypted._1
+    }
+
+    waitFor(() => acked.get() >= messages || errors.get().nonEmpty, 30000L, "alice acks")
+    val elapsedMs   = (System.nanoTime() - started) / 1000000L
+    val totalSent   = if reconnect then messages + 1 else messages
+    val reconnectMs =
+      if reconnect then
         client.close()
-        if errors.get != null || received.get < messages then sys.exit(1)
-
-      case "alice" =>
-        val ephemeralPrivate = Crypto.x25519Private(Files.readAllBytes(Paths.get(args("ephemeral-key"))))
-        val reply            = Reply.accept(invitation, readFile(args("reply")), PrivateKeyLike(ephemeralPrivate))
-        val receiver         = new ReceiverChain(reply.session.b2a)
-        val sender           = new SenderChain(reply.session.a2b)
-        val acked            = new AtomicInteger(0)
-        val errors           = new AtomicReference[String](null)
-        val ref              = new ClientRef
-
-        val client = RelayClient.connect(
+        val reconnected      = RelayClient.connect(
           "127.0.0.1",
           port,
           invitation.fields.devicePub,
-          (_from, payload) =>
-            try
-              val message = Wire.Message.decode(payload)
-              val text    = new String(MessageCrypto.decrypt(receiver, message), Utf8)
-              if text.startsWith("ACK:") then acked.incrementAndGet()
-            catch
-              case NonFatal(error) => errors.compareAndSet(null, error.toString)
-        )
-        ref.client = client
-        writeFile(args("ready"), "ready")
-
-        val reconnect = args.get("reconnect").contains("true")
-        val started   = System.nanoTime()
-        var index     = 1
-        while index <= messages do
-          val message = MessageCrypto.encrypt(sender, s"MSG:$index:hello".getBytes(Utf8))
-          ref.client.send(reply.fields.devicePub, message.bytes)
-          index += 1
-
-        waitFor(() => acked.get >= messages || errors.get != null, 30000L, "alice acks")
-        val elapsedMs     = (System.nanoTime() - started) / 1000000L
-        val totalSent     = if reconnect then messages + 1 else messages
-        var reconnectMs   = 0L
-        if reconnect then
-          client.close()
-          val reconnected = RelayClient.connect(
-            "127.0.0.1",
-            port,
-            invitation.fields.devicePub,
-            (_from, payload) =>
-              try
-                val message = Wire.Message.decode(payload)
-                val text    = new String(MessageCrypto.decrypt(receiver, message), Utf8)
-                if text.startsWith("ACK:") then acked.incrementAndGet()
-              catch
-                case NonFatal(error) => errors.compareAndSet(null, error.toString)
+          messageCallback(
+            receiverRef,
+            errors,
+            (_, text) => if text.startsWith("ACK:") then acked.incrementAndGet()
           )
-          ref.client = reconnected
-          val reconnectStarted = System.nanoTime()
-          val extra            = MessageCrypto.encrypt(sender, s"MSG:$totalSent:after-reconnect".getBytes(Utf8))
-          ref.client.send(reply.fields.devicePub, extra.bytes)
-          waitFor(() => acked.get >= totalSent || errors.get != null, 30000L, "alice reconnect ack")
-          reconnectMs = (System.nanoTime() - reconnectStarted) / 1000000L
-          reconnected.close()
-        writeFile(
-          args("result"),
-          s"sent=$totalSent\nacked=${acked.get}\nelapsedMs=$elapsedMs\nreconnectMs=$reconnectMs\n" +
-            s"errors=${Option(errors.get).getOrElse("")}\n",
         )
-        client.close()
-        if errors.get != null || acked.get < totalSent then sys.exit(1)
+        ref.set(Some(reconnected))
+        val reconnectStarted = System.nanoTime()
+        val extra            = MessageCrypto.encrypt(afterMessages, s"MSG:$totalSent:after-reconnect".getBytes(Utf8))
+        ref.get().foreach(_.send(reply.fields.devicePub, extra._2.bytes))
+        waitFor(() => acked.get() >= totalSent || errors.get().nonEmpty, 30000L, "alice reconnect ack")
+        val elapsed          = (System.nanoTime() - reconnectStarted) / 1000000L
+        reconnected.close()
+        elapsed
+      else 0L
+    writeFile(
+      args("result"),
+      s"sent=$totalSent\nacked=${acked.get()}\nelapsedMs=$elapsedMs\nreconnectMs=$reconnectMs\n" +
+        s"errors=${errors.get().getOrElse("")}\n"
+    )
+    client.close()
+    if errors.get().nonEmpty || acked.get() < totalSent then sys.exit(1)
 
-      case other =>
-        throw new IllegalArgumentException(s"unknown role $other")
+  private def messageCallback(
+    receiverRef: AtomicReference[ReceiverChain],
+    errors: AtomicReference[Option[String]],
+    onText: (Array[Byte], String) => Unit
+  ): (Array[Byte], Array[Byte]) => Unit =
+    (from, payload) =>
+      try
+        val message = Wire.Message.decode(payload)
+        decryptIncoming(receiverRef, message) match
+          case Right(text) => onText(from, text)
+          case Left(error) => errors.compareAndSet(None, Some(error.toString))
+      catch case NonFatal(error) => errors.compareAndSet(None, Some(error.toString))
 
-  private def runDemo(args: Map[String, String]): Unit =
-    val messages = args.get("messages").map(_.toInt).getOrElse(1000)
+  private def decryptIncoming(
+    receiverRef: AtomicReference[ReceiverChain],
+    message: Wire.Message
+  ): Either[MessageError, String] =
+    @tailrec
+    def attempt(): Either[MessageError, String] =
+      val current = receiverRef.get()
+      MessageCrypto.decrypt(current, message) match
+        case Left(error)   => Left(error)
+        case Right(result) =>
+          if receiverRef.compareAndSet(current, result._1) then Right(new String(result._2, Utf8))
+          else attempt()
+    attempt()
+
+  private def sendAck(
+    senderRef: AtomicReference[SenderChain],
+    ref: AtomicReference[Option[RelayClient]],
+    from: Array[Byte],
+    seq: String
+  ): Unit =
+    @tailrec
+    def attempt(): Unit =
+      val current   = senderRef.get()
+      val encrypted = MessageCrypto.encrypt(current, s"ACK:$seq".getBytes(Utf8))
+      if senderRef.compareAndSet(current, encrypted._1) then ref.get().foreach(_.send(from, encrypted._2.bytes))
+      else attempt()
+    attempt()
+
+  private def runDemo(args: Map[String, String], clock: Clock): Unit =
+    val messages  = args.get("messages").map(_.toInt).getOrElse(1000)
     val reconnect = args.get("reconnect").contains("true")
     val expected  = if reconnect then messages + 1 else messages
-    CryptoChecks.run()
+    CryptoChecks.run(clock)
 
     val directory = Files.createTempDirectory("yochat-spike-")
     val relay     = new RelayServer(0)
     relay.start()
-    val port = relay.port
+    val port      = relay.port
     try
       val aliceUser      = Crypto.ed25519KeyPair()
       val aliceDevice    = Crypto.ed25519KeyPair()
       val aliceEphemeral = Crypto.x25519KeyPair()
-      val invitation = Wire.Invitation.create(
+      val invitation     = Wire.Invitation.create(
         aliceUser,
         aliceDevice,
         aliceEphemeral,
         "wechat",
         "alice",
-        System.currentTimeMillis() + 3600_000L,
-        "spike",
+        Instant.now(clock).toEpochMilli() + 3600_000L,
+        "spike"
       )
 
       val invitationFile = directory.resolve("invitation.txt")
@@ -202,41 +246,55 @@ object SpikeMain:
       val bob = startPeer(
         directory.resolve("bob.log"),
         List(
-          "--role", "bob",
-          "--port", port.toString,
-          "--invitation", invitationFile.toString,
-          "--reply-out", replyFile.toString,
-          "--messages", expected.toString,
-          "--ready", bobReady.toString,
-          "--result", bobResult.toString,
-        ),
+          "--role",
+          "bob",
+          "--port",
+          port.toString,
+          "--invitation",
+          invitationFile.toString,
+          "--reply-out",
+          replyFile.toString,
+          "--messages",
+          expected.toString,
+          "--ready",
+          bobReady.toString,
+          "--result",
+          bobResult.toString
+        )
       )
       waitFor(() => Files.exists(replyFile) && Files.exists(bobReady), 30000L, "bob reply and ready")
 
       val alice = startPeer(
         directory.resolve("alice.log"),
         List(
-          "--role", "alice",
-          "--port", port.toString,
-          "--invitation", invitationFile.toString,
-          "--ephemeral-key", ephemeralFile.toString,
-          "--reply", replyFile.toString,
-          "--messages", messages.toString,
-          "--ready", aliceReady.toString,
-          "--result", aliceResult.toString,
-        ) ++ (if reconnect then List("--reconnect", "true") else List.empty),
+          "--role",
+          "alice",
+          "--port",
+          port.toString,
+          "--invitation",
+          invitationFile.toString,
+          "--ephemeral-key",
+          ephemeralFile.toString,
+          "--reply",
+          replyFile.toString,
+          "--messages",
+          messages.toString,
+          "--ready",
+          aliceReady.toString,
+          "--result",
+          aliceResult.toString
+        ) ++ (if reconnect then List("--reconnect", "true") else List.empty)
       )
 
       val bobFinished   = bob.waitFor(60, TimeUnit.SECONDS)
       val aliceFinished = alice.waitFor(60, TimeUnit.SECONDS)
       if !bobFinished then bob.destroyForcibly()
       if !aliceFinished then alice.destroyForcibly()
-      if !bobFinished || !aliceFinished then
-        throw new RuntimeException(s"peer timeout; logs: ${directory}")
+      if !bobFinished || !aliceFinished then throw new RuntimeException(s"peer timeout; logs: ${directory}")
 
       val bobValues   = readResult(bobResult)
       val aliceValues = readResult(aliceResult)
-      val ok =
+      val ok          =
         aliceValues.get("sent").contains(expected.toString) &&
           aliceValues.get("acked").contains(expected.toString) &&
           bobValues.get("received").contains(expected.toString) &&
@@ -248,7 +306,7 @@ object SpikeMain:
           s"aliceAcked=${aliceValues.getOrElse("acked", "?")} " +
           s"elapsedMs=${aliceValues.getOrElse("elapsedMs", "?")} " +
           s"reconnectMs=${aliceValues.getOrElse("reconnectMs", "?")} " +
-          s"bobReceived=${bobValues.getOrElse("received", "?")} ok=$ok",
+          s"bobReceived=${bobValues.getOrElse("received", "?")} ok=$ok"
       )
       if !ok then
         println(s"bob log:\n${readFileOr(directory.resolve("bob.log"), "")}")
@@ -266,9 +324,15 @@ object SpikeMain:
     builder.start()
 
   private def waitFor(condition: () => Boolean, timeoutMs: Long, label: String): Unit =
-    val deadline = System.nanoTime() + timeoutMs * 1000000L
-    while !condition() && System.nanoTime() < deadline do Thread.sleep(25)
-    if !condition() then throw new RuntimeException(s"timeout waiting for $label")
+    val deadline     = System.nanoTime() + timeoutMs * 1000000L
+    @tailrec
+    def loop(): Unit =
+      if condition() then ()
+      else if System.nanoTime() >= deadline then throw new RuntimeException(s"timeout waiting for $label")
+      else
+        Thread.sleep(25)
+        loop()
+    loop()
 
   private def readFile(path: String): String =
     Files.readString(Paths.get(path)).trim
@@ -283,33 +347,41 @@ object SpikeMain:
     if Files.exists(path) then Files.readString(path) else fallback
 
   private def readResult(path: Path): Map[String, String] =
-    Files.readAllLines(path).asScala.flatMap { line =>
-      line.split("=", 2) match
-        case Array(key, value) => Some(key -> value)
-        case _                 => None
-    }.toMap
-
-  private final class ClientRef:
-    @volatile var client: RelayClient = null
+    Files
+      .readAllLines(path)
+      .asScala
+      .flatMap { line =>
+        line.split("=", 2) match
+          case Array(key, value) => Some(key -> value)
+          case _                 => None
+      }
+      .toMap
 
 object CryptoChecks:
   private val Utf8 = StandardCharsets.UTF_8
 
-  def run(): Unit =
-    val now = System.currentTimeMillis()
+  final private case class Directions(
+    aSend: SenderChain,
+    bRecv: ReceiverChain,
+    bSend: SenderChain,
+    aRecv: ReceiverChain
+  )
+
+  def run(clock: Clock): Unit =
+    val now            = Instant.now(clock).toEpochMilli()
     val aliceUser      = Crypto.ed25519KeyPair()
     val aliceDevice    = Crypto.ed25519KeyPair()
     val aliceEphemeral = Crypto.x25519KeyPair()
-    val invitation = Wire.Invitation.create(
+    val invitation     = Wire.Invitation.create(
       aliceUser,
       aliceDevice,
       aliceEphemeral,
       "wechat",
       "alice",
       now + 3600_000L,
-      "spike",
+      "spike"
     )
-    val parsed = Wire.Invitation.parse(invitation.text, now)
+    val parsed         = Wire.Invitation.parse(invitation.text, now)
     check("invitation roundtrip") {
       require(Arrays.equals(parsed.hash, invitation.hash), "invitation hash changed")
       require(Arrays.equals(parsed.fields.devicePub, Crypto.publicBytes(aliceDevice.getPublic)), "device key changed")
@@ -328,64 +400,65 @@ object CryptoChecks:
       require(
         SafetyNumber.of(Crypto.publicBytes(aliceUser.getPublic), Crypto.publicBytes(bobUser.getPublic)) ==
           SafetyNumber.of(Crypto.publicBytes(bobUser.getPublic), Crypto.publicBytes(aliceUser.getPublic)),
-        "safety number is not symmetric",
+        "safety number is not symmetric"
       )
     }
 
-    val aSend = new SenderChain(aliceReply.session.a2b)
-    val bRecv = new ReceiverChain(bobReply.session.a2b)
-    val bSend = new SenderChain(bobReply.session.b2a)
-    val aRecv = new ReceiverChain(aliceReply.session.b2a)
+    val aSend = SenderChain(aliceReply.session.a2b)
+    val bRecv = ReceiverChain(bobReply.session.a2b)
+    val bSend = SenderChain(bobReply.session.b2a)
+    val aRecv = ReceiverChain(aliceReply.session.b2a)
     check("message roundtrip") {
-      for index <- 1 to 10 do
-        val msg = MessageCrypto.encrypt(aSend, s"a-$index".getBytes(Utf8))
-        require(new String(MessageCrypto.decrypt(bRecv, msg), Utf8) == s"a-$index", "alice to bob")
-        val reply = MessageCrypto.encrypt(bSend, s"b-$index".getBytes(Utf8))
-        require(new String(MessageCrypto.decrypt(aRecv, reply), Utf8) == s"b-$index", "bob to alice")
+      (1 to 10).foldLeft(Directions(aSend, bRecv, bSend, aRecv)) { (state, index) =>
+        val a = MessageCrypto.encrypt(state.aSend, s"a-$index".getBytes(Utf8))
+        val b = MessageCrypto.decrypt(state.bRecv, a._2).getOrElse(throw new AssertionError("alice to bob failed"))
+        require(new String(b._2, Utf8) == s"a-$index", "alice to bob")
+        val c = MessageCrypto.encrypt(state.bSend, s"b-$index".getBytes(Utf8))
+        val d = MessageCrypto.decrypt(state.aRecv, c._2).getOrElse(throw new AssertionError("bob to alice failed"))
+        require(new String(d._2, Utf8) == s"b-$index", "bob to alice")
+        Directions(a._1, b._1, c._1, d._1)
+      }
     }
 
     check("tampered ciphertext") {
-      val sender   = new SenderChain(aliceReply.session.a2b)
-      val receiver = new ReceiverChain(bobReply.session.a2b)
-      val msg      = MessageCrypto.encrypt(sender, "secret".getBytes(Utf8))
-      val flipped  = msg.copy(ciphertext = flip(msg.ciphertext))
-      expectFailure("tampered ciphertext") {
-        MessageCrypto.decrypt(receiver, flipped)
-      }
+      val sender   = SenderChain(aliceReply.session.a2b)
+      val receiver = ReceiverChain(bobReply.session.a2b)
+      val message  = MessageCrypto.encrypt(sender, "secret".getBytes(Utf8))
+      val flipped  = message._2.copy(ciphertext = flip(message._2.ciphertext))
+      require(MessageCrypto.decrypt(receiver, flipped).isLeft, "tampered ciphertext must fail")
     }
 
     check("replayed message") {
-      val sender   = new SenderChain(aliceReply.session.a2b)
-      val receiver = new ReceiverChain(bobReply.session.a2b)
-      val msg      = MessageCrypto.encrypt(sender, "once".getBytes(Utf8))
-      MessageCrypto.decrypt(receiver, msg)
-      expectFailure("replay") {
-        MessageCrypto.decrypt(receiver, msg)
-      }
+      val sender   = SenderChain(aliceReply.session.a2b)
+      val receiver = ReceiverChain(bobReply.session.a2b)
+      val message  = MessageCrypto.encrypt(sender, "once".getBytes(Utf8))
+      val first    = MessageCrypto.decrypt(receiver, message._2)
+      require(first.isRight, "first decrypt must succeed")
+      val next     = first.toOption.map(_._1).getOrElse(throw new AssertionError("missing receiver state"))
+      require(MessageCrypto.decrypt(next, message._2).isLeft, "replay must fail")
     }
 
     check("out of order") {
-      val sender   = new SenderChain(aliceReply.session.a2b)
-      val receiver = new ReceiverChain(bobReply.session.a2b)
+      val sender   = SenderChain(aliceReply.session.a2b)
+      val receiver = ReceiverChain(bobReply.session.a2b)
       val first    = MessageCrypto.encrypt(sender, "1".getBytes(Utf8))
-      val second   = MessageCrypto.encrypt(sender, "2".getBytes(Utf8))
-      val third    = MessageCrypto.encrypt(sender, "3".getBytes(Utf8))
-      require(new String(MessageCrypto.decrypt(receiver, first), Utf8) == "1", "first")
-      require(new String(MessageCrypto.decrypt(receiver, third), Utf8) == "3", "third")
-      require(new String(MessageCrypto.decrypt(receiver, second), Utf8) == "2", "second")
-      expectFailure("replayed skipped message") {
-        MessageCrypto.decrypt(receiver, second)
-      }
+      val second   = MessageCrypto.encrypt(first._1, "2".getBytes(Utf8))
+      val third    = MessageCrypto.encrypt(second._1, "3".getBytes(Utf8))
+      val opened1  = MessageCrypto.decrypt(receiver, first._2).getOrElse(throw new AssertionError("first"))
+      require(new String(opened1._2, Utf8) == "1", "first")
+      val opened3  = MessageCrypto.decrypt(opened1._1, third._2).getOrElse(throw new AssertionError("third"))
+      require(new String(opened3._2, Utf8) == "3", "third")
+      val opened2  = MessageCrypto.decrypt(opened3._1, second._2).getOrElse(throw new AssertionError("second"))
+      require(new String(opened2._2, Utf8) == "2", "second")
+      require(MessageCrypto.decrypt(opened2._1, second._2).isLeft, "replayed skipped message must fail")
     }
 
     check("wrong key") {
-      val sender   = new SenderChain(aliceReply.session.a2b)
+      val sender   = SenderChain(aliceReply.session.a2b)
       val wrongKey = Crypto.hkdf(aliceReply.session.root, Array.emptyByteArray, "wrong", 32)
-      val receiver = new ReceiverChain(wrongKey)
-      val msg      = MessageCrypto.encrypt(sender, "wrong".getBytes(Utf8))
-      expectFailure("wrong key") {
-        MessageCrypto.decrypt(receiver, msg)
-      }
+      val receiver = ReceiverChain(wrongKey)
+      val message  = MessageCrypto.encrypt(sender, "wrong".getBytes(Utf8))
+      require(MessageCrypto.decrypt(receiver, message._2).isLeft, "wrong key must fail")
     }
 
     check("expired invitation") {
@@ -419,12 +492,11 @@ object CryptoChecks:
         throw error
 
   private def expectFailure(name: String)(body: => Any): Unit =
-    var failed = false
-    try
-      body
-      ()
-    catch
-      case NonFatal(_) => failed = true
+    val failed =
+      try
+        body
+        false
+      catch case NonFatal(_) => true
     if !failed then throw new AssertionError(s"$name did not fail")
 
   private def flip(bytes: Array[Byte]): Array[Byte] =

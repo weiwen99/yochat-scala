@@ -3,18 +3,23 @@ package yochat.spike
 import java.io.{DataInputStream, DataOutputStream}
 import java.net.{ServerSocket, Socket}
 import java.util.concurrent.{ConcurrentHashMap, CountDownLatch, Executors, TimeUnit}
+import java.util.concurrent.atomic.AtomicReference
+
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-/** Length-prefixed TCP frames. The relay only routes by device public key; it
-  * never sees the message keys or plaintext. There is no authentication or
-  * authorization in this spike; that is a known limitation.
+final case class RelayFrame(kind: Byte, body: Array[Byte])
+
+final case class RelayData(address: Array[Byte], payload: Array[Byte])
+
+/** Length-prefixed TCP frames. The relay only routes by device public key; it never sees the message keys or plaintext. There is no
+  * authentication or authorization in this spike; that is a known limitation.
   */
 object RelayFrames:
   val Register: Byte    = 1
   val Data: Byte        = 2
   val RegisterAck: Byte = 3
-  private val MaxFrame = 8 * 1024 * 1024
+  private val MaxFrame  = 8 * 1024 * 1024
 
   def write(out: DataOutputStream, kind: Byte, body: Array[Byte]): Unit =
     out.synchronized {
@@ -24,13 +29,13 @@ object RelayFrames:
       out.flush()
     }
 
-  def read(in: DataInputStream): (Byte, Array[Byte]) =
+  def read(in: DataInputStream): RelayFrame =
     val kind   = in.readByte()
     val length = in.readInt()
     require(length >= 0 && length <= MaxFrame, s"invalid frame length $length")
-    val body = new Array[Byte](length)
+    val body   = new Array[Byte](length)
     in.readFully(body)
-    (kind, body)
+    RelayFrame(kind, body)
 
   def dataBody(to: Array[Byte], payload: Array[Byte]): Array[Byte] =
     Wire.encode { out =>
@@ -38,15 +43,15 @@ object RelayFrames:
       Wire.writeBytes(out, payload)
     }
 
-  def parseData(body: Array[Byte]): (Array[Byte], Array[Byte]) =
+  def parseData(body: Array[Byte]): RelayData =
     Wire.decode(body) { in =>
-      (Wire.readBytes(in), Wire.readBytes(in))
+      RelayData(Wire.readBytes(in), Wire.readBytes(in))
     }
 
 final class RelayServer(requestedPort: Int):
-  private val server = new ServerSocket(requestedPort)
-  private val clients = new ConcurrentHashMap[String, RelayConnection]()
-  private val pool    = Executors.newCachedThreadPool()
+  private val server   = new ServerSocket(requestedPort)
+  private val clients  = new ConcurrentHashMap[String, RelayConnection]()
+  private val pool     = Executors.newCachedThreadPool()
   private val acceptor = new Thread(() => acceptLoop(), "relay-accept")
   acceptor.setDaemon(true)
 
@@ -55,12 +60,15 @@ final class RelayServer(requestedPort: Int):
   def start(): Unit = acceptor.start()
 
   private def acceptLoop(): Unit =
-    while !server.isClosed do
-      try
-        val socket = server.accept()
-        pool.execute(new RelayConnection(socket, clients))
-      catch
-        case NonFatal(_) => ()
+    @tailrec
+    def loop(): Unit =
+      if !server.isClosed then
+        try
+          val socket = server.accept()
+          pool.execute(new RelayConnection(socket, clients))
+        catch case NonFatal(_) => ()
+        loop()
+    loop()
 
   def close(): Unit =
     try server.close()
@@ -68,11 +76,12 @@ final class RelayServer(requestedPort: Int):
     clients.values().forEach(_.close())
     pool.shutdownNow()
 
-private final class RelayConnection(socket: Socket, clients: ConcurrentHashMap[String, RelayConnection]) extends Runnable:
-  private val in  = new DataInputStream(socket.getInputStream)
-  private val out = new DataOutputStream(socket.getOutputStream)
-  @volatile private var devicePub: Array[Byte] = Array.emptyByteArray
-  @volatile private var deviceKey: String       = ""
+final private class RelayConnection(socket: Socket, clients: ConcurrentHashMap[String, RelayConnection]) extends Runnable:
+  final private case class Registration(devicePub: Array[Byte], deviceKey: String)
+
+  private val in           = new DataInputStream(socket.getInputStream)
+  private val out          = new DataOutputStream(socket.getOutputStream)
+  private val registration = new AtomicReference[Option[Registration]](None)
 
   def send(kind: Byte, body: Array[Byte]): Unit =
     try RelayFrames.write(out, kind, body)
@@ -80,32 +89,39 @@ private final class RelayConnection(socket: Socket, clients: ConcurrentHashMap[S
 
   override def run(): Unit =
     try
-      while !socket.isClosed do
-        val (kind, body) = RelayFrames.read(in)
-        kind match
-          case RelayFrames.Register =>
-            devicePub = body
-            deviceKey = Crypto.hex(body)
-            clients.put(deviceKey, this)
-            send(RelayFrames.RegisterAck, Array.emptyByteArray)
-          case RelayFrames.Data =>
-            val (to, payload) = RelayFrames.parseData(body)
-            val target        = clients.get(Crypto.hex(to))
-            if target != null then target.send(RelayFrames.Data, RelayFrames.dataBody(devicePub, payload))
-          case _ => ()
-    catch
-      case NonFatal(_) => ()
+      @tailrec
+      def loop(): Unit =
+        if !socket.isClosed then
+          handle(RelayFrames.read(in))
+          loop()
+      loop()
+    catch case NonFatal(_) => ()
     finally close()
 
+  private def handle(frame: RelayFrame): Unit =
+    frame.kind match
+      case RelayFrames.Register =>
+        val reg = Registration(frame.body, Crypto.hex(frame.body))
+        registration.set(Some(reg))
+        clients.put(reg.deviceKey, this)
+        send(RelayFrames.RegisterAck, Array.emptyByteArray)
+      case RelayFrames.Data     =>
+        val data   = RelayFrames.parseData(frame.body)
+        val target = Option(clients.get(Crypto.hex(data.address)))
+        registration.get().foreach { reg =>
+          target.foreach(_.send(RelayFrames.Data, RelayFrames.dataBody(reg.devicePub, data.payload)))
+        }
+      case _                    => ()
+
   def close(): Unit =
-    if deviceKey.nonEmpty then clients.remove(deviceKey, this)
+    registration.get().foreach(reg => clients.remove(reg.deviceKey, this))
     try socket.close()
     catch case NonFatal(_) => ()
 
 final class RelayClient private (socket: Socket, devicePub: Array[Byte], onData: (Array[Byte], Array[Byte]) => Unit):
-  private val in  = new DataInputStream(socket.getInputStream)
-  private val out = new DataOutputStream(socket.getOutputStream)
-  private val reader = new Thread(() => readLoop(), "relay-client")
+  private val in         = new DataInputStream(socket.getInputStream)
+  private val out        = new DataOutputStream(socket.getOutputStream)
+  private val reader     = new Thread(() => readLoop(), "relay-client")
   private val registered = new CountDownLatch(1)
   reader.setDaemon(true)
 
@@ -125,23 +141,27 @@ final class RelayClient private (socket: Socket, devicePub: Array[Byte], onData:
 
   private def readLoop(): Unit =
     try
-      while !socket.isClosed do
-        val (kind, body) = RelayFrames.read(in)
-        if kind == RelayFrames.RegisterAck then registered.countDown()
-        else if kind == RelayFrames.Data then
-          val (from, payload) = RelayFrames.parseData(body)
-          onData(from, payload)
-    catch
-      case NonFatal(_) => ()
+      @tailrec
+      def loop(): Unit =
+        if !socket.isClosed then
+          val frame = RelayFrames.read(in)
+          if frame.kind == RelayFrames.RegisterAck then registered.countDown()
+          else if frame.kind == RelayFrames.Data then
+            val data = RelayFrames.parseData(frame.body)
+            onData(data.address, data.payload)
+          loop()
+      loop()
+    catch case NonFatal(_) => ()
     finally close()
 
 object RelayClient:
+
   def connect(
     host: String,
     port: Int,
     devicePub: Array[Byte],
     onData: (Array[Byte], Array[Byte]) => Unit,
-    attempts: Int = 50,
+    attempts: Int = 50
   ): RelayClient =
     @tailrec
     def attempt(remaining: Int): RelayClient =
@@ -151,8 +171,10 @@ object RelayClient:
         client.start()
         client
       catch
-        case NonFatal(error) =>
-          if remaining <= 1 then throw new RuntimeException(s"cannot connect to relay $host:$port", error)
+        case NonFatal(_) if remaining > 1 =>
           Thread.sleep(100)
           attempt(remaining - 1)
+        case NonFatal(error)              =>
+          throw new RuntimeException(s"cannot connect to relay $host:$port", error)
+
     attempt(attempts)

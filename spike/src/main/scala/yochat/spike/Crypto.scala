@@ -8,11 +8,12 @@ import java.util.Base64
 import javax.crypto.{Cipher, KeyAgreement, Mac}
 import javax.crypto.spec.{IvParameterSpec, SecretKeySpec}
 
+import scala.annotation.tailrec
+
 /** JDK-only crypto for the A-first spike.
   *
-  * This is a feasibility harness, not the final scheme. It uses JDK 25 Ed25519,
-  * X25519, ChaCha20-Poly1305 and a local RFC 5869 HKDF. The final protocol,
-  * including the ratchet, must be designed and reviewed separately.
+  * This is a feasibility harness, not the final scheme. It uses JDK 25 Ed25519, X25519, ChaCha20-Poly1305 and a local RFC 5869 HKDF. The final
+  * protocol, including the ratchet, must be designed and reviewed separately.
   */
 object Crypto:
   private val Random = new SecureRandom()
@@ -38,22 +39,26 @@ object Crypto:
 
   /** RFC 5869 HKDF-SHA256. An empty salt is treated as 32 zero bytes. */
   def hkdf(ikm: Array[Byte], salt: Array[Byte], info: String, length: Int): Array[Byte] =
+    require(length >= 0 && length <= 255 * 32, s"invalid HKDF length $length")
     val actualSalt = if salt.isEmpty then new Array[Byte](32) else salt
     val prk        = hmacSha256(actualSalt, ikm)
     val infoBytes  = info.getBytes(Utf8)
     val out        = new ByteArrayOutputStream()
-    var previous   = Array.emptyByteArray
-    var counter    = 1
-    while out.size() < length do
-      val mac = Mac.getInstance("HmacSHA256")
-      mac.init(new SecretKeySpec(prk, "HmacSHA256"))
-      mac.update(previous)
-      mac.update(infoBytes)
-      mac.update(counter.toByte)
-      previous = mac.doFinal()
-      out.write(previous)
-      counter += 1
-    out.toByteArray.take(length)
+
+    @tailrec
+    def expand(counter: Int, previous: Array[Byte], remaining: Int): Unit =
+      if remaining > 0 then
+        val mac   = Mac.getInstance("HmacSHA256")
+        mac.init(new SecretKeySpec(prk, "HmacSHA256"))
+        mac.update(previous)
+        mac.update(infoBytes)
+        mac.update(counter.toByte)
+        val block = mac.doFinal()
+        out.write(block)
+        expand(counter + 1, block, remaining - block.length)
+
+    expand(1, Array.emptyByteArray, length)
+    out.toByteArray
 
   def ed25519KeyPair(): KeyPair =
     KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
@@ -61,7 +66,7 @@ object Crypto:
   def x25519KeyPair(): KeyPair =
     KeyPairGenerator.getInstance("X25519").generateKeyPair()
 
-  def publicBytes(key: PublicKey): Array[Byte] = key.getEncoded
+  def publicBytes(key: PublicKey): Array[Byte]   = key.getEncoded
   def privateBytes(key: PrivateKey): Array[Byte] = key.getEncoded
 
   def ed25519Public(bytes: Array[Byte]): PublicKey =
