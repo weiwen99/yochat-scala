@@ -103,7 +103,7 @@ flowchart LR
 - `shell/`：Electron 主进程，负责窗口、通知、钥匙串、单实例、启动/停止 JVM 服务。它不持有业务状态。
 - `server/`：Pekko HTTP 本地服务，绑定回环；UI 通过 HTTP/WebSocket 调用；执行器把 `Effect` 落到 `store/` 与 `transport/`。
 - `core/`：纯状态机与协议 ADT；不依赖 Pekko、JDBC、UI。
-- `store/`：SQLite；消息、联系人、会话、邀请、meta。
+- `store/`：doobie 1.0 + SQLite；消息、联系人、会话、邀请、meta；事务与连接由 doobie/Hikari(max 1) 管理。
 - `transport/`：中继客户端；连接、重连、帧边界、有界队列。
 - `relay/`（可独立部署）：最小 WebSocket 转发服务；只转发密文与路由信息。
 
@@ -123,14 +123,14 @@ def step(state: State, event: Event): (State, Vector[Effect])
 
 | 表 | 关键列 | 说明 |
 | --- | --- | --- |
-| `contacts` | `user_pub`, `channel_label`, `channel_account`, `peer_channel_account`, `alias`, `note`, `safety_verified`, `confirmation_state`, `created_at` | 联系人；双方各自记录渠道/账号；`safety_verified=false` 时禁止发送/呈现正文 |
+| `contacts` | `user_pub`, `sealed`, `version`, `created_at` | `sealed` 含渠道/账号/别名/备注/`safety_verified`/`confirmation_state`；AAD 绑定 `user_pub`+`version`；`safety_verified` 不在明文列 |
 | `conversations` | `id`, `peer_user_pub`, `created_at`, `last_applied_seq` | 一对一；每个用户各一台设备 |
-| `messages` | `id`, `conversation_id`, `session_id`, `author_pub`, `device_pub`, `seq`, `body`, `wire`, `state`, `created_at` | `wire` 是完整 `header || ct || sig`，重发原样使用；`(session_id, device_pub, seq)` 唯一；`seq` 每作者每会话、跨 rekey 不重置 |
-| `invitations` | `id`, `ephemeral_priv`, `peer_account`, `expires_at`, `state`, `confirm_state`, `payload` | 一次性私钥只留在签发设备；过期/作废后删除；不符账号进待确认 |
+| `messages` | `id`, `conversation_id`, `session_id`, `author_pub`, `device_pub`, `seq`, `body`, `wire`, `state`, `created_at` | `body` 是应用层 AEAD 信封；`wire` 是完整 `header || ct || sig`，重发原样使用；`(session_id, device_pub, seq)` 唯一；`seq` 每作者每会话、跨 rekey 不重置 |
+| `invitations` | `id`, `sealed`, `version`, `created_at` | `sealed` 含一次性私钥、账号、有效期、状态、payload；AAD 绑定 `id`+`version`；过期/作废后删除并保留高水位 tombstone |
 | `sessions` | `id`, `peer_user_pub`, `peer_device_pub`, `state`, `state_version`, `generation`, `updated_at` | `state` 加密后存 phase/safetyVerified/root/rekeyBase/ratchet/chain/skipped/retiredDh/rekey/rekeyAttempts/rekeyCooldown；`state_version` 防回滚 |
-| `meta` | `key`, `value` | schema 版本、计数器、配置快照、锁配置 |
+| `meta` | `key`, `value` | schema 版本、`lock-generation`、`session-state-version`/`contact-version`/`invitation-version` 高水位；`value` 只放整数 |
 
-密钥材料不放在明文表：用户私钥/设备私钥/数据库密钥由系统钥匙串或口令派生保护；`sessions.state` 整体加密，具体存储机制由 ADR-0007 决定。
+密钥材料不放在明文表：用户私钥/设备私钥/数据库密钥由系统钥匙串或口令派生保护。ADR-0007 已决定：plain SQLite + 应用层 AEAD（`sessions.state`、`messages.body`、`contacts.sealed`、`invitations.sealed`）；SQLCipher 否决；详见 `docs/adr/0007-storage-encryption-and-keys.md`。
 
 ### 协议路径（S1）
 
@@ -151,7 +151,7 @@ A-first 不能直接用 Rust 的 p2panda 群棘轮。ADR-0006 已接受 S1 的�
 - 原语：JDK 25 JCE 的 Ed25519、X25519、ChaCha20-Poly1305；HKDF-SHA256 用本地 RFC 5869 实现（已由 A-first harness 验证）。BouncyCastle 只用于 JCE 缺少的算法（如 Argon2id）或经过审查的备选；不手写原语。
 - 会话密钥：root chain + 两条方向链；DH ratchet、`N`/`PN`、有界 skipped keys、每条消息唯一 message key；具体 KDF/初始 ratchet/消息 header/rekey 见 ADR-0006。
 - D2：ADR-0006 已列出 JVM ratchet/Noise 候选与拒绝理由；没有自包含、宽松许可、无外部服务的现成 Double Ratchet。
-- 数据库：`sessions.state` 整体加密；SQLCipher/JDBC 或应用层 AEAD 由 ADR-0007 决定；密钥来自系统钥匙串或口令派生（Argon2id）。
+- 数据库：ADR-0007 选择 doobie 1.0 + SQLite + 应用层 AEAD；`ConnectionIO`/`Transactor[IO]`，Hikari 只开 1 条连接；`sessions.state`、`messages.body`、联系人/邀请的敏感字段整体加密；密钥来自系统钥匙串或 Argon2id 口令回退。
 - 测试向量：邀请/应答签名、初始 root、ratchet/乱序/重放、密文/签名篡改、密钥分离、安全码、rekey、重启。
 - 安全论证：前向保密、DH ratchet 后的 break-in recovery、后加入者读不到旧消息（S1 单设备不涉及，但方案不能堵死 S2）、失败即拒绝。
 
@@ -191,7 +191,7 @@ A-first 不能直接用 Rust 的 p2panda 群棘轮。ADR-0006 已接受 S1 的�
 | Spike | 时间盒 | 通过条件 | 失败动作 |
 | --- | --- | --- | --- |
 | A-first 传输 + 邀请/应答 + 对称链 harness | 5 人日 | relay-only 传输，两个独立 client JVM；100 条消息 + 重连；1,000 条 <5s；邀请/应答签名、E2E、重放/篡改拒绝、密钥分离；无 Rust 依赖 | 只有这些 named gate 失败才写 ADR 切 B（iroh/p2panda sidecar） |
-| SQLCipher/JDBC 或应用层 AEAD | 2 人日 | 真实 SQLite 落盘、重开可读；密钥不以明文出现；1,000 次插入 + 1,000 次按会话读取 p95 <2s；`EXPLAIN QUERY PLAN` 无全表 blob 扫描 | 选应用层 AEAD；两者都不行则升级存储设计 |
+| SQLite + 应用层 AEAD（已完成） | 2 人日 | 真实 SQLite 落盘、重开可读；密钥不以明文出现；1,000 次插入 + 1,000 次点查**总计** <2s；`EXPLAIN QUERY PLAN` 无全表 blob 扫描 | PASS；见 `spike-storage.md`；SQLCipher 否决 |
 | Electron ↔ JVM 生命周期/钥匙串/IPC | 2 人日 | 单实例、启动/停止、钥匙串读写、通知；不含 JavaFX WebView fallback（ADR-0002 已否决） | 调整壳方案；若无可行壳，开新 ADR，不静默改栈 |
 | Laminar 列表（1k 条） | 1 人日 | 1,000 条消息滚动 frame p95 ≤16.7ms；输入到上屏 p95 ≤50ms（参考机、固定数据） | 调整虚拟列表/渲染方案 |
 | 性能基线（含壳） | 1 人日 | 冷启动 p50/p95 与空闲内存有可重复测量脚本；1,000 条 <5s 复用 A-first 回执 | 只校准冷启动一次并写回 ADR-0004；硬门失败走对应 spike 决策，不静默放宽 |
@@ -201,7 +201,7 @@ spike 的产物是代码、测量记录与 ADR，不是「调研结论」。没�
 ## 风险
 
 1. **两方 ratchet/前向保密**：最高风险，但它是单独的方案 gate。ADR-0006 已做 D2 复用分析并选定 Signal Double Ratchet 两方子集；若实现或外部评审无法满足，重新设计或用新 ADR 再评估 B，不把失败记成 JVM/relay 路线不可行。
-2. **SQLCipher/JDBC 不可用**：应用层 AEAD 是备选；再不行则升级存储设计。
+2. **本地存储加密/密钥源**：ADR-0007 已选 plain SQLite + 应用层 AEAD；钥匙串/口令、`identity.bin`、崩溃/重启和回滚门仍需实现测试；失败不自动切 B，另开 ADR。
 3. **Electron + JVM 资源与生命周期**：shell spike 先验证；冷启动只校准一次，内存与 1,000 条门不放宽。
 4. **relay-only 改变产品叙事**：v1 明确写「没有账号服务器，但有一个中继」；不宣称完全 p2p。
 5. **测试移植工作量**：T1 限制在行为契约与领域不变量；按功能分批，不追全量。
@@ -210,7 +210,7 @@ spike 的产物是代码、测量记录与 ADR，不是「调研结论」。没�
 ## 里程碑
 
 - M0 约束与计划（本提交）。
-- M1 spike + ADR-0006（加密）、ADR-0007（存储，如需）。
+- M1 spike + ADR-0006（加密）、ADR-0007（存储，已接受；doobie + SQLite + 应用层 AEAD）。
 - M2 core 状态机 + 5 个 Quint 模型 + 对拍。
 - M3 store + transport + relay + 邀请/应答。
 - M4 UI 三屏 + Electron 壳。

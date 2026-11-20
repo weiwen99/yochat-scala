@@ -14,4 +14,6 @@ fi
 ./mill spike.fix --check
 ./mill spike.compile
 ./mill spike.run crypto
+./mill spike.run storage
+./mill spike.run doobie
 ./mill spike.run demo --messages 100 --reconnect

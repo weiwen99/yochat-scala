@@ -39,4 +39,11 @@ object core extends CommonModule with ScalafmtModule with ScalafixModule:
 
 object spike extends CommonModule with ScalafmtModule with ScalafixModule:
 
+  def mvnDeps = Seq(
+    mvn"org.xerial:sqlite-jdbc:3.54.1.0",
+    mvn"org.typelevel::cats-effect:3.7.1",
+    mvn"org.typelevel::doobie-core:1.0.0-RC14",
+    mvn"org.typelevel::doobie-hikari:1.0.0-RC14"
+  )
+
   def mainClass = Some("yochat.spike.SpikeMain")

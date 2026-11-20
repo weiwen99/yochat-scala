@@ -14,7 +14,7 @@ Project-specific Scala and build rules. Read the `scala-best-practices` skill fi
 
 ```
 core/       pure state machines, protocol ADTs, domain newtypes
-store/      SQLite, transactions, query plans
+store/      doobie + SQLite, transactions, query plans
 transport/  relay client, framing, reconnect, bounded queues
 server/     Pekko HTTP local service, IPC, health
 ui/         ScalaJS + Laminar client
@@ -70,7 +70,8 @@ All waits, queues, retries, broadcasts, and background steps are bounded. Every 
 
 ## Storage
 
-- SQLite through JDBC. The encryption choice (SQLCipher native vs application-level AEAD) is a spike in plan 0001; do not assume one.
+- SQLite through **doobie 1.0.0-RC14** (`ConnectionIO` / `Transactor[IO]`) + HikariCP with `maximumPoolSize=1`, per ADR-0007. Doobie owns transactions, commit/rollback, connection release, and parameterized SQL; business code does not take a raw `Connection`. `SQLiteConfig` supplies WAL, `synchronous=FULL`, `busy_timeout`, and `transaction_mode=IMMEDIATE`.
+- Encryption is application-layer ChaCha20-Poly1305; SQLCipher is rejected. Sensitive values (`sessions.state`, `messages.body`, `contacts.sealed`, `invitations.sealed`) are sealed with AAD; SQLite never sees plaintext. Keys come from the OS keychain or the Argon2id passphrase fallback. Single writer, `meta` version high-water, and the declared table lock order are mandatory.
 - Every query that can grow is checked with `EXPLAIN QUERY PLAN`; no full-table blob scans. Add the index in the same change as the query.
 - Transactions state the global lock order in the design. A read that can fail is not a read that returns empty.
 - One authoritative writer per row/entity; do not let two fire-and-forget writers overwrite each other's fields.
@@ -95,4 +96,4 @@ A-first means no Rust in our product code. The A-first transport/crypto spike mu
 2. invitation/reply, E2E, signature verification, replay/tamper rejection, key separation;
 3. no Rust dependency.
 
-Cold start, idle memory, SQLCipher/restart, Pekko/Electron/Laminar are separate spikes; their failures do not automatically trigger B. The final ratchet/forward-secrecy scheme is a separate design gate: the spike's symmetric chain is not the final protocol. If the named A-first gates fail, write an ADR and switch to B (iroh/p2panda sidecar, narrow IPC). If the final scheme gate fails, redesign or revisit B with a new ADR. Do not start writing Rust in this repo as an unplanned escape hatch.
+Cold start, idle memory, storage/restart, Pekko/Electron/Laminar are separate spikes; their failures do not automatically trigger B. The final ratchet/forward-secrecy scheme is a separate design gate: the spike's symmetric chain is not the final protocol. If the named A-first gates fail, write an ADR and switch to B (iroh/p2panda sidecar, narrow IPC). If the final scheme gate fails, redesign or revisit B with a new ADR. Do not start writing Rust in this repo as an unplanned escape hatch.

@@ -17,17 +17,21 @@ object SpikeMain:
   def main(args: Array[String]): Unit =
     val clock = Clock.systemUTC()
     args.toList match
-      case "crypto" :: Nil => CryptoChecks.run(clock)
-      case "relay" :: rest => runRelay(parseArgs(rest))
-      case "peer" :: rest  => runPeer(parseArgs(rest), clock)
-      case "demo" :: rest  => runDemo(parseArgs(rest), clock)
-      case _               =>
+      case "crypto" :: Nil  => CryptoChecks.run(clock)
+      case "storage" :: Nil => StorageSpike.run()
+      case "doobie" :: Nil  => DoobieSpike.run()
+      case "relay" :: rest  => runRelay(parseArgs(rest))
+      case "peer" :: rest   => runPeer(parseArgs(rest), clock)
+      case "demo" :: rest   => runDemo(parseArgs(rest), clock)
+      case _                =>
         println(usage)
         sys.exit(2)
 
   private def usage: String =
     """Usage:
       |  SpikeMain crypto
+      |  SpikeMain storage
+      |  SpikeMain doobie
       |  SpikeMain relay [--port N]
       |  SpikeMain peer --role alice|bob --port N --invitation PATH --messages N ...
       |  SpikeMain demo [--messages N]

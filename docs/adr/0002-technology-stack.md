@@ -20,7 +20,7 @@
 - **本地服务**：Pekko 1.7.x + Pekko HTTP 1.4.x，绑定本机回环；Electron 通过 HTTP/IPC 调用。
 - **UI**：ScalaJS + Laminar，复用 CFA 的组件与协议 ADT；不做 Svelte 第二套 UI。
 - **桌面壳**：Electron 只承担窗口、通知、钥匙串、单实例与进程生命周期；业务逻辑全在 JVM 服务。
-- **存储**：SQLite；JDBC 驱动与加密方式由 spike 决定（SQLCipher native 或应用层 AEAD），不假设。
+- **存储**：SQLite；ADR-0007 已落地为 doobie 1.0 + `sqlite-jdbc` + 应用层 AEAD（SQLCipher 否决）；S1 是客户端本地单实例。
 - **密码学**：JDK 25 JCE 提供 Ed25519、X25519、ChaCha20-Poly1305；HKDF 用本地 RFC 5869 实现。BouncyCastle 只用于 JCE 缺少的算法（如 Argon2id）或作为经过审查的备选；不手写原语。邀请/应答与两方 ratchet 所需的状态机在 `core/` 中以纯函数实现，并有 Quint 模型与测试向量。
 - **网络（v1）**：relay-only。客户端通过 WebSocket/TCP 连接中继，中继转发密文；不做 NAT 打洞、不做直连。中继可见端点、时间、字节数，内容端到端加密。
 - **A-first**：JVM-only。若 A-first 传输/加密 spike 的命名 gate 失败，切 B：iroh/p2panda 作为外部 sidecar，经窄 IPC 调用；产品代码仍不写 Rust。冷启动/内存、存储/重启、壳/UI 的失败各自走自己的 spike 决策，不自动触发 B。

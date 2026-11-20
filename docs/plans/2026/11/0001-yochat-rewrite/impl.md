@@ -32,3 +32,35 @@
 - 外部密码学评审仍是发布门；本记录不是密码学证明。
 - 1,000 条 <5s / ≤800MB / E2E 14 契约不在本提交；`./check.sh` 只覆盖单元与 spike 门。
 - `VectorsSpec` 的 handshake 固定值来自本实现 transcript；它防止回归，不作为独立密码学证明。KDF/初始/rekey 向量与 Python HKDF/HMAC 独立值对拍。
+
+## ADR-0007 storage / doobie review
+
+- 对象: `docs/adr/0007-storage-encryption-and-keys.md`、storage/doobie spike；不把 spike 写成生产 `store/`。
+- 轮次: round 1 storage design（1 BLOCKER、10 MAJOR、14 MINOR）+ round 2 doobie（4 MAJOR、5 MINOR）；上限 7 轮。
+- 结论: 方案保持 client-local SQLite + 应用层 AEAD + doobie 1.0.0-RC14 + Hikari(max 1) + `sqlite-jdbc`；外部密码学评审仍是发布门。
+
+| ID | 发现 | 关闭证据 | 代价 |
+| --- | --- | --- | --- |
+| B1 | 首次运行只看 DB/密钥，`identity.bin` 独存时可生成新 master | 只有 DB/identity/keystore/keychain 全无才创建；其余 `InstancePartiallyPresent`（ADR §2） | 0.5 人日 |
+| M1 | generation 只在 sessions，contact/invitation 旧写在锁后仍可落 | 全局 `meta.lock-generation` CAS 每个写事务；sessions generation 保留在 AAD（ADR §5） | 0.5 人日 |
+| M2 | body/wire 一致性要求在 store 不可实现 | body AAD 绑定 `SHA-256(wire)`；不读 message key（ADR §3） | 0.25 人日 |
+| M3 | contact/invitation AAD 的 version 没证据 | 表加 version；G11 明确交接读/交换/回滚/点查；spike 只证明写入与目录扫描 | 0.5 人日 |
+| M4 | 威胁模型声称 messages 删除受保护 | 明示只保护 sessions/contacts/invitations 的部分恢复；messages/conversations 是已知约束 | 0.25 人日 |
+| M5 | 备份指引复制运行中 DB/WAL | backup 用 Online Backup API 或 `transactRaw` 的 `VACUUM INTO`；口令/钥匙串路径分开 | 0.5 人日 |
+| M6 | G1/G2 断言超出 spike 证据 | G1 缩到 session/message；G2 在连接打开时扫描 WAL/SHM，并加第二 master 失败；receipt 更新 | 1–2 小时 |
+| M7 | parity/gate 名字与断言漂移 | G8 拆 3 断言；G10/G11 换真实测试名；ZTSE 改 `REWRITE` 并留人签字 | 0.5 人日 |
+| M8 | 聊天列表无索引 | `(conversation_id, author_pub, seq)` 索引 + list plan gate | 2 小时 |
+| M9 | 本地 Active 就删旧会话会吃掉重试 | cutover 需双向 Confirm/Ack 且无 pending；pending 保留 ReadOnly/wire；G12 加 lost-ACK | 0.5 人日 |
+| M10 | `safety_verified` 两份权威 | contact sealed 为权威；session 副本同事务更新，rekey 从 contact 继承；不一致失败关闭 | 0.25 人日 |
+| R2-1 | Hikari pool autoCommit=false 会让归还连接继续持写锁 | pool autoCommit=true；doobie 事务内 false/commit/rollback；维护走 `transactRaw`；G16 待实现验证 | 0.5 人日 |
+| R2-2 | G15 没验证 UPDATE 行数/异常类型 | doobie smoke 要求 changed==1 且 forced rollback；重新跑 PASS | 0.1 人日 |
+| R2-3 | G3 wire 测试被 body 顺序混淆 | 先恢复 body1 并读成功，再只换 wire；重新跑 PASS | 0.1 人日 |
+| R2-4 | ZTSE 的「非明文 SQLite 头」不成立 | test-parity 改 `REWRITE`，写明 header 可见、错误 key 在解锁/首行解密失败；待签字 | 0.25 人日 |
+| R2-5 | G12 lost-ACK 下 pending 不能自动终态 | 发起方收 ACK 且无 pending 才删；应答方要等新 session 首个已认证数据帧（ACK 不可观察）且无 pending；G12 加零 pending lost-ACK case | 0.5 人日 |
+
+## ADR-0007 未关闭 / 后续
+
+- ADR-0007 已 accepted（内部 round 1/2/closure，无剩余 BLOCKER/MAJOR）；外部密码学评审未做。不得把 spike PASS 当 S1 完成。
+- 生产 `store/`、`KeyProvider`、`identity.bin`、联系人/邀请高水位、备份、崩溃注入、G8–G14/G16 未实现。
+- `ZTSE` 的 `REWRITE` 与人签字仍未完成；`G10` 的合法 key source 重开、`G11` 的 contact/invitation 点查未跑。
+- 1,000 条 <5s、≤800MB、14 条 E2E 未跑；storage/doobie spike 不是这些门的替代。

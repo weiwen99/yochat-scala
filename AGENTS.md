@@ -101,4 +101,4 @@ Scala 代码必须遵守 `scala-best-practices`。写、改、重构或评审 Sc
 
 ## 10. 当前状态
 
-计划 0001 在 design；还没有产品代码。下一步是计划 0001 的 spike 与设计评审。不要提前写实现。
+计划 0001 在 M1/M2 边界：`core/` 加密与状态机已实现；ADR-0006 accepted，ADR-0007 accepted（doobie + SQLite + 应用层 AEAD）；storage 与 doobie access-layer spike PASS。`store/`、transport、UI、E2E 与性能回执尚未实现。下一步是生产 `store/` 与 M2 Quint 模型；不要把 spike 当 S1 完成。
