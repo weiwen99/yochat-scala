@@ -15,6 +15,7 @@ Bootstrap. The constraints are imported and plan 0001 is in design; there is no 
 - `docs/plans/2026/11/0001-yochat-rewrite/` — the rewrite plan.
 - `docs/evaluations/` — the two 2026-11-20 postmortems that shaped the rules.
 - `docs/references/2026-11-20-flw-yochat-diagrams/` — flw's complete notes package (six diagrams, glossary, offline reading page) and the prompts that produced them.
+- `docs/references/2026-11-20-yochat-reference-study/` — our reading notes on the old implementation: status, requirement batching, contradictions, hard parts, glossary, and an offline reading page.
 
 ## v1 scope (S1)
 

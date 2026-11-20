@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YoChat 旧实现阅读笔记</title>
+<style>
+  :root {
+    --paper: #f7f4ed;
+    --ink: #20201d;
+    --muted: #6d675c;
+    --line: #d8d1c2;
+    --panel: #efe9dc;
+    --accent: #8a3f2b;
+    --code: #f2ede3;
+    --shadow: 0 18px 50px rgba(40, 35, 28, .16);
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: light; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background:
+      radial-gradient(1200px 600px at 10% -10%, #fffdf7 0%, transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, #f3ecdd 0%, transparent 55%),
+      var(--paper);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+    line-height: 1.7;
+  }
+  body.modal-open { overflow: hidden; }
+  a { color: var(--accent); text-decoration-thickness: .08em; text-underline-offset: .18em; }
+  a:hover { text-decoration-thickness: .14em; }
+  .wrap { width: min(1180px, calc(100% - 44px)); margin: 0 auto; }
+  header { padding: 64px 0 28px; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    margin: 0 0 18px; padding: 6px 10px;
+    border: 1px solid var(--line); background: rgba(255,255,255,.45);
+    color: var(--muted); font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+  }
+  h1 {
+    margin: 0; max-width: 900px;
+    font-family: "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+    font-size: clamp(34px, 5.4vw, 68px); line-height: 1.12; letter-spacing: -.02em; font-weight: 400;
+  }
+  .lede { max-width: 820px; margin: 20px 0 0; color: var(--muted); font-size: 18px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 7px 11px; border: 1px solid var(--line); background: rgba(255,255,255,.42);
+    color: var(--muted); font-size: 13px;
+  }
+  .pill b { color: var(--ink); font-weight: 600; }
+  main { padding-bottom: 80px; }
+  section { margin-top: 54px; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+  .section-head h2 {
+    margin: 0; font-family: "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+    font-size: 30px; line-height: 1.2; font-weight: 400;
+  }
+  .section-head p { margin: 0; color: var(--muted); font-size: 13px; }
+  .grid { display: grid; gap: 18px; margin-top: 22px; }
+  .diagram-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .doc-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .diagram-card, .doc-card {
+    display: flex; flex-direction: column; min-width: 0;
+    border: 1px solid var(--line); background: rgba(255,255,255,.5);
+    cursor: pointer; text-align: left; color: inherit;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  }
+  .diagram-card:hover, .doc-card:hover, .diagram-card:focus-visible, .doc-card:focus-visible {
+    transform: translateY(-2px); box-shadow: var(--shadow); border-color: #b9af9b; outline: none;
+  }
+  .thumb {
+    aspect-ratio: 16 / 10; display: flex; align-items: center; justify-content: center;
+    padding: 14px; background: #fffdf8; border-bottom: 1px solid var(--line); overflow: hidden;
+  }
+  .thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .card-body { display: flex; flex-direction: column; gap: 8px; padding: 16px 18px 18px; min-height: 150px; }
+  .doc-card { padding: 20px 22px 22px; min-height: 170px; }
+  .kicker { color: var(--accent); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; }
+  h3 { margin: 0; font-family: "Songti SC", "Noto Serif CJK SC", Georgia, serif; font-size: 23px; line-height: 1.35; font-weight: 400; }
+  .card-body p, .doc-card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+  .hint { margin-top: auto; color: var(--muted); font-size: 12px; }
+  .note { margin-top: 22px; color: var(--muted); font-size: 13px; }
+  .note code { background: var(--code); border: 1px solid var(--line); padding: 1px 5px; }
+  footer { border-top: 1px solid var(--line); padding: 22px 0 40px; color: var(--muted); font-size: 12px; }
+  footer p { margin: 4px 0; }
+
+  .modal[hidden] { display: none; }
+  .modal { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 22px; }
+  .modal-backdrop { position: absolute; inset: 0; background: rgba(22, 20, 17, .58); backdrop-filter: blur(3px); }
+  .modal-panel {
+    position: relative; display: flex; flex-direction: column;
+    width: min(1220px, 96vw); height: min(92vh, 1000px);
+    background: #fffdf8; border: 1px solid #cfc5b2; box-shadow: var(--shadow);
+  }
+  .modal-head {
+    display: flex; align-items: center; gap: 14px; flex: 0 0 auto;
+    padding: 12px 14px 12px 20px; border-bottom: 1px solid var(--line); background: #fbf7ef;
+  }
+  .modal-head h2 {
+    flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: "Songti SC", "Noto Serif CJK SC", Georgia, serif; font-size: 18px; font-weight: 400;
+  }
+  .modal-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+  .modal-actions button, .modal-actions a {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-height: 34px; padding: 0 10px; border: 1px solid var(--line); background: #fff;
+    color: var(--ink); font: inherit; font-size: 12px; text-decoration: none; cursor: pointer;
+  }
+  .modal-actions button:hover, .modal-actions a:hover { background: var(--panel); }
+  .modal-actions button[hidden], .modal-actions a[hidden] { display: none; }
+  .modal-body { flex: 1; min-height: 0; overflow: auto; }
+  .modal-body.image-mode { padding: 18px; background: #f4f1e8; }
+  .diagram-stage { min-height: 100%; display: flex; align-items: center; justify-content: center; }
+  .modal-image { display: block; max-width: 100%; max-height: calc(92vh - 130px); width: auto; height: auto; background: #fff; }
+  .modal-image.actual { max-width: none; max-height: none; }
+  .modal-body.doc-mode { padding: 26px 30px 46px; }
+  .md { max-width: 980px; margin: 0 auto; font-size: 15.5px; line-height: 1.75; }
+  .md h1, .md h2, .md h3, .md h4 {
+    font-family: "Songti SC", "Noto Serif CJK SC", Georgia, serif; font-weight: 400; line-height: 1.28;
+  }
+  .md h1 { margin: 0 0 18px; font-size: 34px; }
+  .md h2 { margin: 34px 0 12px; font-size: 25px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  .md h3 { margin: 26px 0 10px; font-size: 20px; }
+  .md h4 { margin: 20px 0 8px; font-size: 17px; }
+  .md p { margin: 10px 0; }
+  .md ul, .md ol { margin: 10px 0; padding-left: 1.7em; }
+  .md li { margin: 5px 0; }
+  .md blockquote { margin: 14px 0; padding: 2px 0 2px 16px; border-left: 3px solid var(--line); color: var(--muted); }
+  .md blockquote p { margin: 5px 0; }
+  .md code { background: var(--code); border: 1px solid #e4dccb; padding: 1px 5px; font-size: .9em; overflow-wrap: anywhere; }
+  .md pre { margin: 14px 0; padding: 14px 16px; overflow: auto; background: #f4efe5; border: 1px solid var(--line); }
+  .md pre code { display: block; padding: 0; border: 0; background: none; font-size: 13px; line-height: 1.55; }
+  .md hr { margin: 26px 0; border: 0; border-top: 1px solid var(--line); }
+  .md .table-wrap { margin: 16px 0; overflow-x: auto; border: 1px solid var(--line); }
+  .md table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .md th, .md td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  .md th { background: #f3eee3; font-weight: 600; white-space: nowrap; }
+  .md tr:last-child td { border-bottom: 0; }
+  .md td code { white-space: normal; }
+  .md a[data-doc], .md a[data-diagram] { text-decoration-style: dotted; }
+
+  @media (max-width: 980px) {
+    .diagram-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .doc-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    .wrap { width: min(100% - 28px, 1180px); }
+    header { padding-top: 40px; }
+    .diagram-grid { grid-template-columns: 1fr; }
+    .modal { padding: 8px; }
+    .modal-panel { width: 100%; height: 94vh; }
+    .modal-head { padding: 10px; }
+    .modal-head h2 { font-size: 15px; }
+    .modal-actions button, .modal-actions a { padding: 0 8px; }
+    .modal-body.doc-mode { padding: 18px 16px 36px; }
+    .md h1 { font-size: 28px; }
+    .md h2 { font-size: 22px; }
+  }
+  @media print {
+    .modal { display: none !important; }
+    body { background: #fff; }
+    .diagram-card, .doc-card { break-inside: avoid; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">YoChat · reference study</p>
+    <h1>旧实现阅读笔记</h1>
+    <p class="lede">先弄清旧项目做到了哪，再判断 118 条需求里哪些真的要在 MVP 做。阅读页把设计图与 Markdown 放在同一个离线入口里；点击看大图，<code>Esc</code> 退出。</p>
+    <div class="meta">
+      <span class="pill"><b>118</b> 条需求</span>
+      <span class="pill"><b>95</b> 条旧首增量</span>
+      <span class="pill"><b>23</b> 条已延后</span>
+      <span class="pill"><b>7</b> 张图</span>
+      <span class="pill"><b>4</b> 篇文档</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="diagrams">
+      <div class="section-head"><h2>设计图</h2><p>前六张来自 flw 的阅读包；最后一张是本页的分析图。</p></div>
+      <div class="grid diagram-grid">
+<article class="diagram-card" tabindex="0" role="button" data-open-diagram="0" aria-label="查看大图：YoChat 模块概念图"><div class="thumb"><img src="../2026-11-20-flw-yochat-diagrams/notes/diagrams/01-modules.svg" alt="YoChat 模块概念图"></div><div class="card-body"><span class="kicker">flw</span><h3>YoChat 模块概念图</h3><p>五个 Rust crate 与 Svelte UI 的职责和依赖方向。</p><span class="hint">点击查看大图</span></div></article>
+<article class="diagram-card" tabindex="0" role="button" data-open-diagram="1" aria-label="查看大图：YoChat 三层架构与崩溃安全执行顺序"><div class="thumb"><img src="../2026-11-20-flw-yochat-diagrams/notes/diagrams/02-architecture.svg" alt="YoChat 三层架构与崩溃安全执行顺序"></div><div class="card-body"><span class="kicker">flw</span><h3>YoChat 三层架构与崩溃安全执行顺序</h3><p>纯状态机、执行器与适配器的分层，以及状态与效果同事务、提交后执行、再标记完成的顺序。</p><span class="hint">点击查看大图</span></div></article>
+<article class="diagram-card" tabindex="0" role="button" data-open-diagram="2" aria-label="查看大图：发送一条消息的数据流"><div class="thumb"><img src="../2026-11-20-flw-yochat-diagrams/notes/diagrams/03-send-message.svg" alt="发送一条消息的数据流"></div><div class="card-body"><span class="kicker">flw</span><h3>发送一条消息的数据流</h3><p>从界面撰写到核心状态推进、同事务落盘、加密发送、对方接收与确认的完整路径。</p><span class="hint">点击查看大图</span></div></article>
+<article class="diagram-card" tabindex="0" role="button" data-open-diagram="3" aria-label="查看大图：接收、严格按序与补齐路径"><div class="thumb"><img src="../2026-11-20-flw-yochat-diagrams/notes/diagrams/04-receive-order.svg" alt="接收、严格按序与补齐路径"></div><div class="card-body"><span class="kicker">flw</span><h3>接收、严格按序与补齐路径</h3><p>入站数据经过准入、解密、去重与定序；缺口进入等待，并通过请求重发、兜底重发、通道重建或可验证声明放行。</p><span class="hint">点击查看大图</span></div></article>
+<article class="diagram-card" tabindex="0" role="button" data-open-diagram="4" aria-label="查看大图：好友邀请与应答的控制流"><div class="thumb"><img src="../2026-11-20-flw-yochat-diagrams/notes/diagrams/05-contact-exchange.svg" alt="好友邀请与应答的控制流"></div><div class="card-body"><span class="kicker">flw</span><h3>好友邀请与应答的控制流</h3><p>A 生成邀请，经外部渠道传给 B；B 生成加密应答回传；A 在签发设备确认并发出首条认证操作；双方再做安全码带外比对。</p><span class="hint">点击查看大图</span></div></article>
+<article class="diagram-card" tabindex="0" role="button" data-open-diagram="5" aria-label="查看大图：设备组、吊销与多设备同步"><div class="thumb"><img src="../2026-11-20-flw-yochat-diagrams/notes/diagrams/06-device-revocation.svg" alt="设备组、吊销与多设备同步"></div><div class="card-body"><span class="kicker">flw</span><h3>设备组、吊销与多设备同步</h3><p>用户私钥只存在于指定设备；设备列表由用户私钥签名并分发；吊销声明只影响设备公钥，不影响用户身份与安全码。</p><span class="hint">点击查看大图</span></div></article>
+<article class="diagram-card" tabindex="0" role="button" data-open-diagram="6" aria-label="查看大图：旧需求到重写批次的分流"><div class="thumb"><img src="diagrams/07-scope-batches.svg" alt="旧需求到重写批次的分流"></div><div class="card-body"><span class="kicker">本页</span><h3>旧需求到重写批次的分流</h3><p>旧规格 118 条需求中，95 条曾被列入首个交付增量，23 条明确延后。重写建议把 95 条分为 S1 40 条、S2 20 条、S3 35 条；S1 只保留两台设备、各一台、加好友与单聊的一条可验收路径。此图是阅读分析，不是旧项目的范围声明。</p><span class="hint">点击查看大图</span></div></article>
+      </div>
+      <p class="note">图是阅读辅助，不是规格或验收证据。flw 的六张图原样引用；要改它们，去 <code>../2026-11-20-flw-yochat-diagrams/notes/</code>。</p>
+    </section>
+
+    <section id="docs">
+      <div class="section-head"><h2>文档</h2><p>建议顺序：现状 → 需求分期 → 术语 → 说明。</p></div>
+      <div class="grid doc-grid">
+<article class="doc-card" tabindex="0" role="button" data-open-doc="survey.md" aria-label="阅读文档：旧实现现状"><span class="kicker">Markdown</span><h3>旧实现现状</h3><p>对象：~/projects/yochat-reference（2026-11-20 的只读副本）需求快照：本仓 docs/spec/方法：读 docs/product、docs/engineering、主计划与验证摘要；数 Rust / Quint / 测试；不把任务勾选当产品验收。结论：功能停在…</p><span class="hint">129 行 · 点击阅读</span></article>
+<article class="doc-card" tabindex="0" role="button" data-open-doc="requirements.md" aria-label="阅读文档：需求分期、矛盾与难点"><span class="kicker">Markdown</span><h3>需求分期、矛盾与难点</h3><p>对象：旧实现 docs/product/ 的 118 条需求；重写侧对照 docs/adr/0003-v1-scope.md 与 0004-test-parity-and-performance-gates.md。结论先行：不是所有需求都要在 MVP 做。 旧计划的「首增量 93 条」是范围声明，…</p><span class="hint">289 行 · 点击阅读</span></article>
+<article class="doc-card" tabindex="0" role="button" data-open-doc="terms.md" aria-label="阅读文档：术语表（旧实现 → 重写）"><span class="kicker">Markdown</span><h3>术语表（旧实现 → 重写）</h3><p>完整版：旧项目 docs/glossary.md（411 行，术语 + 缩写）；flw 的阅读版在 ../2026-11-20-flw-yochat-diagrams/notes/glossary.md。本表只收读需求与设计时最容易混的词，并标出重写 S1 / S2 / S3 的对应关系。定义以旧…</p><span class="hint">106 行 · 点击阅读</span></article>
+<article class="doc-card" tabindex="0" role="button" data-open-doc="README.md" aria-label="阅读文档：YoChat 旧实现阅读笔记"><span class="kicker">Markdown</span><h3>YoChat 旧实现阅读笔记</h3><p>这组文档是对旧实现 ~/projects/yochat-reference 的外部阅读，用于回答三个问题：</p><span class="hint">86 行 · 点击阅读</span></article>
+      </div>
+      <p class="note">本页由 <code>build.py</code> 生成；Markdown 与 SVG 在构建时嵌入或按相对路径引用，不依赖 CDN 或本地服务器。</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>生成时间：2026-11-20 14:45 CST · 源：<code>~/projects/yochat-reference</code>（2026-11-20 只读副本）与 <code>docs/spec/</code></p>
+    <p>这组文档持续维护：改 Markdown / SVG 后重新运行 <code>python3 build.py</code>。</p>
+  </footer>
+</div>
+
+<div class="modal" id="modal" hidden aria-hidden="true">
+  <div class="modal-backdrop" id="modal-backdrop"></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-head">
+      <h2 id="modal-title">预览</h2>
+      <div class="modal-actions">
+        <button type="button" id="prev-btn" title="上一张（←）" aria-label="上一张">←</button>
+        <button type="button" id="next-btn" title="下一张（→）" aria-label="下一张">→</button>
+        <button type="button" id="zoom-btn" title="切换原始尺寸" aria-pressed="false">原始尺寸</button>
+        <a id="raw-link" href="#" target="_blank" rel="noopener">原始文件</a>
+        <button type="button" id="close-btn" title="关闭（Esc）" aria-label="关闭">关闭</button>
+      </div>
+    </div>
+    <div class="modal-body doc-mode" id="modal-body"></div>
+  </div>
+</div>
+
+<script type="application/json" id="docs-data">{"survey.md": {"title": "旧实现现状", "content": "# 旧实现现状\n\n> 对象：`~/projects/yochat-reference`（2026-11-20 的只读副本）\n> 需求快照：本仓 `docs/spec/`\n> 方法：读 `docs/product`、`docs/engineering`、主计划与验证摘要；数 Rust / Quint / 测试；不把任务勾选当产品验收。\n> 结论：功能停在「加好友、单聊」；约 26.5 万行 Rust、170 个 Quint 模型、205/205 任务；macOS 路径大体可用，但发布级验收没有闭合。\n\n## 1. 一句话定位\n\nYoChat 是一个 serverless、端到端加密的 friend-to-friend IM。旧实现用 Rust + Tauri + Svelte，传输在 iroh 上、消息字节由 p2panda 承载，本地用 SQLCipher。它的能力边界仍是加好友与一对一单聊；多设备、历史同步、吊销、群聊、文件传输都没有成为可日常使用的完整产品。\n\n本仓的重写不是「把 Rust 换成 Scala」，而是把范围从发布级首增量收回到 S1：两个用户、各一台设备、加好友、单聊、先落盘、重启不丢、断网重连。旧需求是后续版本的输入，不是本计划的基线。\n\n## 2. 规模\n\n| 维度 | 数值 | 口径 |\n| --- | ---: | --- |\n| Rust | 265,375 行 / 460 文件 | `find crates -name '*.rs'`；含测试 |\n| crate | 5 | `yochat-core`、`yochat-protocol`、`yochat-app`、`yochat-net`、`yochat-node` |\n| 最大文件 | 13,373 行 | `yochat-app/src/history_recovery_tests.rs`；生产代码最大 6,008 行（`handshake.rs`） |\n| Quint | 170 个 `.qnt` | `models/*.qnt`；主计划快照为 154 个模型文件、308 个配置、342 项时序性质 |\n| E2E | 46 个目录 | `e2e/` |\n| UI 测试 | 32 个文件 | `ui/tests/*.test.ts` |\n| 工具 | 126 个目录 | `tools/` |\n| 文档 | 35 个 Markdown / 10,537 行 | `docs/**/*.md`；34 个 `status: draft`，1 个 `accepted` |\n| 需求 | 118 条 | 7 篇产品规格；全部 `status: proposed` |\n| 任务 | 205/205 完成 | 主计划任务附件；勾选不等于产品验收 |\n\n按 crate 的 Rust 行数：\n\n| crate | 行数 | 职责 |\n| --- | ---: | --- |\n| `yochat-core` | 99,015 | 领域逻辑、纯状态机、存储适配、SQLCipher |\n| `yochat-app` | 76,624 | Tauri 外壳、窗口、应用锁、钥匙串、原生通知 |\n| `yochat-protocol` | 76,444 | 协议操作、线格式、日志与设备组 |\n| `yochat-net` | 13,202 | iroh 传输与窄接口 |\n| `yochat-node` | 90 | 无界面常在线二进制的占位；首期职责由桌面进程承担 |\n\n这份副本没有 `.git`，所以不能核对提交历史；状态判断以主计划、验证摘要和代码结构为准。\n\n## 3. 架构\n\n旧实现的骨架是「纯状态机 + 执行器 + 适配器」：\n\n```text\nSvelte UI\n   │ Tauri IPC\nyochat-app（窗口 / 应用锁 / 钥匙串 / 通知）\n   │\nyochat-core\n   ├─ step(state, event) -> (State, Vector<Effect>)   纯状态机\n   ├─ Store（SQLCipher）                              存储适配\n   └─ 网络接口\n        │\nyochat-net（iroh） ── 中转 / 直接连接 ── 对端\n```\n\n关键约束：\n\n- 状态与待执行效果在同一个事务里落盘；事务提交后才执行效果；执行完成后再在另一个事务里标记完成。效果必须幂等或可去重。\n- 状态只含可序列化纯数据；网络句柄、SQLite 句柄不进入状态。\n- 每个聊天会话是一个设备组：参与方全部未吊销设备的并集；关系建立期间例外，只含邀请与应答各自携带的那台设备。\n- 每台设备在每个会话维护一条只增日志；日志位置用于补齐，消息标识用于呈现、去重、删除与引用。两者是不同的类型，不能混用。\n- 所有对外操作有固定截止；等待、队列、重试、广播都有上限。\n\n对应 flw 的图 01（模块）、02（三层架构与崩溃安全顺序）、03（发送数据流）、04（接收与补齐）、05（好友交换）、06（设备与吊销）。这些图在 `../2026-11-20-flw-yochat-diagrams/notes/`，不在本文件重复。\n\n## 4. 需求与计划\n\n7 篇产品规格共 118 条需求：\n\n| 规格 | 需求数 | 旧计划的交付边界 |\n| --- | ---: | --- |\n| 用户与设备 | 24 | 首增量；macOS / Windows / Linux，首期只先验 macOS |\n| 好友与通讯录 | 24 | 首增量 |\n| 聊天会话与消息 | 35 | 首增量；含 2 条 2026-11-03 的排序/补入增补 |\n| 界面与外壳 | 4 | 首增量 |\n| 隐私与防护 | 8 | 首增量 |\n| 群聊 | 8 | 明确延后 |\n| 文件发送与共享 | 15 | 明确延后 |\n\n主计划把 93 条原始需求 + 2 条排序/补入增补列为「首个交付增量」，群聊 8 条与文件 15 条逐条声明延后。所有需求仍是 `proposed`，所有产品文档仍是 `draft`；这表示「写下来了」，不表示「冻结」或「验收通过」。\n\n主计划的 205 项任务勾满，但它自己在验证摘要里写得很清楚：勾选记录工作完成，不自动证明独立审查通过；Windows/Linux 实机与打包、Developer ID/公证、远端 CI、可见通知横幅/锁屏、部分历史同步与常在线原生验收仍不在本机结论内。\n\n## 5. 验收到了哪\n\n主计划验证摘要里能核对到的证据与边界：\n\n| 范围 | 已观察到 | 没有闭合的部分 |\n| --- | --- | --- |\n| Rust 分批回归 | Core 1119 项、Protocol 251 项、App e2e 430 项、Net lib 56 项 + 集成 61 项通过 | 不是一次完整 workspace 全量；部分历史结果按源码边界复用 |\n| 形式检查 | 154 个模型文件、308 个配置、342 项时序性质；303 个条目复用既有完整证明 | 不是整条公共 verify 重新执行；模型与实现仍需对拍 |\n| 原生 GUI（macOS） | 15 文件主套件 586.631 秒通过；冷加入、联系人接管等专项通过 | 真实系统通知点击、锁屏、默认五分钟自动锁满值未全部覆盖 |\n| 性能 | 千条、万条分层有历史结果；12 次性能样本通过 | 一万条 App 进程重启没有作为当前整批通过；常在线 780 秒批次曾失败 |\n| 平台 | macOS 定向验收 | Windows/Linux 实机、打包、通知未验 |\n| 交付 | release `.app` 本地 ad-hoc 签名校验 | 不是 Developer ID 或公证；不是发布级安装包矩阵 |\n\n最值得记住的两个数字：\n\n- 2026-11-14 的一万条历史原生批次在 1800 秒截止时退出 124；写入 249.295 秒，最后同步进度 26/1734，尚未进入断网/重启。\n- 2026-11-20 仍在开 SQL 查询效率计划，说明性能与索引问题没有在「宣布收工」时结束。\n\n这两个数字不等于「所有功能都坏」，但它们说明：**任务完成、代码能编译、macOS 主路径能跑，与「产品验收完成」不是一回事。**\n\n## 6. 为什么重写\n\n复盘把失败归为四条，按杠杆排序：\n\n1. **范围**：一句话需求被细化成 93 条需求、144 个 Quint 模型（复盘口径；当前目录有 170 个 `.qnt` 文件）、205 个任务、约 25 万行 Rust（当前 26.5 万）；未完成的尾巴几乎全是多设备。\n2. **结构**：25 万行超出一人能读懂的范围；模块边界没有按变更频率切。\n3. **验收**：三次「搞完了」都基于散文、行数或 AI 解释，而不是固定场景。\n4. **目标漂移**：自用工具与 AI 编程练习用同一套产品标准结算。\n\n重写的对策写在 ADR-0003 / ADR-0004：\n\n- S1 只做两个用户、各一台设备、加好友、单聊、先落盘、重启不丢、断网重连。\n- 生产代码 ≤30,000 行，模块 ≤8,000 行，文件 ≤2,000 行；每加一个功能删等量死代码。\n- 1,000 条端到端 <5 秒；冷启动 p50/p95 ≤2s/≤4s；空闲内存 ≤800MB。\n- 测试规格等价 T1：只对 KEEP 功能做等价；每个旧测试在 `test-parity.md` 有一行，不能静默删除或放宽。\n- 这是最后一次整体重写；之后只做模块替换。\n\n## 7. 读旧项目时的三个提醒\n\n1. **`proposed` / `draft` 不是冻结规格。** 旧文档里有很多「待确认事项」，数值上限、时限、平台行为都还没有定案。把图或表当成验收证据会读错。\n2. **任务勾选不是产品验收。** 205/205 只说明任务图上的工作项被勾掉；验证摘要明确保留了大量未验项。\n3. **旧图是阅读辅助，不是规格。** flw 的六张图和术语表由外部模型生成，未经旧项目作者校对；它们帮助建立整体理解，引用前要对照 `docs/spec/` 和代码。\n\n下一篇：[需求分期、矛盾与难点](requirements.md)。\n", "lines": 129, "summary": "对象：~/projects/yochat-reference（2026-11-20 的只读副本）需求快照：本仓 docs/spec/方法：读 docs/product、docs/engineering、主计划与验证摘要；数 Rust / Quint / 测试；不把任务勾选当产品验收。结论：功能停在…"}, "requirements.md": {"title": "需求分期、矛盾与难点", "content": "# 需求分期、矛盾与难点\n\n> 对象：旧实现 `docs/product/` 的 118 条需求；重写侧对照 `docs/adr/0003-v1-scope.md` 与 `0004-test-parity-and-performance-gates.md`。\n> 结论先行：**不是所有需求都要在 MVP 做。** 旧计划的「首增量 93 条」是范围声明，不是最小可用集；23 条已明确延后，剩余 95 条可以按 S1 / S2 / S3 分批。\n> 本文的分批是**为重写提出的建议**，不是旧项目的声明，也不是已经拍板的 S3 清单。S3 条目必须逐条重新论证。\n\n## 1. 口径\n\n先把三个数对齐：\n\n| 数 | 含义 |\n| ---: | --- |\n| 118 | `docs/product/` 的全部需求：用户与设备 24、好友与通讯录 24、聊天与会话 35、界面与外壳 4、隐私与防护 8、群聊 8、文件传输 15 |\n| 95 | 旧计划列入首个交付增量的需求：93 条原始需求 + 2 条 2026-11-03 的排序/补入增补 |\n| 23 | 旧计划逐条声明延后的需求：群聊 8 + 文件传输 15 |\n\n「MVP」在这里有两个含义，必须分开：\n\n- **旧计划的「首个交付增量」**：95 条，覆盖多设备、历史同步、吊销、恢复短语、WCAG、十万条历史、陌生对端预算等发布级要求；首期只先验 macOS。\n- **重写的 S1**：两个用户、各一台设备、加好友、单聊、先落盘、重启不丢、断网重连；生产代码 ≤30,000 行，1,000 条端到端 <5 秒。\n\n旧计划把发布级要求和自用场景混在一个增量里，这正是复盘里的范围失控。下面的分批把「自用工具先能用」放在 S1，把多设备放 S2，把发布级要求放 S3。\n\n**批次口径**：\n\n- 批次 = 该需求**首次被实现**的批次；标「子集」的条目在该批次只实现核心部分，完整范围在后续批次。\n- S1 / S2 对齐 ADR-0003 的方向；S3 是候选池，不是承诺。\n- 一条需求进哪个批次，看它的**依赖与成本**，不看它写在旧文档的哪一篇。\n\n## 2. 分批结果\n\n| 批次 | 条数 | 一句话 | 主要成本 |\n| --- | ---: | --- | --- |\n| S1 | 40 | 两台设备、各一台；加好友、单聊、落盘、重启、重连 | 一条协议路径 + 本地加密/锁 + 最少的 UI |\n| S2 | 20 | 同一用户多设备；仍无群聊/文件 | 设备列表合并、历史同步、吊销、本人同步、常在线 |\n| S3 | 35 | 发布级 MVP 候选 | 拉黑/删除/搜索/通知/键盘/十万条/恢复短语/多实例/隐私告知 |\n| D | 23 | 群聊 8 + 文件 15 | 旧计划已逐条延后 |\n| 合计 | 118 |  |  |\n\n### S1 · 40 条\n\nS1 的核心不是「功能少」，而是**只有一条路径**：一个用户、一个联系人、各一台设备；邀请/应答加好友；单聊先落盘再发；缺失检测、等待、重发、通道重建；重启不丢；断网重连。它仍然需要本地加密、应用锁、安全码和签名验证，因为这些是「加好友、单聊」能不能成立的一部分，不是发布级装饰。\n\n| ID | 需求 | 备注 |\n| --- | --- | --- |\n| `REQ_20260918_4DYMP7NVJDKNPTKR` | 用户是本机生成的一对密钥 |  |\n| `REQ_20260918_R1J6B5CH21YFFP32` | 用户私钥只存在于用户指定的设备上 | S1 单设备退化；多设备“只在指定设备持有”的完整规则在 S2。 |\n| `REQ_20260918_ZTSEXMZQ2VHS21R6` | 本地数据静态加密 |  |\n| `REQ_20260918_B9Y4E73VMQ8RS99X` | 应用锁是安全边界而不是界面切换 |  |\n| `REQ_20260918_YQW27DXZJSHAR0Z0` | 空闲超时自动锁定 |  |\n| `REQ_20260918_865PCSHV46Q4X2XF` | 密钥材料不进入日志与崩溃报告 |  |\n| `REQ_20260918_1VXJQ68HXHM0JR0Q` | 关系需要双方各自确认 |  |\n| `REQ_20260918_2276A5JCK1KGNS1A` | 邀请由用户私钥签名并绑定发起方的渠道账号 | S1 只做定向邀请；不定向邀请与公开张贴的代价说明在 S3。 |\n| `REQ_20260918_37F049FH3B007X48` | 每份邀请使用专属的一次性公钥加密应答 |  |\n| `REQ_20260918_GXF8WYYMWT40CFSM` | 应答只有邀请发起方能打开且不可改换作者 |  |\n| `REQ_20260918_YP7HYFDC5BSKK1BP` | 邀请与应答必须绑定渠道上的权威账号 |  |\n| `REQ_20260918_6J1EMT8Y9HZ68STG` | 邀请各自独立，有有效期且可随时作废 | S1 只做本地有效期与作废；已张贴文本的撤回是交互边界。 |\n| `REQ_20260918_HYREM42TB44CYAHF` | 无匹配记录的入站一律丢弃 |  |\n| `REQ_20260918_KWW858WDBR49C9KS` | 拒绝一份应答不产生任何 YoChat 层面的信号 |  |\n| `REQ_20260918_A1MZYZ7JV43G7EJ3` | 应答方自发出应答起即完成本方确认 |  |\n| `REQ_20260918_FXAWEFJ6Q0S22E5S` | 安全码可带外比对 |  |\n| `REQ_20260918_WEXAYYYH18M9XH5Y` | 关系建立之后的一切由签名承担 |  |\n| `REQ_20260918_JW13382752N6T1XR` | 发送与接收一条消息 |  |\n| `REQ_20260918_DCNS38550F4AY1K5` | 消息端到端加密 |  |\n| `REQ_20260918_YACX40YKDV0GV3G6` | 消息缺失必须可被检测 |  |\n| `REQ_20260918_537BK4VME23Y2GTW` | 严格按序应用，不得跳过 |  |\n| `REQ_20260918_BXC7RNH3YCQZ9BQY` | 等待只因乱序出现并自行结束 |  |\n| `REQ_20260918_2MTCJFK2TX0E9ACY` | 无法解开的消息触发自动通道重建 |  |\n| `REQ_20260918_XMX889MKAJ4QK8JX` | 已发送消息永久保留原文 |  |\n| `REQ_20260918_VBRZ8N5AC8QR0N3B` | 接收方可主动请求重发 |  |\n| `REQ_20260918_W5CABH0H2PAJ2TAG` | 发送方在长时间未获确认时兜底重发 |  |\n| `REQ_20260918_Y7C40JC6A0EWEDT5` | 无法完成重建时才告知用户 |  |\n| `REQ_20260918_DEM5TY7V4XDCPWGJ` | 通道重建的频率须有上限 |  |\n| `REQ_20260918_N2K56BGH73GX0YCB` | 已发送消息的状态可见，只到已接收为止 |  |\n| `REQ_20260918_Y1C61561WBX7BTNE` | 对方离线不导致消息丢弃 |  |\n| `REQ_20260918_S02F3SXHZY2DHA87` | 重复到达的消息只呈现一次 |  |\n| `REQ_20260918_C2TDVVB9MGCY30KM` | 消息默认永久保存 |  |\n| `REQ_20260918_DK8P5E0K5GES1T0C` | 操作作用于消息所属的聊天会话 |  |\n| `REQ_20260918_R5JVF7M78YZQKN8H` | 存储失败必须报告为失败 |  |\n| `REQ_20260918_T6HDW9X9ZSAMECDT` | 消息自称的时间不作为判定依据 |  |\n| `REQ_20260918_RYGFPP529TDA9R6X` | 不与未建立关系的对端交换消息 |  |\n| `REQ_20260918_P7X1QGZCYA41GAQT` | 内容与参与者对中转设施不可读 |  |\n| `REQ_20260918_QZGW3CN8BHBB0F6N` | 发现信息不发布直接地址 |  |\n| `REQ_20260918_MXHYRG96W0VKB031` | 对未获授权的请求不产生响应 |  |\n| `REQ_20260918_DVFN7QEAWP32QD9G` | 诊断默认不记录内容 |  |\n\n**为什么 S1 还有 40 条？** 因为很多条目是跨切面的不变量（签名、去重、时间不可信、诊断不含内容），不是独立功能。真正的成本轴是：协议状态机、加密、存储、传输、UI/壳五个组件；不是需求条数。若要把 S1 再缩小，只能缩小验收场景（例如先做在线单聊），不能删掉安全不变量。\n\nS1 里需要特别说明的三条：\n\n- `REQ_20260918_2276A5JCK1KGNS1A`：S1 只做**定向邀请**；不定向邀请、公开张贴、渠道身份复用都在 S3。\n- `REQ_20260918_R1J6B5CH21YFFP32`：S1 只有一台设备，规则退化为「用户私钥只在这台设备上」；多设备的完整规则在 S2。\n- `REQ_20261103_GBNVF8ZY42F1DZX4` 不在 S1：S1 设计只承诺按作者顺序。若要求跨作者最终全序，要么在 S1 加成本，要么明确降级为已知约束；不能既说 S1 等价旧规格，又不实现它。\n\n### S2 · 20 条\n\nS2 是「自用多设备」：同一用户两台设备；新设备默认只读加入之后的消息；历史同步必须由持有历史的设备发起；吊销；本人消息/通讯录/未读同步；常在线设备可选。它仍然不做群聊和文件。\n\n| ID | 需求 | 备注 |\n| --- | --- | --- |\n| `REQ_20260918_5A7WDB3CTV03FJTW` | 设备条目由用户私钥签发，设备列表对联系人可见 |  |\n| `REQ_20260918_ZVSZ6JT217MBK53K` | 用户私钥同步须在已持有它的设备上发起 |  |\n| `REQ_20260918_H0XN0536A5P1WZVG` | 新设备加入必须让其他设备看见 |  |\n| `REQ_20260918_V6NGSKDD26FWGEZ4` | 新设备默认只能读取加入之后的消息 |  |\n| `REQ_20260918_9G1QW692AHHVT4JX` | 历史同步必须在持有历史的设备上发起 |  |\n| `REQ_20260918_KAN0STW3H8EWZB99` | 历史同步可中断续传且不产生重复 |  |\n| `REQ_20260918_9YNQV83FP0G2FV42` | 吊销设备使其消息被拒绝，用户公钥不受影响 |  |\n| `REQ_20260918_PYQVKZPN5ZS9HWSA` | 吊销的判定依据本地接收时间，不依据消息自称的时间 |  |\n| `REQ_20260918_214C96FXNAE7W0G6` | 吊销不撤销该设备已持有的数据 |  |\n| `REQ_20260918_GBC9KZAACYZ1RHYZ` | 常在线设备 | S2 可选；无界面形态与无钥匙串解锁是 S3 的待裁决项。 |\n| `REQ_20260918_VWTKG0AZG2084W8K` | 设备别名由持有者设置并对联系人可见 |  |\n| `REQ_20260918_RCMJA190DC6RY6DW` | 同一台机器可并存多个用户与多个设备实例 |  |\n| `REQ_20260918_2PEVDK1HG1EK3KSW` | 设备的授权由用户签名的设备列表承担 |  |\n| `REQ_20260918_1F7X3ZHJS4N07TRG` | 通讯录在用户的设备之间同步 |  |\n| `REQ_20260918_Q15AKFP42V04BVM3` | 重发请求由被请求方的全部设备共同应答 |  |\n| `REQ_20260918_MEK3HV5ENZDAE9SS` | 重发只在请求方的入组基线之后提供 |  |\n| `REQ_20260918_WRGB8QE5N650VWDK` | 与自己的聊天会话 |  |\n| `REQ_20260918_Y1KSJ34NKQH17Z08` | 消息在用户自己的设备之间同步 |  |\n| `REQ_20261103_GBNVF8ZY42F1DZX4` | 同一消息集合的最终顺序在设备间一致 | S1 设计只承诺按作者顺序；跨作者最终全序要么在 S1 加成本，要么降级为已知约束。 |\n| `REQ_20260918_2AD55GM4Z0PTAJXX` | 未读与会话列表排序 | S2 跨设备未读同步；S1 可先做本机未读。 |\n\nS2 的难点不在条数，而在**没有中心协调者**：设备列表要合并并发签发，吊销要传播，历史同步要可中断续传，常在线设备要在锁边界内工作。详见第 4 节。\n\n### S3 · 35 条\n\nS3 是「发布级 MVP 候选」：拉黑、删除、搜索、引用、通知、键盘可达、WCAG、十万条历史、恢复短语、多实例、隐私告知、陌生对端预算、不定向邀请。每一条都要重新回答 ADR-0003 的三个问题：它服务哪个验收场景？需要新表/新协议状态/新组件吗？测试与性能代价是多少？\n\n| ID | 需求 | 备注 |\n| --- | --- | --- |\n| `REQ_20260918_T1H63J7F3QD0WBBT` | 恢复短语只在创建时展示并要求确认 |  |\n| `REQ_20260918_G2S3MXJ3J0HXYXYP` | 恢复短语可打开本机既有数据 |  |\n| `REQ_20260918_VMJVPZMK63123DKH` | 无可解开数据时恢复为一台新设备 |  |\n| `REQ_20260918_E6NXMN0ABVQD7NSN` | 恢复短语的真实后果须在生成时说明 |  |\n| `REQ_20260918_P2MVJR9GAY96T95W` | 用户私钥全部丢失时的处理 |  |\n| `REQ_20260918_Z1P2TGCMD0K4W1XP` | 用户别名与头像是公开的，只有本人能改 |  |\n| `REQ_20260919_757FNZE6B8FN15YV` | 本方渠道身份可保存并复用 |  |\n| `REQ_20260918_F53PQ4FB8VT4SCV9` | 公开张贴邀请的代价须在生成时说明 |  |\n| `REQ_20260918_ZWMFKB381M0AKCYN` | 拉黑停止双向通信且不产生任何响应 |  |\n| `REQ_20260918_TW7PP68XQAKBAVYH` | 拉黑的可推断性须如实说明 |  |\n| `REQ_20260918_J22VY0VTZVRBY1P6` | 解除拉黑补齐期间的消息 |  |\n| `REQ_20260918_F7ZBKSBAC1N4KM2K` | 删除联系人时询问是否删除历史 |  |\n| `REQ_20260918_SD1XKGXS4DBG5ZTE` | 删除已拉黑的联系人保留拉黑记录 |  |\n| `REQ_20260918_XS6GKW2ZZ4R1CS6Y` | 重新添加不继承校验状态 |  |\n| `REQ_20260918_GG1H42XAJXA0M4ZT` | 联系人刷新保留拉黑与校验 |  |\n| `REQ_20260918_0P17VCWKG2FZ26SZ` | 好友别名与好友备注都是私有的 |  |\n| `REQ_20260918_CE3T62ZJNE2FKYKE` | 联系人分组是私有的 |  |\n| `REQ_20260918_XBRY5Q81Z4ZPP6ER` | 大范围重发请求须经被请求方用户批准 |  |\n| `REQ_20260918_9MKG1QMBXQAG6C12` | 无法提供的消息须有可验证的明确答复 |  |\n| `REQ_20260918_WW7ZXW92D1B6NVH9` | 引用回复 |  |\n| `REQ_20260918_8F32S19RPRC25471` | 全文搜索本地历史 |  |\n| `REQ_20260918_PE8XM7D0MPZ2XWTV` | 用户可删除消息 |  |\n| `REQ_20260918_F9J932YWK907YPY7` | 删除保留消息标识并覆盖内容 |  |\n| `REQ_20260918_Y4W1WTZE4K8TNEYD` | 删除默认传播到本人全部设备，可在删除时关闭 |  |\n| `REQ_20260918_K54NXXBZW1R6415F` | 收到的删除指令须在本设备上确认才执行 |  |\n| `REQ_20260918_SR68DSXCX4S5TZ3R` | 删除尚未送达的消息只停止本设备的重传，须告知其边界 |  |\n| `REQ_20260918_0FAYS8R0Z7A9WF3Q` | 接收、落盘与重发一律受速率与体积上限约束 | S1 只需有界队列与固定上限；配额、暂停与恢复动作在 S3。 |\n| `REQ_20261103_NS77FQDYNCMNF71P` | 迟到补入与顺序更新可察觉且不漏读 |  |\n| `REQ_20260918_Q0MQBNAVS1TB1PBW` | 实际暴露的信息须在使用前如实告知 | 发布级首次告知；S1 自用可先不做完整告知页。 |\n| `REQ_20260918_386RMXBPWJYEXT9P` | 在线状态对持有设备公钥的人可见 | 同上，属于 S3 的隐私告知。 |\n| `REQ_20260918_FBGYS6FJ6X3GHEQ4` | 陌生对端的资源上限 |  |\n| `REQ_20260918_377PNHQWJ8PGCN80` | 当前连接方式对用户可见 |  |\n| `REQ_20260918_3AEMNVEGME49ZT2R` | 主界面布局与可达性基线 | S1 有基本界面；键盘可达与 WCAG 基线在 S3。 |\n| `REQ_20260918_3TK81N30WS2S6JWB` | 大量历史下仍然可用 |  |\n| `REQ_20260918_G3JQAH0SXEXVDATA` | 桌面通知及其内容边界 |  |\n\nS3 不是「把旧 93 条剩下的一次做完」。它是**重新论证后的子集**；论证不过的条目继续留在后续，不自动进 S3。\n\n### D · 23 条（已延后）\n\n旧计划已经逐条声明：群聊 8 条、文件传输 15 条不在首增量。重写没有理由提前做；它们只作为「架构不要堵死」的输入。\n\n| ID | 需求 | 原计划 |\n| --- | --- | --- |\n| `REQ_20260918_78D42FH8SES6P5CE` | 群消息只有当前成员能解密 | 群聊，明确延后 |\n| `REQ_20260918_V4CX98RRRNSPKJ12` | 新成员读不到加入之前的消息 | 群聊，明确延后 |\n| `REQ_20260918_VKJNMX125CHGGDCY` | 被移除成员读不到之后的消息 | 群聊，明确延后 |\n| `REQ_20260918_EWJ8QV12FWCSDN8S` | 群角色与权限 | 群聊，明确延后 |\n| `REQ_20260918_MGYFJHW22Y328MPW` | 成员可以自行退出 | 群聊，明确延后 |\n| `REQ_20260918_SKDZ5T7T2DM4MW4V` | 群内可拉黑成员，范围由用户选择 | 群聊，明确延后 |\n| `REQ_20260918_NEQR8SPMDZYM04FY` | 群消息的缺失同样必须可被检测 | 群聊，明确延后 |\n| `REQ_20260918_8WAFG4K1R6TECM4T` | 成员变更最终收敛 | 群聊，明确延后 |\n| `REQ_20260918_V18R6CZZ5M2NN0HY` | 发送文件到聊天会话 | 文件传输，明确延后 |\n| `REQ_20260918_CEMPWSR9M6FEV0NM` | 可选择发送独立副本 | 文件传输，明确延后 |\n| `REQ_20260918_P5MF7948P6D5ZFDD` | 源文件变化时如实呈现 | 文件传输，明确延后 |\n| `REQ_20260918_07ZTRZZEFSTR2AV6` | 共享文件或目录 | 文件传输，明确延后 |\n| `REQ_20260918_EZN5NZFG4287AF2T` | 发送与共享都属于提供它的那台设备 | 文件传输，明确延后 |\n| `REQ_20260918_ZMQ37JWBGTS1557S` | 浏览对方共享的目录树 | 文件传输，明确延后 |\n| `REQ_20260918_SQ2PCMRK0KXMYHDB` | 共享的可见范围逐项决定，可按联系人分组 | 文件传输，明确延后 |\n| `REQ_20260918_X6GEB41KB2VVNW2Z` | 只暴露显示名与相对路径 | 文件传输，明确延后 |\n| `REQ_20260918_ERJ5K0EGCWBKVRFY` | 符号链接不得越出共享根 | 文件传输，明确延后 |\n| `REQ_20260918_E2E85RRHP5Q0YK7Z` | 撤销发送与共享 | 文件传输，明确延后 |\n| `REQ_20260918_7ASSB68RBP1REDMT` | 内容完整性可按分块校验 | 文件传输，明确延后 |\n| `REQ_20260918_WF02KZAEBDF6Z7XP` | 多源并发下载默认开启，转发由被请求方逐次决定 | 文件传输，明确延后 |\n| `REQ_20260918_MDFC477C3YZ025YP` | 进行中的传输对提供方可见 | 文件传输，明确延后 |\n| `REQ_20260918_W3D5CMFZVPY859BV` | 下载与浏览须持久记录并可查阅 | 文件传输，明确延后 |\n| `REQ_20260918_DCB0NBAAA0AD554V` | 下载与浏览请求受速率与并发上限约束 | 文件传输，明确延后 |\n\n## 3. 依赖顺序\n\n分批不是按文档切，而是按依赖切。主要依赖链：\n\n```text\n用户密钥 / 本地加密 / 应用锁\n        │\n        ▼\n定向邀请 ── 一次性公钥 ── 应答 ── 安全码\n        │\n        ▼\n联系人关系 ── 设备组（S1 只有两台设备）\n        │\n        ▼\n单聊：先落盘 → 发送 → 缺失检测 → 等待 → 重发 / 重建\n        │\n        ├── S2：设备列表 / 新设备 / 历史同步 / 吊销 / 本人同步\n        │\n        └── S3：删除 / 搜索 / 拉黑 / 通知 / 十万条 / 恢复短语 / 多实例\n```\n\n几条硬依赖：\n\n- 没有定向邀请与一次性公钥，就没有关系；没有关系，就没有消息准入。\n- 没有本地落盘与去重，重发/重建会制造重复或丢消息。\n- 没有设备列表合并，S2 的历史同步与吊销会在分叉上打架。\n- 没有删除墓碑，S3 的多设备同步会把删过的消息又带回来。\n- 没有应用锁的会话失效，S1 的「锁定即边界」不成立，S2 的多实例隔离也不成立。\n\n## 4. 表面矛盾与张力\n\n下面 12 条是读旧规格时最容易卡住的地方。多数不是设计错误，而是**两个正确约束的交界**；旧文档大多写明了边界，少数仍需裁决。\n\n| # | 表面矛盾 | 证据 | 实际关系 / 裁决 | 批次 |\n| ---: | --- | --- | --- | --- |\n| 1 | 用户私钥「只存在于指定设备」 vs 恢复短语是私钥的可写形式 | `REQ_20260918_R1J6B5CH21YFFP32`；`REQ_20260918_T1H63J7F3QD0WBBT`；旧术语「恢复短语」 | 字面绝对化。应改成「YoChat 不在指定设备之外持久保存用户私钥；恢复短语由用户自行保管」。不是设计变更，是措辞修正。 | S1 / S3 |\n| 2 | 消息不得因资源上限被放弃 vs 接收/落盘/存储有上限 | `REQ_20260918_537BK4VME23Y2GTW`；`REQ_20260918_0FAYS8R0Z7A9WF3Q` | 上限在**接纳之前**拒绝；已接纳的消息不丢。存储满之后是暂停 + 恢复动作，不是静默丢弃。需要明确「已接纳」的边界。 | S1 / S3 |\n| 3 | 严格按序、不得跳过 vs 放行应用游标 | `REQ_20260918_537BK4VME23Y2GTW`；`REQ_20260918_9MKG1QMBXQAG6C12` | 「放行」不是「应用」：它为不可得/等待批准的位置推进游标，带可见原因且可逆。标题比机制更绝对，UI 与测试必须区分 应用 / 放行 / 已决。 | S1 / S3 |\n| 4 | 等待只因乱序、会自行结束 vs 暂不可得/不再提供长期存在 | `REQ_20260918_BXC7RNH3YCQZ9BQY`；`REQ_20260918_9MKG1QMBXQAG6C12` | 「等待」只指乱序；「暂不可得」「不再提供」是另外的状态。旧术语表已经区分，界面不能都叫「等待」。 | S1 / S3 |\n| 5 | 关系需要双方各自确认 vs 应答方发出应答即完成确认、拒绝不产生信号 | `REQ_20260918_1VXJQ68HXHM0JR0Q`；`REQ_20260918_A1MZYZ7JV43G7EJ3`；`REQ_20260918_KWW858WDBR49C9KS` | 确认是**非对称**的：应答方先认为建立，发起方后确认；拒绝是静默的。有限交换不可能消灭不一致，旧规格要求过期 + 恢复提示。这是协议限制，不是 bug。 | S1 |\n| 6 | 常在线设备无人值守 vs 应用锁是安全边界、空闲自动锁定 | `REQ_20260918_GBC9KZAACYZ1RHYZ`；`REQ_20260918_B9Y4E73VMQ8RS99X`；`REQ_20260918_YQW27DXZJSHAR0Z0` | **仍未裁决。** 锁定后的常在线设备是否还能解密，旧规格没有给出策略：若锁定是安全边界，就不应让明文密钥在锁定时可达；若为了常在线保持解锁，锁边界就被削弱。旧计划把无界面/无钥匙串解锁延后，首期只让桌面进程承担。S2 必须给出策略：只存密文后解密，还是专用解锁策略。 | S2 / S3 |\n| 7 | 吊销使设备消息被拒绝 vs 持用户私钥的被吊销设备仍可冒充 | `REQ_20260918_9YNQV83FP0G2FV42`；`REQ_20260918_214C96FXNAE7W0G6` | 吊销只对**不持用户私钥**的设备成立；持用户私钥等于身份本身，YoChat 挡不住。旧规格已如实写明，产品文案不能承诺「吊销即安全」。 | S2 |\n| 8 | 消息默认永久保存 vs 用户删除/墓碑/多设备历史不同 | `REQ_20260918_C2TDVVB9MGCY30KM`；`REQ_20260918_PE8XM7D0MPZ2XWTV`；`REQ_20260918_F9J932YWK907YPY7`；`REQ_20260918_K54NXXBZW1R6415F` | 永久保存是**默认**，不是保证；删除是显式、逐设备确认、不是远程擦除。不同设备的历史可以不同；验收是「按内容检索不到」，不是「物理不可恢复」。 | S3 |\n| 9 | 设备列表对联系人可见 vs 用户层身份/成员名单对中转不可读 | `REQ_20260918_5A7WDB3CTV03FJTW`；`REQ_20260918_P7X1QGZCYA41GAQT` | 观察者不同：中转看设备端点，联系人看设备列表。设备 ≠ 用户；隐私告知必须逐字区分，否则验收对不上。 | S1 / S3 |\n| 10 | 所有操作有界结束 vs 消息不因超时放弃等待 | 架构「每次对外操作有固定单调截止」；`REQ_20260918_537BK4VME23Y2GTW` | 截止约束**一次尝试**，不约束逻辑上的消息；重试继续，直到不可得/不再提供。模型要同时表达「尝试有界」与「逻辑等待可持续」。 | 跨批次 |\n| 11 | 十万条首屏 500ms vs S1 一千条 <5 秒 | `REQ_20260918_3TK81N30WS2S6JWB`；ADR-0004 | 范围差异，不是矛盾。S1 的 1,000 条与 S3 的 100,000 条是不同验收；T1 不能把 100k 指标塞进 S1。 | S3 |\n| 12 | 恢复短语「只在创建时展示」 vs 设置中通过应用锁再次查看 | `REQ_20260918_T1H63J7F3QD0WBBT` 的标题与正文 | 标题比正文窄；正文允许显式请求 + 应用锁校验后再次查看。属文档措辞缺陷，复用该条时要改标题。 | S3 |\n\n还有两条不是矛盾，但容易被误读：\n\n- **「消息默认永久保存」 vs 文件七天有效期**：旧文档已说明对象不同——消息是本地历史，文件是发送方共享位置上的临时可下载物。\n- **「关系双方确认」 vs 「不定向邀请可被多人应答」**：一份邀请可以被多人分别应答，发起方分别确认；这不是多方关系，仍是多条一对一关系。\n\n## 5. 难点\n\n| # | 难点 | 为什么难 | 旧项目做到哪 | 建议 |\n| ---: | --- | --- | --- | --- |\n| 1 | 多设备设备列表合并 | 多台持用户私钥的设备可离线各签一个 `v+1`；只按版本/到达顺序都会分叉。旧设计改成「一组可合并的签名操作」：加入/改名取并集，吊销永久生效，同版本按 `(批次版本, 签名字节)` 确定排序。 | 已写出合并规则与冲突状态；有模型与真实回归。 | S2 先做合并与冲突展示，不做「自动选胜者」。 |\n| 2 | 常在线设备 + 应用锁 | 要替离线设备收消息，就要有可用密钥；若锁定是安全边界，锁定时又不能解密。旧计划没有给出常在线设备的解锁策略，只把无界面/无钥匙串解锁延后。 | 首期由长期运行的桌面进程承担；无界面形态仍是占位。 | S2 只做「锁定时代收密文、解锁后解密」，或明确不做常在线；不要偷偷保持解锁。 |\n| 3 | 乱序、缺失、重建 | 日志位置用于补齐，消息标识用于呈现；两套数不能混。缺失检测必须按日志位置，解密失败要重建并重传，重建还要限频。 | 两套数、三条补齐路径、墓碑、重建限频都写进了工程契约。 | S1 只保留一条路径；不要先在 S1 引入历史同步/大范围重发。 |\n| 4 | 重发 vs 历史同步 vs 删除 | 小范围补齐自动、大范围要批准、历史同步要显式发起；删除要留墓碑、逐设备确认、不能承诺对方收不到。 | 入组基线、滑动窗、256 位置/10 分钟/7 天、批准队列、私有通道转达都已设计。 | S1 不做大范围重发；S2 做基线；S3 做批准与删除。 |\n| 5 | 好友交换的不一致窗口 | 没有中心服务；邀请/应答经外部渠道；拒绝静默；应答方先确认、发起方后确认；网络不可靠时双方可能短暂不一致。 | 用一次性公钥、渠道身份、安全码、有效期 + 宽限、过期交换恢复提示处理。 | S1 必须实现「过期 + 恢复提示」，否则一方以为加上了，另一方没有。 |\n| 6 | 吊销传播 | 联系人可能长期离线；吊销只能随连接传播；判定用本地接收时间；持用户私钥的设备吊销不了。 | 设备列表 + 独立吊销声明 + 本地时间判定 + 如实告知。 | S2 做传播与本地判定；产品文案明确「收到之后才生效」。 |\n| 7 | 本地加密与多实例隔离 | SQLCipher、钥匙串、应用锁代数、在途结果失效、每实例独立数据库密钥；同机多用户/多实例是真实使用方式。 | 已写出实例隔离、锁代数、在途结果丢弃、每实例密钥。 | S1 做单实例锁边界；S2 再做多实例，别在 S1 用「目录隔离」冒充安全隔离。 |\n| 8 | 十万条历史与搜索 | 本地是唯一副本、默认永久保存；UI 虚拟列表、SQL 索引、搜索与滚动都要有界；旧项目在千条/万条上都出现过性能与停滞。 | 有十万条历史界面基线；也有千条近 300 秒、万条 1800 秒截止的历史失败。 | S3 再谈 100k；S1 的 1,000 条 <5 秒先做实测门。 |\n| 9 | T1 测试等价与模型冻结 | 旧项目有 170 个 `.qnt` 文件（主计划快照 154 个模型文件）、1119 项 Core 测试、430 项 App e2e；重写只有 ≤30k 行、5 个 S1 模型。全量移植会把旧架构焊死。 | ADR-0004 已规定只对 KEEP 功能等价，每个旧测试一行 `test-parity.md`，失败要人裁决。 | 先列 KEEP/DROP，再谈移植；不要用「旧测试全绿」当 S1 验收。 |\n\n## 6. 建议与待裁决\n\n### 6.1 对 S1 的建议\n\n- **保留** 40 条中的安全不变量：签名、端到端加密、去重、时间不可信、诊断不含内容、锁边界。\n- **明确降级** `REQ_20261103_GBNVF8ZY42F1DZX4`（跨作者最终全序）：要么在 S1 预算里实现，要么写进已知约束；不要静默忽略。\n- **不要** 在 S1 做常在线、历史同步、吊销传播、大范围重发、删除、搜索、通知、十万条。\n- **性能门先测** 1,000 条端到端 <5 秒，再谈 100k；不要用旧项目的 300 秒当基线。\n\n### 6.2 进入实现前要拍板的五件事\n\n1. **GBNV**：S1 是否要求跨作者最终全序？如果是，S1 的范围表要加一行成本；如果不是，写进已知约束，并在 T1 里标明不等价。\n2. **常在线解锁**：锁定时代收密文，还是允许专用设备保持解锁？后者需要明确的安全告知与评审。\n3. **恢复短语**：S3 才做，还是 S1 就给最小恢复？ADR-0003 目前把它列为非目标。\n4. **隐私告知**：`Q0MQ` / `386R` 在 S1 做还是 S3 做？如果 S1 面向自用，可以后置；但一旦给别人用，就必须前移。\n5. **删除/搜索**：S3 的一次做，还是拆成「本地删除」与「跨设备删除」两批？后者依赖墓碑与设备确认。\n\n### 6.3 不要做的事\n\n- 不要把旧 93 条当成待办清单逐条 burn down；那正是复盘里的范围放大。\n- 不要为了「测试等价」移植全部旧测试；T1 只对 KEEP 功能等价，单元测试按新结构重写。\n- 不要把旧 170 个模型搬进 S1；S1 只保留 5 个模型，协议定稿后冻结。\n- 不要用「任务勾满」「编译通过」「AI 解释」当验收；验收是两台设备 100 条消息、重启不丢、断网重连，加上性能门与测试门。\n\n下一篇：[术语表](terms.md)。\n", "lines": 289, "summary": "对象：旧实现 docs/product/ 的 118 条需求；重写侧对照 docs/adr/0003-v1-scope.md 与 0004-test-parity-and-performance-gates.md。结论先行：不是所有需求都要在 MVP 做。 旧计划的「首增量 93 条」是范围声明，…"}, "terms.md": {"title": "术语表（旧实现 → 重写）", "content": "# 术语表（旧实现 → 重写）\n\n> 完整版：旧项目 `docs/glossary.md`（411 行，术语 + 缩写）；flw 的阅读版在 `../2026-11-20-flw-yochat-diagrams/notes/glossary.md`。\n> 本表只收读需求与设计时最容易混的词，并标出重写 S1 / S2 / S3 的对应关系。定义以旧规格为准；这里的一句话是阅读索引，不是规范。\n\n## 1. 身份与设备\n\n| 术语 | English | 一句话 | 易混 / 重写 |\n| --- | --- | --- | --- |\n| 用户 | User | 一个人，由本机生成的一对用户密钥表示；不注册、无账号目录。 | 不是「设备」；S1 一个用户只有一台设备。 |\n| 用户公钥 | User Public Key | 指称一个人、验签、算安全码；不是网络地址。 | 单独持有它连不上任何机器。 |\n| 用户私钥 | User Private Key | 定义用户的私钥；恢复短语是它的可写形式。 | 只在指定设备上持久保存；S1 单设备，S2 多设备。 |\n| 设备 | Device | 用户的一台机器；必有自己的设备密钥对与本人用户公钥。 | 日常操作以人为单位，不以设备为单位。 |\n| 设备公钥 | Device Public Key | 点对点网络中的地址；可寻址、可查在线状态、可尝试连接。 | 联系人能看到；中转也能看到设备端点。 |\n| 设备条目 | Device Entry | 设备列表中的一条：设备公钥、别名、加入时间等，由设备自签名。 | 由用户签名的设备列表授权。 |\n| 设备列表 | Device List | 用户当前全部设备条目的有版本集合，由用户私钥签名，随关系同步。 | S2；S1 用邀请里的单设备例外。 |\n| 设备吊销 | Device Revocation | 持有用户私钥的设备签发的声明：某设备公钥不再被接受。 | 用户公钥与安全码不变；收到声明后才生效。 |\n| 恢复短语 | Recovery Phrase | 用户私钥的可书写形式。 | S3；ADR-0003 把恢复列为 S1 非目标。 |\n| 设备别名 | Device Name | 设备持有者设置、随设备列表同步的名字。 | 联系人不能改。 |\n| 用户别名 | Display Name | 用户设置、同步给全部联系人的名字。 | 公开、可改、可能重名；S3。 |\n| 好友别名 | Contact Alias | 用户给联系人另起的私有名字。 | 不发送给对方；S3。 |\n| 常在线设备 | Always-on Device | 用户自己的、长期在线、可替其他离线设备收消息的设备。 | 持有可解密其可见范围的密钥；S2 可选，锁策略待裁决。 |\n| 应用会话 | App Session | 一次解锁到下一次锁定之间的期间。 | 不是「聊天会话」；锁定是安全边界。 |\n| 应用锁 | App Lock | 用口令/钥匙串把本地数据与当前会话锁住。 | 锁定立即使会话失效；S1。 |\n| 实例 | Instance | 同一台机器上的一个用户/设备运行实例。 | 每实例独立数据库密钥与锁；S2。 |\n\n## 2. 关系\n\n| 术语 | English | 一句话 | 易混 / 重写 |\n| --- | --- | --- | --- |\n| 联系人 | Contact | 通过邀请与应答、双方各自确认后建立关系的人。 | 不是「好友」这种平台关系；没有中心服务。 |\n| 邀请 | Invitation | 用户私钥签名的一段文本：用户公钥、渠道身份、一次性公钥、签发设备公钥、有效期等。 | 分定向/不定向；S1 只做定向。 |\n| 定向邀请 | Directed Invitation | 额外携带被邀请方在渠道上的权威账号，供对方核对。 | S1。 |\n| 不定向邀请 | Undirected Invitation | 不携带接收者标识，可被多人分别应答。 | S3；公开张贴要说明代价。 |\n| 邀请应答 | Invitation Response | 应答方用户私钥签名、加密到邀请一次性公钥的回复。 | 只有发起方能打开；必须在签发邀请的那台设备上确认。 |\n| 渠道身份 | Channel Identity | 渠道标签 + 用户在该渠道上的权威账号。 | 本地私有、可跨设备同步；S3 做复用。 |\n| 安全码 | Safety Code | 双方可带外比对的短值，用来发现中间人。 | 由双方用户公钥导出；S1。 |\n| 拉黑 | Block | 停止双向通信、不产生任何应用层响应。 | S3；被拉黑方可能从传输行为推断。 |\n| 删除联系人 | Contact Removal | 删除关系，询问是否删除历史；拉黑记录保留。 | S3；逐设备确认。 |\n\n## 3. 会话与消息\n\n| 术语 | English | 一句话 | 易混 / 重写 |\n| --- | --- | --- | --- |\n| 聊天会话 | Conversation | 用户与一个联系人（或与自己）之间的全部消息序列。 | 不是「应用会话」。 |\n| 与自己的聊天会话 | Self Conversation | 只含本人设备的会话，用来跨设备同步信息。 | S2；不是「没有对端的本地笔记」。 |\n| 设备组 | Device Group | 一个聊天会话的成员集合：参与方全部未吊销设备的并集。 | 关系建立期间例外，只含交换的两台设备。 |\n| 先落盘再发送 | Write-before-send | 消息先在本地持久化，再进入发送。 | S1 的核心承诺。 |\n| 送达 | Delivered | 对方任一未吊销设备已收到；不等于已读。 | 状态只到「已接收」。 |\n| 已查看 | Viewed | 用户实际看到且短暂稳定的消息身份集合；按集合合并。 | 不是「最高消息编号」；S2 跨设备同步。 |\n| 等待 | Waiting | 某作者的消息未到、其后消息已到时，暂不呈现后续消息。 | 只指乱序；不是「暂不可得」。 |\n| 暂不可得 | Temporarily Unavailable | 等待超时/设备未答复等导致的临时放行状态，可逆。 | 与「等待」不同；S3。 |\n| 不再提供 | No Longer Available | 依据某一版设备列表，收齐各设备签名声明后的放行状态。 | 不是绝对终态；内容后来到达仍接受。 |\n| 重发 | Resend | 重新发送已发过的消息；由接收方请求或发送方兜底触发。 | 不是「重试」；有范围上限。 |\n| 通道重建 | Channel Rebuild | 接收方无法解密时，自动重建加密通道并重传未确认消息。 | 有频率上限；S1。 |\n| 历史同步 | History Sync | 新设备在持有历史的设备上显式发起，取得加入之前的历史。 | S2；与「重发」不同路径。 |\n| 引用回复 | Quote Reply | 回复时引用某条消息。 | S3。 |\n| 全文搜索 | Full-text Search | 在本地历史中检索。 | S3；删除内容不出现。 |\n\n## 4. 顺序、存储与恢复\n\n| 术语 | English | 一句话 | 易混 / 重写 |\n| --- | --- | --- | --- |\n| 日志位置 | Log Position | 每台设备在每个会话的只增日志上的坐标，用于补齐。 | 不是消息身份；u32，按（设备，日志）各数各的。 |\n| 消息标识 | Message ID | 发送方给出的产品层消息编号，用于呈现、去重、删除、引用。 | 不是日志位置；重建后位置变、标识不变。 |\n| 应用游标 | Apply Cursor | 每个（会话，作者设备）对上下一个要处理的日志位置。 | 是承诺，不是位置；全部持久化效果提交后才越过。 |\n| 已决 | Settled | 已应用 + 已放行 + 已删除。 | 不是「已应用」；验收里的连续区间用它。 |\n| 放行 | Release | 对不可得/等待批准的位置推进游标，带原因且可逆。 | 不是「跳过」；不是「应用」。 |\n| 墓碑 | Tombstone | 删除后保留消息标识、覆盖内容的存储标记。 | 按消息标识记，不按日志位置；防止同步复活。 |\n| 入组基线 | Join Baseline | 提供方为每个请求方记录的「加入成员集合时」的位置。 | 按（提供方设备，请求方设备，会话）局部量；S2。 |\n| 删除指令 | Delete Instruction | 本人设备之间传播的删除提议，收到设备确认后才执行。 | 不是远程擦除；S3。 |\n| 去重 | Deduplication | 同一消息标识/同一操作重复到达只呈现/应用一次。 | S1。 |\n| 崩溃安全顺序 | Crash-safe Order | 状态与效果同事务落盘 → 提交后执行效果 → 再标记完成。 | 效果必须幂等；S1。 |\n\n## 5. 网络与隐私\n\n| 术语 | English | 一句话 | 易混 / 重写 |\n| --- | --- | --- | --- |\n| 中转 | Relay | 直连失败时转发字节的第三方设施；内容端到端加密。 | 能看到设备端点、时间、字节/帧数、本机地址、协议版本、端点签名。 |\n| 直接连接 | Direct Connection | 不经过中转的设备间连接。 | 少一个观察者，但向对端暴露本机地址。 |\n| 发现信息 | Discovery Record | 可被第三方查询的「如何找到这台设备」的信息。 | 不发布本机直接地址；S1 relay-only 更容易。 |\n| 陌生对端预算 | Stranger Admission Budget | 在握手/大缓冲/密码学处理前限制陌生来源的全局资源。 | S3；S1 只有一个联系人。 |\n| 端点标识 | Endpoint ID | 中转用来投递的设备级标识，定位等同网络地址。 | 不是用户公钥；中转不知道设备属于谁。 |\n\n## 6. 重写批次与验收\n\n| 术语 | 含义 | 备注 |\n| --- | --- | --- |\n| S1 | 两个用户、各一台设备；加好友、单聊、先落盘、重启不丢、断网重连。 | ADR-0003；本文建议 40 条。 |\n| S2 | 同一用户多设备；新设备只读加入后消息；历史同步；吊销。 | 仍无群聊/文件。 |\n| S3 | 从旧 95 条中重新论证的发布级 MVP 子集。 | 候选，不是承诺；本文建议 35 条。 |\n| D | 旧计划已延后的 23 条：群聊 8 + 文件 15。 | 只保证架构不堵死。 |\n| T1 | 测试规格等价：只对 KEEP 功能做等价；每个旧测试一行 `test-parity.md`。 | ADR-0004；不能静默删除/放宽。 |\n| KEEP / DROP | 重写保留 / 不保留的旧功能。 | 先列 KEEP/DROP，再谈测试移植。 |\n| 已知约束 | 明确不提供的保证，不用抽象/表/协议假装提供。 | 例如 S1 没有常在线、没有历史同步。 |\n\n## 7. 最容易混的八组\n\n1. **用户 vs 设备**：日常操作以人为单位；寻址、在线状态、吊销以设备为单位。\n2. **用户私钥 vs 设备私钥**：用户私钥定义身份，能签设备列表/邀请/吊销；设备私钥只证明这台设备。\n3. **设备列表 vs 设备组**：设备列表是用户全部设备；设备组是一个会话的参与方设备并集。\n4. **聊天会话 vs 应用会话**：前者是消息序列；后者是一次解锁到锁定。\n5. **日志位置 vs 消息标识**：前者用于补齐，后者用于呈现/删除/引用；不能互相替代。\n6. **等待 vs 暂不可得 vs 不再提供**：乱序 / 临时放行 / 依据设备列表的放行；三者都不是「对方沉默」。\n7. **重发 vs 通道重建 vs 历史同步**：补最近缺失 / 换加密通道重传 / 显式搬历史；三条路径，三种边界。\n8. **吊销 vs 远程擦除**：吊销只让收到声明的设备拒收此后消息；不删除已持有数据，也挡不住持用户私钥的设备。\n", "lines": 106, "summary": "完整版：旧项目 docs/glossary.md（411 行，术语 + 缩写）；flw 的阅读版在 ../2026-11-20-flw-yochat-diagrams/notes/glossary.md。本表只收读需求与设计时最容易混的词，并标出重写 S1 / S2 / S3 的对应关系。定义以旧…"}, "README.md": {"title": "YoChat 旧实现阅读笔记", "content": "# YoChat 旧实现阅读笔记\n\n这组文档是对旧实现 `~/projects/yochat-reference` 的**外部阅读**，用于回答三个问题：\n\n1. 旧项目现在是什么状态？\n2. 118 条需求里，哪些真的要在 MVP 做？哪些可以分批？哪些互相拉扯或很难实现？\n3. 用一组图和术语表，先把项目读明白，再进入重写。\n\n产出不是旧项目的规格，也不是本仓 S1 的设计；它是一份可维护的阅读材料。旧项目的权威仍是 `docs/spec/`、`docs/engineering/` 和主计划。\n\n## 文件\n\n| 文件 | 内容 |\n| --- | --- |\n| [`survey.md`](survey.md) | 旧实现现状：规模、架构、需求与计划、验证到了哪、为什么重写 |\n| [`requirements.md`](requirements.md) | 118 条需求的分批（S1 40 / S2 20 / S3 35 / 延后 23）、12 处矛盾/张力、9 个难点 |\n| [`terms.md`](terms.md) | 术语表与旧→重写对照；最容易混的八组词 |\n| [`diagrams/07-scope-batches.svg`](diagrams/07-scope-batches.svg) | 需求从旧规格分流到 S1 / S2 / S3 / 延后的概念图 |\n| [`index.html`](index.html) | 离线阅读页：设计图 + Markdown 弹窗；点击看大图，`Esc` 退出 |\n| [`build.py`](build.py) | 重建 `index.html` 的脚本；扫描本目录的 Markdown / SVG，并引用 flw 的六张图 |\n\n外部材料（原样保存，不在本目录重复）：\n\n- [`../2026-11-20-flw-yochat-diagrams/notes/`](../2026-11-20-flw-yochat-diagrams/notes/)：flw 的六张图、术语表、原始 `index.html`、`build.py`。\n- [`../2026-11-20-flw-yochat-diagrams/prompts.md`](../2026-11-20-flw-yochat-diagrams/prompts.md)：产生这组材料的提示词与复用模板。\n\n## 图回答什么问题\n\n| 图 | 回答的问题 |\n| --- | --- |\n| 01 模块概念图 | 代码由哪几块组成，依赖往哪个方向走 |\n| 02 架构框图 | 纯状态机、执行器、适配器如何分层；崩溃安全顺序是什么 |\n| 03 发送数据流 | 一条消息从界面到对方、再回到确认的完整路径 |\n| 04 接收与补齐 | 乱序、缺失、等待、重发、通道重建如何串起来 |\n| 05 好友交换 | 没有中心服务时，邀请/应答、渠道绑定、安全码如何建立关系 |\n| 06 设备与吊销 | 多设备、设备列表、吊销与历史同步的边界 |\n| 07 需求分批 | 118 条如何分流到 S1 / S2 / S3 / 延后 |\n\n## 推荐阅读顺序\n\n1. **先看现状**：`survey.md`。先知道旧项目做到哪、没做到哪，再看需求。\n2. **再看图**：打开 `index.html`，按 flw 的 01 → 06 顺序看模块、架构、发送、接收、好友交换、设备与吊销。\n3. **再看分批**：`requirements.md` 第 2 节。重点不是条数，而是「为什么 S1 只有一条路径」。\n4. **再看矛盾与难点**：`requirements.md` 第 4、5 节。读旧规格时先带着这些边界。\n5. **随手查术语**：`terms.md`。遇到「等待/暂不可得」「日志位置/消息标识」先查这里，不要凭语感。\n\n## 打开与维护\n\n```bash\n# 在仓库根目录\npython3 docs/references/2026-11-20-yochat-reference-study/build.py\n\n# 直接打开\nopen docs/references/2026-11-20-yochat-reference-study/index.html\n```\n\n阅读页行为：\n\n- 点击设计图 → 弹窗看大图；`←` / `→` 切换，`Esc` 关闭，双击图片切换原始尺寸。\n- 点击 Markdown 卡片 → 弹窗渲染；正文里的 `.md` / `.svg` 链接也在弹窗中打开。\n- 页面离线可用：Markdown 在构建时嵌入，不依赖 CDN 或本地服务器。\n- flw 的六张图以相对路径引用；移动本目录时要一起移动 `../2026-11-20-flw-yochat-diagrams/`，或改 `build.py` 的 `FLW_DIAGRAMS`。\n\n维护约定：\n\n1. 改 `*.md` 或 `diagrams/*.svg`；\n2. 跑 `python3 build.py`；\n3. 刷新 `index.html`。\n\n新增 SVG 时，把标题与说明写进 `<title>` / `<desc>`，卡片会自动出现；新增 Markdown 时，用第一个 `#` 标题作为卡片标题、第一段作为摘要。\n\n## 来源与口径\n\n- 旧项目：`~/projects/yochat-reference`（2026-11-20 的只读副本；没有 `.git`，不能核对提交历史）。\n- 需求快照：本仓 `docs/spec/`。\n- 旧项目状态：主计划 `docs/plans/2026-09/20260918-yochat-f2f-messenger.md` 的验证摘要；复盘 `docs/evaluations/2026-11-20-yochat-postmortem/`。\n- 重写范围：`docs/adr/0003-v1-scope.md`、`docs/adr/0004-test-parity-and-performance-gates.md`。\n- flw 的材料：`../2026-11-20-flw-yochat-diagrams/`；外部模型生成，未经旧项目作者校对。\n\n## 限制\n\n- 本文的分批是**建议**，不是旧项目的声明，也不是已经拍板的 S3 清单。S3 必须逐条重新论证。\n- 旧产品文档全部 `status: draft`（全仓 34 draft + 1 accepted），118 条需求全部 `status: proposed`；数值、时限、平台行为仍有大量「待确认事项」。\n- 任务 205/205 完成不等于产品验收完成；Windows/Linux、万条原生、常在线、真实通知点击等仍有未验项。\n- flw 的六张图和术语表是阅读辅助，不是验收证据；引用前对照 `docs/spec/` 和代码。\n- 本文只覆盖旧实现，不替代本仓 S1 的设计与计划。重写的 S1 以 ADR-0003 和 Plan 0001 为准。\n", "lines": 86, "summary": "这组文档是对旧实现 ~/projects/yochat-reference 的外部阅读，用于回答三个问题："}}</script>
+<script type="application/json" id="diagrams-data">[{"src": "../2026-11-20-flw-yochat-diagrams/notes/diagrams/01-modules.svg", "title": "YoChat 模块概念图", "desc": "五个 Rust crate 与 Svelte UI 的职责和依赖方向。", "width": 1400, "height": 900, "group": "flw"}, {"src": "../2026-11-20-flw-yochat-diagrams/notes/diagrams/02-architecture.svg", "title": "YoChat 三层架构与崩溃安全执行顺序", "desc": "纯状态机、执行器与适配器的分层，以及状态与效果同事务、提交后执行、再标记完成的顺序。", "width": 1500, "height": 980, "group": "flw"}, {"src": "../2026-11-20-flw-yochat-diagrams/notes/diagrams/03-send-message.svg", "title": "发送一条消息的数据流", "desc": "从界面撰写到核心状态推进、同事务落盘、加密发送、对方接收与确认的完整路径。", "width": 1500, "height": 900, "group": "flw"}, {"src": "../2026-11-20-flw-yochat-diagrams/notes/diagrams/04-receive-order.svg", "title": "接收、严格按序与补齐路径", "desc": "入站数据经过准入、解密、去重与定序；缺口进入等待，并通过请求重发、兜底重发、通道重建或可验证声明放行。", "width": 1500, "height": 1020, "group": "flw"}, {"src": "../2026-11-20-flw-yochat-diagrams/notes/diagrams/05-contact-exchange.svg", "title": "好友邀请与应答的控制流", "desc": "A 生成邀请，经外部渠道传给 B；B 生成加密应答回传；A 在签发设备确认并发出首条认证操作；双方再做安全码带外比对。", "width": 1500, "height": 920, "group": "flw"}, {"src": "../2026-11-20-flw-yochat-diagrams/notes/diagrams/06-device-revocation.svg", "title": "设备组、吊销与多设备同步", "desc": "用户私钥只存在于指定设备；设备列表由用户私钥签名并分发；吊销声明只影响设备公钥，不影响用户身份与安全码。", "width": 1500, "height": 920, "group": "flw"}, {"src": "diagrams/07-scope-batches.svg", "title": "旧需求到重写批次的分流", "desc": "旧规格 118 条需求中，95 条曾被列入首个交付增量，23 条明确延后。重写建议把 95 条分为 S1 40 条、S2 20 条、S3 35 条；S1 只保留两台设备、各一台、加好友与单聊的一条可验收路径。此图是阅读分析，不是旧项目的范围声明。", "width": 1800, "height": 1200, "group": "analysis"}]</script>
+<script>
+(function () {
+  'use strict';
+
+  var DOCS = JSON.parse(document.getElementById('docs-data').textContent);
+  var DIAGRAMS = JSON.parse(document.getElementById('diagrams-data').textContent);
+  var DIAGRAM_BY_SRC = {};
+  DIAGRAMS.forEach(function (diagram) { DIAGRAM_BY_SRC[diagram.src] = diagram; });
+
+  var BT = String.fromCharCode(96);
+  var FENCE = BT + BT + BT;
+  var INLINE_CODE = new RegExp(BT + '([^' + BT + ']+)' + BT, 'g');
+  var CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
+
+  var modal = document.getElementById('modal');
+  var modalTitle = document.getElementById('modal-title');
+  var modalBody = document.getElementById('modal-body');
+  var prevBtn = document.getElementById('prev-btn');
+  var nextBtn = document.getElementById('next-btn');
+  var zoomBtn = document.getElementById('zoom-btn');
+  var rawLink = document.getElementById('raw-link');
+  var closeBtn = document.getElementById('close-btn');
+  var backdrop = document.getElementById('modal-backdrop');
+
+  var lastFocus = null;
+  var mode = 'doc';
+  var diagramIndex = -1;
+
+  function escHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function escAttr(value) {
+    return escHtml(value).replace(/'/g, '&#39;');
+  }
+
+  function renderInline(text, ctx) {
+    var codes = [];
+    var source = String(text).replace(INLINE_CODE, function (_, code) {
+      codes.push(code);
+      return '\u0000' + (codes.length - 1) + '\u0000';
+    });
+    source = escHtml(source);
+    source = source.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (_, label, hrefRaw) {
+      var href = hrefRaw.replace(/&amp;/g, '&');
+      var key = href.replace(/^\.\//, '');
+      var attrs;
+      if (/^(https?:|mailto:)/.test(href)) {
+        attrs = ' href="' + escAttr(href) + '" target="_blank" rel="noopener"';
+      } else if (href.charAt(0) === '#') {
+        attrs = ' href="' + escAttr(href) + '"';
+      } else if (ctx.docs[key]) {
+        attrs = ' href="#" data-doc="' + escAttr(key) + '"';
+      } else if (ctx.diagramsBySrc[key]) {
+        attrs = ' href="#" data-diagram="' + escAttr(key) + '"';
+      } else {
+        attrs = ' href="' + escAttr(href) + '" target="_blank" rel="noopener"';
+      }
+      return '<a' + attrs + '>' + label + '</a>';
+    });
+    source = source.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    source = source.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    source = source.replace(/\u0000(\d+)\u0000/g, function (_, index) {
+      return '<code>' + escHtml(codes[+index]) + '</code>';
+    });
+    return source;
+  }
+
+  function joinLines(lines) {
+    return lines.reduce(function (acc, line) {
+      if (!acc) return line.trim();
+      var left = acc.charAt(acc.length - 1);
+      var right = line.trim().charAt(0);
+      return acc + ((CJK.test(left) && CJK.test(right)) ? '' : ' ') + line.trim();
+    }, '');
+  }
+
+  function isTableSeparator(line) {
+    return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+  }
+
+  function splitRow(line) {
+    var text = line.trim();
+    if (text.charAt(0) === '|') text = text.slice(1);
+    if (text.charAt(text.length - 1) === '|') text = text.slice(0, -1);
+    return text.split('|').map(function (cell) { return cell.trim(); });
+  }
+
+  function isBlockStart(line, next) {
+    if (!line) return true;
+    if (/^#{1,6}\s/.test(line)) return true;
+    if (line.indexOf(FENCE) === 0) return true;
+    if (/^---+\s*$/.test(line)) return true;
+    if (/^\s*>\s?/.test(line)) return true;
+    if (/^\s*[-*]\s+/.test(line)) return true;
+    if (/^\s*\d+\.\s+/.test(line)) return true;
+    if (line.indexOf('|') >= 0 && next !== undefined && isTableSeparator(next)) return true;
+    return false;
+  }
+
+  function renderMarkdown(markdown, docName, ctx) {
+    var lines = String(markdown).replace(/\r\n?/g, '\n').split('\n');
+    var out = [];
+    var index = 0;
+    while (index < lines.length) {
+      var line = lines[index];
+      if (!line.trim()) { index += 1; continue; }
+
+      if (line.indexOf(FENCE) === 0) {
+        var lang = line.slice(3).trim();
+        var code = [];
+        index += 1;
+        while (index < lines.length && lines[index].indexOf(FENCE) !== 0) {
+          code.push(lines[index]);
+          index += 1;
+        }
+        if (index < lines.length) index += 1;
+        out.push('<pre><code' + (lang ? ' class="lang-' + escAttr(lang) + '"' : '') + '>' + escHtml(code.join('\n')) + '</code></pre>');
+        continue;
+      }
+
+      var heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        var level = heading[1].length;
+        out.push('<h' + level + '>' + renderInline(heading[2], ctx) + '</h' + level + '>');
+        index += 1;
+        continue;
+      }
+
+      if (/^---+\s*$/.test(line)) { out.push('<hr>'); index += 1; continue; }
+
+      if (/^\s*>\s?/.test(line)) {
+        var quote = [];
+        while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
+          quote.push(lines[index].replace(/^\s*>\s?/, ''));
+          index += 1;
+        }
+        out.push('<blockquote>' + quote.filter(function (item) { return item.trim(); }).map(function (item) {
+          return '<p>' + renderInline(item.trim(), ctx) + '</p>';
+        }).join('') + '</blockquote>');
+        continue;
+      }
+
+      if (line.indexOf('|') >= 0 && index + 1 < lines.length && isTableSeparator(lines[index + 1])) {
+        var header = splitRow(line);
+        index += 2;
+        var rows = [];
+        while (index < lines.length && lines[index].trim() && lines[index].indexOf('|') >= 0) {
+          rows.push(splitRow(lines[index]));
+          index += 1;
+        }
+        var headHtml = header.map(function (cell) { return '<th>' + renderInline(cell, ctx) + '</th>'; }).join('');
+        var bodyHtml = rows.map(function (row) {
+          return '<tr>' + row.map(function (cell) { return '<td>' + renderInline(cell, ctx) + '</td>'; }).join('') + '</tr>';
+        }).join('');
+        out.push('<div class="table-wrap"><table><thead><tr>' + headHtml + '</tr></thead><tbody>' + bodyHtml + '</tbody></table></div>');
+        continue;
+      }
+
+      if (/^\s*[-*]\s+/.test(line) || /^\s*\d+\.\s+/.test(line)) {
+        var ordered = /^\s*\d+\.\s+/.test(line);
+        var items = [];
+        while (index < lines.length && (/^\s*[-*]\s+/.test(lines[index]) || /^\s*\d+\.\s+/.test(lines[index]) || /^\s{2,}\S/.test(lines[index]))) {
+          if (/^\s*[-*]\s+/.test(lines[index]) || /^\s*\d+\.\s+/.test(lines[index])) {
+            items.push(lines[index].replace(/^\s*(?:[-*]|\d+\.)\s+/, ''));
+          } else if (items.length) {
+            items[items.length - 1] += ' ' + lines[index].trim();
+          }
+          index += 1;
+        }
+        var tag = ordered ? 'ol' : 'ul';
+        out.push('<' + tag + '>' + items.map(function (item) { return '<li>' + renderInline(item, ctx) + '</li>'; }).join('') + '</' + tag + '>');
+        continue;
+      }
+
+      var paragraph = [];
+      while (index < lines.length && lines[index].trim() && !isBlockStart(lines[index], lines[index + 1])) {
+        paragraph.push(lines[index]);
+        index += 1;
+      }
+      if (!paragraph.length) {
+        out.push('<p>' + renderInline(line, ctx) + '</p>');
+        index += 1;
+      } else {
+        out.push('<p>' + renderInline(joinLines(paragraph), ctx) + '</p>');
+      }
+    }
+    return out.join('\n');
+  }
+
+  function openShell() {
+    if (!modal.hidden) return;
+    lastFocus = document.activeElement;
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+  }
+
+  function closeModal() {
+    if (modal.hidden) return;
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+    modalBody.innerHTML = '';
+    mode = 'doc';
+    diagramIndex = -1;
+    if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+    lastFocus = null;
+  }
+
+  function configureHeader(title, showPager, showZoom, rawHref, rawLabel) {
+    modalTitle.textContent = title;
+    prevBtn.hidden = !showPager;
+    nextBtn.hidden = !showPager;
+    zoomBtn.hidden = !showZoom;
+    rawLink.hidden = !rawHref;
+    if (rawHref) {
+      rawLink.href = rawHref;
+      rawLink.textContent = rawLabel;
+    }
+    closeBtn.focus();
+  }
+
+  function showDiagram(requested) {
+    if (!DIAGRAMS.length) return;
+    openShell();
+    mode = 'image';
+    diagramIndex = ((requested % DIAGRAMS.length) + DIAGRAMS.length) % DIAGRAMS.length;
+    var diagram = DIAGRAMS[diagramIndex];
+    var number = String(diagramIndex + 1).padStart(2, '0');
+    var total = String(DIAGRAMS.length).padStart(2, '0');
+    configureHeader('图 ' + number + '/' + total + ' · ' + diagram.title, true, true, diagram.src, '原始 SVG');
+    modalBody.className = 'modal-body image-mode';
+    modalBody.innerHTML = '<div class="diagram-stage" id="diagram-stage">' +
+      '<img id="modal-image" class="modal-image" src="' + escAttr(diagram.src) + '" alt="' + escAttr(diagram.title) + '"' +
+      (diagram.width ? ' width="' + diagram.width + '"' : '') +
+      (diagram.height ? ' height="' + diagram.height + '"' : '') + '>' +
+      '</div>';
+    modalBody.scrollTop = 0;
+    zoomBtn.textContent = '原始尺寸';
+    zoomBtn.setAttribute('aria-pressed', 'false');
+    var image = document.getElementById('modal-image');
+    if (image) image.addEventListener('dblclick', toggleZoom);
+  }
+
+  function showDoc(name) {
+    var doc = DOCS[name];
+    if (!doc) return;
+    openShell();
+    mode = 'doc';
+    configureHeader(doc.title, false, false, name, '原始 Markdown');
+    modalBody.className = 'modal-body doc-mode';
+    modalBody.innerHTML = '<article class="md">' + renderMarkdown(doc.content, name, {
+      docs: DOCS,
+      diagramsBySrc: DIAGRAM_BY_SRC
+    }) + '</article>';
+    modalBody.scrollTop = 0;
+  }
+
+  function toggleZoom() {
+    var image = document.getElementById('modal-image');
+    var stage = document.getElementById('diagram-stage');
+    if (!image || !stage) return;
+    var actual = image.classList.toggle('actual');
+    stage.classList.toggle('zoomed', actual);
+    zoomBtn.textContent = actual ? '适应窗口' : '原始尺寸';
+    zoomBtn.setAttribute('aria-pressed', actual ? 'true' : 'false');
+  }
+
+  function trapFocus(event) {
+    var focusables = Array.prototype.slice.call(
+      modal.querySelectorAll('button:not([hidden]), a[href]:not([hidden])')
+    ).filter(function (element) { return element.offsetParent !== null; });
+    if (!focusables.length) return;
+    var first = focusables[0];
+    var last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    var card = event.target.closest('[data-open-diagram]');
+    if (card) {
+      event.preventDefault();
+      showDiagram(parseInt(card.getAttribute('data-open-diagram'), 10));
+      return;
+    }
+    var docCard = event.target.closest('[data-open-doc]');
+    if (docCard) {
+      event.preventDefault();
+      showDoc(docCard.getAttribute('data-open-doc'));
+      return;
+    }
+    var link = event.target.closest('a[data-doc], a[data-diagram]');
+    if (link) {
+      event.preventDefault();
+      if (link.hasAttribute('data-doc')) {
+        showDoc(link.getAttribute('data-doc'));
+      } else {
+        var wanted = link.getAttribute('data-diagram');
+        var found = -1;
+        DIAGRAMS.forEach(function (diagram, position) { if (diagram.src === wanted) found = position; });
+        if (found >= 0) showDiagram(found);
+      }
+    }
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (!modal.hidden) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeModal();
+        return;
+      }
+      if (event.key === 'Tab') {
+        trapFocus(event);
+        return;
+      }
+      if (mode === 'image') {
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault();
+          showDiagram(diagramIndex - 1);
+          return;
+        }
+        if (event.key === 'ArrowRight') {
+          event.preventDefault();
+          showDiagram(diagramIndex + 1);
+          return;
+        }
+      }
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      var card = event.target.closest('[data-open-diagram], [data-open-doc]');
+      if (card) {
+        event.preventDefault();
+        card.click();
+      }
+    }
+  });
+
+  closeBtn.addEventListener('click', closeModal);
+  backdrop.addEventListener('click', closeModal);
+  prevBtn.addEventListener('click', function () { showDiagram(diagramIndex - 1); });
+  nextBtn.addEventListener('click', function () { showDiagram(diagramIndex + 1); });
+  zoomBtn.addEventListener('click', toggleZoom);
+})();
+</script>
+</body>
+</html>

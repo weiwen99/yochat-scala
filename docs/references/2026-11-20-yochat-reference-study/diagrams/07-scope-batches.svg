@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     width="1800" height="1200" viewBox="0 0 1800 1200"
+     role="img" aria-labelledby="diagram-title diagram-desc">
+  <title id="diagram-title">旧需求到重写批次的分流</title>
+  <desc id="diagram-desc">旧规格 118 条需求中，95 条曾被列入首个交付增量，23 条明确延后。重写建议把 95 条分为 S1 40 条、S2 20 条、S3 35 条；S1 只保留两台设备、各一台、加好友与单聊的一条可验收路径。此图是阅读分析，不是旧项目的范围声明。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 16 12" refX="15" refY="6"
+        markerWidth="16" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 0,0 L 16,6 L 0,12 L 4.5,6 Z" fill="#000000"/>
+    </marker>
+    <style><![CDATA[
+      text { fill:#000000; font-family:"Songti SC","Noto Serif CJK SC","Noto Serif",serif; font-weight:400; font-style:normal; }
+      .page { fill:#ffffff; }
+      .title { font-size:44px; }
+      .subtitle { font-size:19px; }
+      .panel { fill:#f3f3f3; stroke:#000000; stroke-width:4; }
+      .panel-label { font-size:28px; }
+      .panel-note { font-size:18px; }
+      .row { font-size:21px; }
+      .count { font-size:21px; text-anchor:end; }
+      .gate { fill:#e5e5e5; stroke:#000000; stroke-width:3; }
+      .gate-label { font-size:22px; text-anchor:middle; dominant-baseline:middle; }
+      .gate-note { font-size:16px; text-anchor:middle; dominant-baseline:middle; }
+      .note { font-size:17px; }
+      .bus-label { font-size:17px; text-anchor:middle; }
+      .edge { fill:none; stroke:#000000; stroke-width:2.5; stroke-linecap:butt; stroke-linejoin:miter; marker-end:url(#arrow); }
+      .code { font-family:"SF Mono","Menlo","Noto Sans Mono CJK SC",monospace; }
+    ]]></style>
+  </defs>
+
+  <g inkscape:groupmode="layer" inkscape:label="Canvas" id="canvas">
+    <rect class="page" x="0" y="0" width="1800" height="1200"/>
+  </g>
+
+  <g inkscape:groupmode="layer" inkscape:label="Panels" id="panels">
+    <rect class="panel" x="60" y="150" width="390" height="780"/>
+    <rect class="panel" x="850" y="150" width="890" height="240"/>
+    <rect class="panel" x="850" y="410" width="890" height="240"/>
+    <rect class="panel" x="850" y="670" width="890" height="260"/>
+    <rect class="panel" x="60" y="960" width="1680" height="120"/>
+  </g>
+
+  <g inkscape:groupmode="layer" inkscape:label="Connectors" id="connectors">
+    <path class="edge" d="M 450 570 L 496 570"/>
+    <path class="edge" d="M 760 570 L 800 570"/>
+    <path class="edge" d="M 800 265 L 846 265"/>
+    <path class="edge" d="M 800 530 L 846 530"/>
+    <path class="edge" d="M 800 800 L 846 800"/>
+    <path d="M 800 265 L 800 800" fill="none" stroke="#000000" stroke-width="2.5"/>
+  </g>
+
+  <g inkscape:groupmode="layer" inkscape:label="Nodes" id="nodes">
+    <rect class="gate" x="500" y="500" width="260" height="140"/>
+  </g>
+
+  <g inkscape:groupmode="layer" inkscape:label="Labels" id="labels">
+    <text class="title" x="60" y="72">旧需求到重写批次的分流</text>
+    <text class="subtitle" x="60" y="112">旧计划把 95 条列入首增量、23 条延后；重写 S1 只保留一条可验收路径。数字来自 2026-11-20 的需求快照。</text>
+
+    <text class="panel-label" x="84" y="192">旧规格 118 条</text>
+    <text class="row" x="84" y="250">用户与设备</text>
+    <text class="count" x="420" y="250">24</text>
+    <text class="row" x="84" y="315">好友与通讯录</text>
+    <text class="count" x="420" y="315">24</text>
+    <text class="row" x="84" y="380">聊天会话与消息</text>
+    <text class="count" x="420" y="380">35</text>
+    <text class="row" x="84" y="445">界面与外壳</text>
+    <text class="count" x="420" y="445">4</text>
+    <text class="row" x="84" y="510">隐私与防护</text>
+    <text class="count" x="420" y="510">8</text>
+    <text class="row" x="84" y="575">群聊（延后）</text>
+    <text class="count" x="420" y="575">8</text>
+    <text class="row" x="84" y="640">文件发送与共享（延后）</text>
+    <text class="count" x="420" y="640">15</text>
+    <line x1="84" y1="672" x2="426" y2="672" stroke="#000000" stroke-width="2"/>
+    <text class="panel-note" x="84" y="710">旧计划的「首增量」= 93 条原始</text>
+    <text class="panel-note" x="84" y="738">需求 + 2 条排序增补 = 95 条；</text>
+    <text class="panel-note" x="84" y="766">群聊 8 + 文件 15 已逐条延后。</text>
+    <text class="panel-note" x="84" y="812">全部 118 条仍是 proposed；</text>
+    <text class="panel-note" x="84" y="840">产品文档仍是 draft。</text>
+
+    <text class="gate-label" x="630" y="545">删掉它，明天</text>
+    <text class="gate-label" x="630" y="577">还能发消息吗？</text>
+    <text class="gate-note" x="630" y="606">ADR-0003 的范围判据</text>
+    <text class="gate-note" x="630" y="628">答不上来就不进 S1</text>
+
+    <text class="panel-label" x="880" y="192">S1 · 40 条</text>
+    <text class="panel-note" x="880" y="224">两个用户、各一台设备；加好友、单聊、先落盘、重启不丢、断网重连。</text>
+    <text class="row" x="880" y="262">身份 / 本地加密 / 应用锁</text>
+    <text class="row" x="880" y="298">定向邀请 / 应答 / 安全码 / 签名</text>
+    <text class="row" x="880" y="334">单聊：缺失检测 / 等待 / 重发 / 重建</text>
+    <text class="row" x="880" y="370">中转不可读 / 去重 / 时间不可信 / 有界队列</text>
+
+    <text class="panel-label" x="880" y="452">S2 · 20 条</text>
+    <text class="panel-note" x="880" y="484">同一用户多设备；仍无群聊 / 文件。难点是并发设备列表与历史同步。</text>
+    <text class="row" x="880" y="520">设备列表 / 并发签发合并 / 吊销</text>
+    <text class="row" x="880" y="556">新设备只读加入 / 可中断续传的历史同步</text>
+    <text class="row" x="880" y="592">本人消息 / 通讯录 / 未读同步 / 与自己的会话</text>
+    <text class="row" x="880" y="628">常在线设备（可选；锁策略待裁决）</text>
+
+    <text class="panel-label" x="880" y="712">S3 · 35 条（候选）</text>
+    <text class="panel-note" x="880" y="744">发布级 MVP；逐条重新论证，不是旧 93 条的待办清单。</text>
+    <text class="row" x="880" y="790">拉黑 / 删除 / 搜索 / 引用 / 通知</text>
+    <text class="row" x="880" y="828">键盘可达 / WCAG / 十万条历史</text>
+    <text class="row" x="880" y="866">恢复短语 / 多实例 / 隐私告知</text>
+    <text class="row" x="880" y="904">陌生对端预算 / 不定向邀请 / 连接方式可见</text>
+
+    <text class="panel-label" x="84" y="1002">D · 23 条已延后</text>
+    <text class="row" x="84" y="1038">群聊 8：成员加密 / 新成员不读旧消息 / 角色 / 退出 / 群内拉黑 / 缺失检测 / 收敛</text>
+    <text class="row" x="84" y="1068">文件 15：发送 / 独立副本 / 共享目录 / 符号链接边界 / 分块校验 / 多源下载 / 配额</text>
+
+    <text class="note" x="60" y="1130">S1 / S2 / S3 是本文提出的重写分批，不是旧计划的声明；S3 为候选。旧计划的首增量是 95 条。</text>
+    <text class="note" x="60" y="1158">图的用途是阅读与裁决，不是验收证据。需求原文与验收条件见 docs/product/ 与 docs/spec/。</text>
+  </g>
+</svg>
