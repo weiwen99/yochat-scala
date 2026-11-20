@@ -63,17 +63,19 @@ rg -o '^\s*(it|test)\(' ui/tests -g '*.test.ts' | wc -l
 
 ### 1.3 Quint KEEP/DROP 映射
 
-S1 只冻结 5 个新模型。下表先列每个新模型的性质来源与显式 DROP；170 个旧模型/334 条配置的逐行 KEEP/DROP 在实现期继续追加，**未签字不得 DROP**。
+S1 只冻结 5 个新模型。下表先列每个新模型的性质来源与显式 DROP；170 个旧模型/334 条配置的完整逐行映射见 `test-parity-quint.md`（5 KEEP / 22 REWRITE / 143 DROP，逐行签字待补），**未签字不得 DROP**。
 
 | 新模型 | 覆盖 | 旧模型/性质来源 | 处理 | 理由 | 人签字 |
 | --- | --- | --- | --- | --- | --- |
-| `Q1` 邀请/应答 | 一次性密钥、签名、双方确认、拒绝静默 | `exchange.qnt` 的 `relationshipConsistency`、`responderFollowsInitiator`、`responderSilentWhileConfirmed`、`noBundleUsedTwice`；`shared_prekeys.qnt` 的 `noDoubleUse`；`authenticity.qnt` | `KEEP`（一对一性质）；group/welcome `OMIT` | S1 是定向邀请、两方关系；group/welcome 属 S2 | |
+| `Q1` 邀请/应答 | 一次性密钥、签名、双方确认、拒绝静默 | `exchange.qnt` 的 `relationshipConsistency`、`responderFollowsInitiator`、`responderSilentWhileConfirmed`、`noBundleUsedTwice`；`shared_prekeys.qnt` 的 `noDoubleUse`；`authenticity.qnt` | `REWRITE`（一对一性质保留；group/welcome `OMIT`） | S1 是定向邀请、两方关系；group/welcome 属 S2 | |
 | `Q2` 排序/去重 | 同作者顺序、去重、缺失检测 | `message_order.qnt`、`cursor.qnt` | `KEEP` | S1 只保证同一作者顺序 | |
 | `Q2` 跨作者全序 | GBNV 的最终全序 | `order_content.qnt`、`order_frontier.qnt` 的全序部分 | `DROP` → S2 | S1 不实现 GBNV；T1 标记为不等价，不得静默忽略 | |
-| `Q3` 等待/重发 | 超时结束、有界重发、发送方兜底 | `resend.qnt`、`send_retry.qnt`、`retransmit_dispatch.qnt` | `KEEP`（有界与截止）；history/native 批准队列 `OMIT` | S1 只保留单会话小范围重发 | |
-| `Q4` 重连 | 重连后重放未确认消息 | `handshake_reconnect.qnt`、`e2e_restart_generation.qnt`、`packet_journal.qnt` | `KEEP`（重连/journal 语义）；历史同步 `OMIT` | S1 是完整进程重启后消息仍在，不做历史同步 | |
-| `Q5` 通道重建 | 解密失败→重建→重传未确认、限频 | `rebuild.qnt` | `KEEP`（重建有界与不静默分叉）；群 epoch 细节 `OMIT` | S1 是两方 ratchet/通道重建，不是群 epoch | |
+| `Q3` 等待/重发 | 超时结束、有界重发、发送方兜底 | `resend.qnt`、`send_retry.qnt`、`retransmit_dispatch.qnt` | `REWRITE`（有界与截止保留；history/native 批准队列 `OMIT`） | S1 只保留单会话小范围重发 | |
+| `Q4` 重连 | 重连后重放未确认消息 | `handshake_reconnect.qnt`、`e2e_restart_generation.qnt`、`packet_journal.qnt` | `REWRITE`（重连/journal 语义保留；历史同步 `OMIT`） | S1 是完整进程重启后消息仍在，不做历史同步 | |
+| `Q5` 通道重建 | 解密失败→重建→重传未确认、限频 | `rebuild.qnt` | `REWRITE`（重建有界与不静默分叉保留；群 epoch 细节 `OMIT`） | S1 是两方 ratchet/通道重建，不是群 epoch | |
 | 无模型槽 | 身份创建、空闲自动锁定 | `identity_creation.qnt`、`idle_autolock.qnt` | `REWRITE` 为 Scala 属性 | 5 个协议模型没有这两个槽位；是否加模型预算需人裁决 | |
+
+说明：本表的处理是旧文件级判定。`Q1` 的 `authenticity.qnt`/`contact_reply.qnt`/`contact_confirmation.qnt` 为 `KEEP`，`exchange.qnt`/`shared_prekeys.qnt` 为 `REWRITE`；`Q2` 的 `message_order.qnt`/`cursor.qnt` 为 `KEEP`；`Q3`/`Q4`/`Q5` 的旧文件均为 `REWRITE`。逐行签字见 `test-parity-quint.md`。
 
 ## 2. 40 条 S1 需求映射
 
