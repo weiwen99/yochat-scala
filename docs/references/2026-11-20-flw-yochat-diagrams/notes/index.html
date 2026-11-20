@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YoChat 阅读材料</title>
+<style>
+  :root {
+    --bg: #f5f4ef;
+    --card: #fffefb;
+    --ink: #18181b;
+    --muted: #5b5b63;
+    --line: #e4e1d8;
+    --accent: #1f5f8b;
+    --accent-soft: #e7f0f7;
+    --warn: #8a6d0b;
+    --warn-soft: #fff7d6;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    line-height: 1.7;
+  }
+  body.modal-open { overflow: hidden; }
+  header, main, footer { max-width: 1280px; margin: 0 auto; }
+  header { padding: 44px 24px 10px; }
+  main { padding: 0 24px 60px; }
+  h1 { margin: 0 0 8px; font-size: 34px; letter-spacing: .01em; }
+  .sub { margin: 0; color: var(--muted); max-width: 900px; }
+  .meta { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .meta code, footer code, .md code { background: #ece9df; padding: 1px 6px; border-radius: 4px; }
+  .toolbar { margin-top: 18px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px;
+    background: var(--card); color: var(--accent); font: inherit; font-size: 14px;
+    cursor: pointer; text-decoration: none;
+  }
+  .pill:hover { border-color: var(--accent); }
+  .pill:focus-visible { outline: 3px solid rgba(31,95,139,.35); outline-offset: 2px; }
+  .note {
+    margin: 26px 0 8px; padding: 16px 18px; border-radius: 12px;
+    background: var(--warn-soft); border: 1px solid #e8d48a; font-size: 14px;
+  }
+  .note strong { color: #7a5d06; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 38px 0 16px; }
+  .section-head h2 { margin: 0; font-size: 22px; }
+  .section-head p { margin: 0; color: var(--muted); font-size: 13.5px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr)); gap: 20px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  .card, .doc-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    overflow: hidden; cursor: zoom-in; transition: border-color .15s, box-shadow .15s, transform .15s;
+  }
+  .card:hover, .doc-card:hover { border-color: #c9d6df; box-shadow: 0 8px 24px rgba(20,30,40,.08); transform: translateY(-1px); }
+  .card:focus-visible, .doc-card:focus-visible { outline: 3px solid rgba(31,95,139,.45); outline-offset: 2px; }
+  .thumb { background: #fcfcfa; border-bottom: 1px solid var(--line); aspect-ratio: 1400 / 900; overflow: hidden; }
+  .thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .card-body { padding: 14px 18px 18px; }
+  .doc-card { padding: 18px 20px 20px; cursor: pointer; }
+  .doc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .kicker { font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .card h3, .doc-card h3 { margin: 4px 0 6px; font-size: 16.5px; }
+  .card p, .doc-card p { margin: 0; color: var(--muted); font-size: 13.5px; }
+  .hint { display: inline-block; margin-top: 10px; font-size: 12.5px; color: var(--accent); }
+  .modal[hidden] { display: none; }
+  .modal { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 22px; }
+  .modal-backdrop { position: absolute; inset: 0; background: rgba(20,20,22,.58); backdrop-filter: blur(3px); }
+  .modal-panel {
+    position: relative; display: flex; flex-direction: column;
+    width: min(1400px, 96vw); height: min(92vh, 1100px);
+    background: var(--card); border-radius: 16px; box-shadow: 0 24px 80px rgba(0,0,0,.35);
+    overflow: hidden;
+  }
+  .modal-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px 10px 20px; border-bottom: 1px solid var(--line);
+    background: rgba(255,254,251,.97);
+  }
+  .modal-head h2 {
+    flex: 1; min-width: 0; margin: 0; font-size: 16px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .modal-actions { display: flex; align-items: center; gap: 6px; }
+  .icon-btn, .text-btn {
+    border: 1px solid var(--line); background: #fff; color: var(--ink);
+    border-radius: 9px; font: inherit; cursor: pointer; text-decoration: none;
+  }
+  .icon-btn { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; font-size: 20px; line-height: 1; }
+  .text-btn { padding: 7px 10px; font-size: 13px; color: var(--accent); }
+  .icon-btn:hover, .text-btn:hover { border-color: var(--accent); }
+  .icon-btn:focus-visible, .text-btn:focus-visible { outline: 3px solid rgba(31,95,139,.35); outline-offset: 2px; }
+  .icon-btn:disabled { opacity: .35; cursor: default; }
+  .modal-body { flex: 1; min-height: 0; overflow: auto; }
+  .modal-body.image-mode { padding: 14px; background: #f4f3ee; }
+  .diagram-stage { min-height: 100%; display: flex; align-items: center; justify-content: center; }
+  .diagram-stage.zoomed { align-items: flex-start; justify-content: flex-start; }
+  .modal-image { display: block; max-width: 100%; max-height: calc(92vh - 110px); width: auto; height: auto; }
+  .modal-image.actual { max-width: none; max-height: none; }
+  .modal-body.doc-mode { padding: 22px 26px 40px; }
+  .md { max-width: 980px; margin: 0 auto; font-size: 15px; }
+  .md h1 { font-size: 28px; margin: 0 0 18px; }
+  .md h2 { font-size: 22px; margin: 1.6em 0 .6em; padding-bottom: .3em; border-bottom: 1px solid var(--line); }
+  .md h3 { font-size: 18px; margin: 1.4em 0 .5em; }
+  .md h4 { font-size: 16px; margin: 1.2em 0 .4em; }
+  .md p { margin: .8em 0; }
+  .md a { color: var(--accent); }
+  .md ul, .md ol { padding-left: 1.5em; margin: .7em 0; }
+  .md li { margin: .3em 0; }
+  .md blockquote {
+    margin: 14px 0; padding: 10px 14px; border-left: 3px solid #c9b46a;
+    background: #fff9e6; color: #5c4b12; border-radius: 0 8px 8px 0;
+  }
+  .md blockquote p { margin: .3em 0; }
+  .md pre { background: #1f2430; color: #e8e6df; padding: 14px 16px; border-radius: 10px; overflow: auto; }
+  .md pre code { background: none; color: inherit; padding: 0; }
+  .md hr { border: none; border-top: 1px solid var(--line); margin: 26px 0; }
+  .md .table-wrap { overflow-x: auto; margin: 16px 0; }
+  .md table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  .md th, .md td { border: 1px solid var(--line); padding: 7px 10px; vertical-align: top; }
+  .md th { background: #f3f1ea; text-align: left; white-space: nowrap; }
+  .md tr:nth-child(even) td { background: #fbfaf6; }
+  footer { padding: 0 24px 64px; color: var(--muted); font-size: 13.5px; }
+  footer h2 { color: var(--ink); font-size: 18px; margin: 0 0 10px; }
+  footer ol { margin: 8px 0; padding-left: 1.4em; }
+  footer li { margin: 4px 0; }
+  footer kbd {
+    display: inline-block; min-width: 1.6em; padding: 1px 5px; text-align: center;
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px;
+    background: #fff; color: var(--ink); font-size: 12px;
+  }
+  noscript { display: block; margin: 16px 0; padding: 12px 14px; border: 1px solid #e8d48a; background: var(--warn-soft); }
+</style>
+</head>
+<body>
+<header>
+  <h1>YoChat（有聊）阅读材料</h1>
+  <p class="sub">
+    一个服务端不持有用户数据的端到端加密好友间信使：纯状态机做领域逻辑，执行器负责崩溃安全地落盘与执行效果，iroh 负责点对点传输，SQLCipher 保存本地数据。
+  </p>
+  <p class="meta">
+    基于 <code>YoChat-20261120</code> 快照整理，不属于项目源码；生成于 2026-11-20 14:02；
+    共 6 张图、2 份文档。项目文档当前多为 <code>draft</code>，图中数值与上限以项目文档和代码为准。
+  </p>
+  <div class="toolbar">
+    <button class="pill" type="button" data-open-doc="glossary.md">术语表</button>
+    <button class="pill" type="button" data-open-doc="README.md">阅读说明</button>
+    <a class="pill" href="#diagrams">设计图</a>
+    <a class="pill" href="#docs">文档</a>
+  </div>
+</header>
+
+<main>
+  <div class="note">
+    <strong>阅读提示：</strong>
+    首个交付增量只包含“用户与设备、好友与通讯录、一对一/自身会话、界面与通知、隐私与防护”；
+    文件发送与群聊在后续阶段。平台验收先限 macOS，Windows/Linux 按计划留在后续 CI 阶段。
+  </div>
+
+  <noscript>
+    本页的弹窗与 Markdown 渲染需要 JavaScript。也可以直接打开
+    <a href="glossary.md">glossary.md</a> 和
+    <a href="README.md">README.md</a>，或从 <a href="diagrams/">diagrams/</a> 打开原始 SVG。
+  </noscript>
+
+  <section id="diagrams">
+    <div class="section-head">
+      <h2>设计图</h2>
+      <p>点击任意一张在弹窗中查看；← / → 切换，Esc 关闭，双击图片切换原始尺寸。</p>
+    </div>
+    <div class="grid">
+<article class="card" tabindex="0" role="button" data-open-diagram="0" aria-label="查看大图：YoChat 模块概念图"><div class="thumb"><img src="diagrams/01-modules.svg" alt="YoChat 模块概念图" loading="lazy"></div><div class="card-body"><span class="kicker">图 01</span><h3>YoChat 模块概念图</h3><p>五个 Rust crate 与 Svelte UI 的职责和依赖方向。</p><span class="hint">点击查看大图</span></div></article>
+<article class="card" tabindex="0" role="button" data-open-diagram="1" aria-label="查看大图：YoChat 三层架构与崩溃安全执行顺序"><div class="thumb"><img src="diagrams/02-architecture.svg" alt="YoChat 三层架构与崩溃安全执行顺序" loading="lazy"></div><div class="card-body"><span class="kicker">图 02</span><h3>YoChat 三层架构与崩溃安全执行顺序</h3><p>纯状态机、执行器与适配器的分层，以及状态与效果同事务、提交后执行、再标记完成的顺序。</p><span class="hint">点击查看大图</span></div></article>
+<article class="card" tabindex="0" role="button" data-open-diagram="2" aria-label="查看大图：发送一条消息的数据流"><div class="thumb"><img src="diagrams/03-send-message.svg" alt="发送一条消息的数据流" loading="lazy"></div><div class="card-body"><span class="kicker">图 03</span><h3>发送一条消息的数据流</h3><p>从界面撰写到核心状态推进、同事务落盘、加密发送、对方接收与确认的完整路径。</p><span class="hint">点击查看大图</span></div></article>
+<article class="card" tabindex="0" role="button" data-open-diagram="3" aria-label="查看大图：接收、严格按序与补齐路径"><div class="thumb"><img src="diagrams/04-receive-order.svg" alt="接收、严格按序与补齐路径" loading="lazy"></div><div class="card-body"><span class="kicker">图 04</span><h3>接收、严格按序与补齐路径</h3><p>入站数据经过准入、解密、去重与定序；缺口进入等待，并通过请求重发、兜底重发、通道重建或可验证声明放行。</p><span class="hint">点击查看大图</span></div></article>
+<article class="card" tabindex="0" role="button" data-open-diagram="4" aria-label="查看大图：好友邀请与应答的控制流"><div class="thumb"><img src="diagrams/05-contact-exchange.svg" alt="好友邀请与应答的控制流" loading="lazy"></div><div class="card-body"><span class="kicker">图 05</span><h3>好友邀请与应答的控制流</h3><p>A 生成邀请，经外部渠道传给 B；B 生成加密应答回传；A 在签发设备确认并发出首条认证操作；双方再做安全码带外比对。</p><span class="hint">点击查看大图</span></div></article>
+<article class="card" tabindex="0" role="button" data-open-diagram="5" aria-label="查看大图：设备组、吊销与多设备同步"><div class="thumb"><img src="diagrams/06-device-revocation.svg" alt="设备组、吊销与多设备同步" loading="lazy"></div><div class="card-body"><span class="kicker">图 06</span><h3>设备组、吊销与多设备同步</h3><p>用户私钥只存在于指定设备；设备列表由用户私钥签名并分发；吊销声明只影响设备公钥，不影响用户身份与安全码。</p><span class="hint">点击查看大图</span></div></article>
+    </div>
+  </section>
+
+  <section id="docs">
+    <div class="section-head">
+      <h2>文档</h2>
+      <p>Markdown 在弹窗中渲染；点击正文里的 .md / .svg 链接也会在弹窗中打开。</p>
+    </div>
+    <div class="doc-grid">
+<article class="doc-card" tabindex="0" role="button" data-open-doc="glossary.md" aria-label="阅读文档：YoChat（有聊）术语表"><span class="kicker">Markdown</span><h3>YoChat（有聊）术语表</h3><p>阅读版整理，源文件是项目内的 docs/glossary.md 与 docs/engineering/*，并按主题补充了架构与验证术语。每条给出中文名、英文名和一句话解释；最后一节专门列出最容易混淆的几组词。</p><span class="hint">158 行 · 点击阅读</span></article>
+<article class="doc-card" tabindex="0" role="button" data-open-doc="README.md" aria-label="阅读文档：YoChat 阅读材料"><span class="kicker">Markdown</span><h3>YoChat 阅读材料</h3><p>这是对 YoChat-20261120 项目的外部阅读整理，不属于项目源码，也不修改项目。目的是先建立整体理解，再进入具体需求与实现。</p><span class="hint">73 行 · 点击阅读</span></article>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <h2>维护方式</h2>
+  <p>本页由 <code>notes/build.py</code> 生成；内容在构建时嵌入，因此离线可用。不要直接改 <code>index.html</code>。</p>
+  <ol>
+    <li>修改 <code>notes/*.md</code> 或 <code>notes/diagrams/*.svg</code>。</li>
+    <li>运行 <code>python3 notes/build.py</code>。</li>
+    <li>刷新本页。</li>
+  </ol>
+  <p>
+    新增 SVG 时，把标题与说明写进 SVG 的 <code>&lt;title&gt;</code> 与 <code>&lt;desc&gt;</code>；
+    新增 Markdown 时，用第一个 <code>#</code> 标题作为卡片标题，第一段作为摘要。
+  </p>
+  <p>快捷键：<kbd>Esc</kbd> 关闭弹窗，<kbd>←</kbd> / <kbd>→</kbd> 切换图片，双击图片切换原始尺寸。</p>
+</footer>
+
+<div class="modal" id="modal" hidden aria-hidden="true">
+  <div class="modal-backdrop" id="modal-backdrop"></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-head">
+      <h2 id="modal-title">预览</h2>
+      <div class="modal-actions">
+        <button class="icon-btn" type="button" id="prev-btn" title="上一张（←）" aria-label="上一张">‹</button>
+        <button class="icon-btn" type="button" id="next-btn" title="下一张（→）" aria-label="下一张">›</button>
+        <button class="text-btn" type="button" id="zoom-btn" hidden aria-pressed="false">原始尺寸</button>
+        <a class="text-btn" id="raw-link" href="#" target="_blank" rel="noopener">原始文件</a>
+        <button class="icon-btn" type="button" id="close-btn" title="关闭（Esc）" aria-label="关闭">×</button>
+      </div>
+    </div>
+    <div class="modal-body doc-mode" id="modal-body"></div>
+  </div>
+</div>
+
+<script type="application/json" id="docs-data">{"glossary.md": {"title": "YoChat（有聊）术语表", "content": "# YoChat（有聊）术语表\n\n> 阅读版整理，源文件是项目内的 `docs/glossary.md` 与 `docs/engineering/*`，并按主题补充了架构与验证术语。\n> 每条给出中文名、英文名和一句话解释；最后一节专门列出最容易混淆的几组词。\n\n## 1. 产品与身份\n\n| 术语 | English | 含义 |\n|---|---|---|\n| YoChat（有聊） | YoChat | 产品名。服务端不持有用户数据的端到端加密好友间信使。 |\n| 用户 | User | 一个人在产品中的存在，由**本机生成的一对用户密钥**表示，不注册、无账号目录。 |\n| 用户私钥 | User Private Key | 定义用户身份的私钥，恢复短语是它的可书写形式。只放在用户指定的少数设备上；持有它才能加设备、签吊销、发邀请与应答。 |\n| 用户公钥 | User Public Key | 用户的公开标识，用于指称这个人、验签、计算安全码。**不是网络地址**，单凭它连不上任何设备。 |\n| 设备 | Device | 用户的一台机器。必有设备密钥对与本人用户公钥，能正常收发；是否另持用户私钥由用户决定。 |\n| 设备公钥 | Device Public Key | 设备在 P2P 网络中的地址，作用类似 IP：可寻址、可查在线状态。通信对方与联系人都能看到。 |\n| 设备列表 | Device List | 某用户全部设备条目的**有版本集合**，由用户私钥签名，随关系同步给联系人。消息寻址到用户，再分发到列表中的设备。 |\n| 设备吊销 | Device Revocation | 由持有用户私钥的设备签发的声明，使某台设备的公钥不再被接受；用户公钥与安全码不变。 |\n| 设备别名 | Device Name | 设备持有者给自己设备起的名字，随签名设备列表同步；联系人可见但不可改。 |\n| 用户别名 | Display Name | 用户给自己起的、同步给全部联系人的公开名字；只有本人能改。 |\n| 用户头像 | Avatar | 与用户别名一样公开、只有本人能改的图片，有体积上限。 |\n| 恢复短语 | Recovery Phrase | 用户私钥的可书写形式（BIP39，24 词）。可恢复身份、加设备、吊销设备；默认取不到加入之前的历史。 |\n| 应用锁 | App Lock | 进入已解锁状态所需的口令校验，保护本地数据访问；与“是否持有用户私钥”是两件事。 |\n| 应用会话 | App Session | 从一次解锁到下一次锁定之间的时段。锁定是安全边界，不是界面切换。 |\n| 常在线设备 | Always-On Device | 用户自己的、长期在线且解锁的完整设备，在其他设备离线时替本人收消息。它持有解密密钥，不是只转存密文的中转。 |\n| 实例 | Instance | 同一台机器上并存的一个用户或一个设备实例；各有独立数据目录、数据库密钥与应用锁。 |\n| 用户私钥同步 | User Key Sync | 把用户私钥从一台已持有它的设备传给本人另一台设备；必须由持有方发起并双端确认。 |\n| 历史同步 | History Sync | 把已有聊天历史传给同一用户的另一台设备；必须在持有历史的设备上发起，可中断续传。 |\n\n## 2. 关系与联系人\n\n| 术语 | English | 含义 |\n|---|---|---|\n| 联系人 | Contact | 与本人建立双向关系的另一个用户。关系由两轮交换建立，双方各自确认。 |\n| 邀请 | Invitation | 发起方生成的文本，由**用户私钥**签名；携带用户公钥、渠道身份、一台设备公钥、一次性公钥（即邀请标识）、有效期与可选备注。 |\n| 邀请标识 | Invitation Id | 一份邀请的唯一标识，取值就是它的一次性公钥；公开出现在邀请中，也出现在应答密文之外，便于定位。 |\n| 一次性公钥 | Ephemeral Public Key | 专为某份邀请生成的公钥，应答用它加密；对应私钥只留在签发设备，过期或作废后删除。 |\n| 邀请应答 | Invitation Reply | 应答方生成的文本，用邀请的一次性公钥加密、用应答方**用户私钥**签名；携带应答方用户公钥、渠道身份、一台设备公钥与邀请摘要。 |\n| 渠道身份 | Channel Identity | 一对“渠道标签 + 本方在该渠道上的权威账号”；本地私有，在本人设备间同步，只在选用时进入某份邀请或应答。 |\n| 渠道绑定 | Channel Binding | 借双方已在用的另一个渠道，把 YoChat 用户公钥与对方在该渠道上的权威账号对应起来的人工确认过程；强度不超过该渠道，也不能替代安全码。 |\n| 安全码 | Safety Number | 供双方人工比对的短值，存在中间人时双方看到相同值的概率有设计上界。只解决“首次取得对方公钥”的问题。 |\n| 好友别名 | Contact Alias | 用户给联系人另起的、仅自己可见的短名字，用来代替对方自设的用户别名显示。 |\n| 好友备注 | Contact Note | 用户为联系人写的长说明，私有、可改、在本人设备间同步。 |\n| 联系人分组 | Contact Group | 用户的私有分组，一个联系人可属于多个分组；也是文件共享可见范围的单位。 |\n| 拉黑 | Block | 停止双向通信、拒绝发送、不把其地址用于主动连接，且不产生任何应用层响应。 |\n| 删除联系人 | Contact Removal | 删除关系并询问是否删除历史；关系变更在本人设备间同步，删除历史则只产生逐设备确认的删除指令。 |\n\n## 3. 消息、排序与补齐\n\n| 术语 | English | 含义 |\n|---|---|---|\n| 聊天会话 | Conversation | 与一个联系人之间、或与自己的全部消息构成的有序序列；也是消息唯一存在的地方。 |\n| 与自己的聊天会话 | Self Conversation | 用户给自己发消息的会话，与其他会话使用同一套机制，并在本人设备间同步。 |\n| 日志位置 | Log Position | 一次**操作**在某台设备某条只增日志上的位置，连续无空洞；缺失检测、乱序缓冲、重发与放行都按它。**不是消息身份**。 |\n| 消息标识 | Message Id | 一条**消息**在（会话，作者设备）内的编号，随内容加密；呈现、去重、墓碑、删除指令与引用都按它，重加密不改变它。**不是传输坐标**。 |\n| 应用游标 | Apply Cursor | 某个（会话，作者设备）对的下一个待处理日志位置。它是承诺：只有一条操作的全部持久化效果提交后，游标才越过它。 |\n| 等待 | Waiting | 某条消息未到、其后消息暂不呈现的状态；由乱序造成，会在缺失消息到达后自行结束。 |\n| 超时动作 | Timeout Action | 形式化模型里对“等够了”的显式建模：每处等待都对应可在任意时刻、任意多次触发的动作，不假设等待终会结束。 |\n| 通道重建 | Channel Re-establishment | 无法解开对方消息时，由接收方发起、双方自动重建加密通道并重传未确认消息；不丢已落盘消息。 |\n| 重发 | Resend | 把已发过的消息再送一次。接收方察觉缺失后主动请求；发送方长时间无送达确认时兜底发起。 |\n| 送达状态 | Delivery State | 已发送消息的可见状态，至少区分“已写入本地”与“对方已收到”；粒度是对方**任一未吊销设备已落盘**，不表示人已看到。 |\n| 未读 / 已查看 | Unread / Seen | 用户自己设备组内的阅读状态，用于未读计数与同步；**不向联系人发送已读回执**。 |\n| 删除 | Message Deletion | 用户在本设备移除消息内容：保留标识与排序信息、覆盖内容与引用摘要；不是撤回，不要求对方删除。 |\n| 删除指令 | Deletion Request | 一台设备把删除传播给本人其他设备时的提议；到达后进入待确认列表，需那台设备上的用户同意才执行。 |\n| 墓碑 | Tombstone | 删除后保留的消息身份与排序痕迹，防止重同步/重传让已删消息复活，也避免会话永久等待。 |\n| 引用回复 | Quoted Reply | 引用某条消息进行回复；被引用内容的摘要随回复一起传输并落盘，因此对方不持有原消息也能看到。 |\n| 全文搜索 | Full-text Search | 对本设备全部会话历史做全文检索，结果标明归属会话；未解锁时不能执行。 |\n\n## 4. 网络与隐私\n\n| 术语 | English | 含义 |\n|---|---|---|\n| 中转 | Relay | 双方无法直连时代为转发字节的第三方。可见双方**设备端点标识**、连接/投递时间、字节数/帧数、本机网络地址、协议版本与设备认证签名；内容与用户层身份仍受端到端保护。 |\n| 直接连接 | Direct Connection | 两台设备不经中转直接建立连接；少一个观察方，但对端可得知本机公网地址。 |\n| 发现信息 | Discovery Record | 为让别人找到设备而发布的记录；只含中转入口，不发布设备自己的直接地址。 |\n| 端点标识 | Endpoint Id | 设备在中转/发现层的地址性标识；可见不等于用户身份可读。 |\n| 准入预算 | Admission Budget | 在握手、分配大缓冲与密码学处理**之前**的全局限额（并发、握手速率、任务数、内存），并为已建立联系人保留容量。 |\n| 连通纪元 | Connectivity Epoch | 某对端从不可达转为可达所开启的一段时期；兜底重发、请求重发等预算按纪元重置，纪元切换本身也限速。 |\n| 端到端加密 | E2EE | 只有会话参与方的当前未吊销设备能解密；中转看不到正文与解密材料。 |\n| 前向保密 | Forward Secrecy | 长期密钥泄漏不应使过去的会话内容可解；代价是未使用的解密密钥窗口必须有界。 |\n| 在线状态 | Presence | 持有某台设备公钥的人可以查询该设备是否在线；这是 P2P 寻址的固有性质，产品不提供隐藏开关。 |\n\n## 5. 状态、存储与运行时\n\n| 术语 | English | 含义 |\n|---|---|---|\n| 纯状态机 | Pure State Machine | 只做 `step(state, event) -> (state, effects)` 的领域逻辑；不读时钟、不取随机数、不做 IO。 |\n| 事件 | Event | 执行器送给状态机的输入：外部到达数据、用户动作、定时器到期、可达性变化、效果完成/失败。 |\n| 效果 | Effect | 状态机返回的待执行动作，分五类：对外发送、持久化、起定时器、取随机数、通知界面。 |\n| 执行器 | Executor | 驱动状态机、持久化状态、执行效果并把结果作为新事件送回的中层；负责崩溃安全顺序。 |\n| 状态与效果同事务 | Atomic State+Effects | 状态推进与待执行效果必须在同一个事务里落盘；效果提交后才执行，执行后再标记完成。 |\n| 效果幂等 / 去重 | Idempotent Effects | 崩溃重放可能导致效果执行多次，因此每个效果必须幂等或可去重；定时器按稳定标识与尝试序号去重。 |\n| 授权代数 | Authorization Generation | 每个待执行效果携带的授权版本；真正出站前重新检查联系人、拉黑、设备列表与删除事实。 |\n| 候选 | Candidate | 一次状态推进中独占取得、修改、校验并提交的工作状态；失败不发布候选。 |\n| 冻结帧 | Frozen Frame | 已完成编码/加密的不可变发送字节；重试与转发原样复用，不重新编码或签名。 |\n| 快照 | Snapshot | 某类状态的完整表示；新设计要求避免以完整序列化/反序列化做内部复制，只在真实边界编码。 |\n| 修订 | Revision | 状态版本，如业务 `commit_seq`、设备 `ProtocolRevision`；用于 CAS、缓存与并发提交检查。 |\n| 缓存工作集 | Cache Working Set | 有显式内存预算与淘汰规则的活跃状态缓存；只缓存已可靠提交的最终对象，命中不替代当前授权检查。 |\n| 存储适配 | Store | 包住 SQLCipher 句柄的持久化层；所有可失败查询区分“不存在”与“读失败”。 |\n| 单写所有者 | Single Writer | 每个状态由一个操作独占取走、更新、提交并归还；共享设备协议另受同一身份写入所有权约束。 |\n\n## 6. 文件（后续阶段）\n\n| 术语 | English | 含义 |\n|---|---|---|\n| 发送文件 | File Send | 把本机文件投递到聊天会话，默认不复制源文件，带默认七天的有效期。 |\n| 共享 | Share | 把文件或目录标记为指定范围联系人可下载；默认不过期、不进入会话、不复制源文件。 |\n| 共享根 | Share Root | 一次共享对应的本地文件或目录；对方只能看到其下的相对路径。 |\n| 内容指纹 | Content Digest | 按分块计算的内容校验值；用于逐块验证、多源并发下载与一致性检查。 |\n\n## 7. 验证与工程\n\n| 术语 | English | 含义 |\n|---|---|---|\n| Quint | Quint | 项目使用的状态机规约语言；用 Apalache/TLC 做有界模型检验。 |\n| Apalache | Apalache | 符号式有界模型检查后端，适合大状态空间与不变量。 |\n| TLC | TLC | 显式状态模型检查器，时序性质与公平性验证走它。 |\n| Kani | Kani | Rust 有界模型检查工具，只用于解析、序号运算、令牌解码等纯函数。 |\n| proptest | proptest | Rust 属性测试库；状态机用 `proptest-state-machine` 与参考模型对拍。 |\n| ITF | ITF | 模型轨迹交换格式；把 Quint 轨迹喂给真实 Rust `step` 做逐状态对拍。 |\n| Checks | — | 模型公开正向验证入口的统一后缀；在 `models/checks.json` 登记安全/时序义务。 |\n| fastcheck | — | `just fastcheck`：短源码/工具回归、格式、UI 检查与构建、模型类型、文档验证。 |\n| fullcheck | — | `just fullcheck`：当前平台适用的全部自动检查，含 ignored 测试、完整模型证明、macOS 离线/GUI、Linux Kani。 |\n| tao | — | 文档与检查编排工具；检查常量和截止在 `tools/run_checks.py` 维护。 |\n| e2e | End-to-End Test | `e2e/` 下的 WebdriverIO 桌面验收；含大量原生场景（通知、焦点、重启、压力）。 |\n| vendor | Vendored Dependencies | 固定上游发布包 + `patches/` 有序补丁重建的依赖树；不直接维护源码。 |\n\n## 8. 缩写\n\n| 缩写 | 全称 / 含义 |\n|---|---|\n| E2EE | End-to-End Encryption，端到端加密 |\n| P2P | Peer-to-Peer，点对点 |\n| BIP39 | 把密钥编码为助记词的公开规范，恢复短语采用 |\n| DTO | Data Transfer Object，跨层传输对象 |\n| IPC | Inter-Process Communication，进程间通信（Tauri 命令/事件） |\n| CAS | Compare-And-Swap，比较并交换，用于版本化提交 |\n| FTS | Full-Text Search，全文搜索 |\n| ADR | Architecture Decision Record，架构决策记录 |\n| UC | Use Case，用例/性质 |\n| REQ | Requirement，需求条目 |\n| TASK | 任务条目，常用于 `{need}` 交叉引用 |\n| DoS | Denial of Service，拒绝服务 |\n| QUIC | iroh 底层使用的传输协议 |\n\n## 9. 最容易混淆的几组词\n\n| 不要混用 | 区别 |\n|---|---|\n| 用户公钥 vs **设备公钥** | 前者指称“人”，用于验签与安全码；后者指称“机器”，是网络地址，可查在线状态。 |\n| 应用会话 vs **聊天会话** | 前者是一次解锁到锁定的时段；后者是一段消息序列。不要用不加限定的“会话”。 |\n| 日志位置 vs **消息标识** vs **应用游标** | 日志位置是“操作”的传输坐标；消息标识是“消息”的产品身份；应用游标是某作者设备下一个待处理位置。三者语义不同，类型也必须不同。 |\n| 等待 vs **通道重建** vs **重发** | 等待是乱序造成的暂时状态；重建是无法解密时的恢复动作；重发是把已发过的消息再送一次。 |\n| 送达状态 vs **已读** | 产品只承诺“对方某台设备已落盘”，不承诺“人已看见”。 |\n| 删除 vs **撤回** | 删除只作用于本人设备，不要求对方删除；撤回无法保证对方没看到，产品明确不做。 |\n| 拉黑 vs **删除联系人** | 拉黑停止通信但不删记录；删除关系是关系变更，历史是否删除另问。拉黑后删除联系人仍保留拉黑记录。 |\n| 共享 vs **发送文件** | 共享是长期可取的目录/文件，不进入会话、默认不过期；发送是一次投递，默认七天有效期。 |\n| 用户别名 vs **好友别名** | 前者是对方自设、公开的名字；后者是本人私有、只在自己界面替代显示的名字。 |\n| 恢复短语 vs **应用锁口令** | 恢复短语是用户私钥的可书写形式，能恢复身份；应用锁口令只保护本机数据的访问。忘记口令可用恢复短语打开既有数据。 |\n", "lines": 158}, "README.md": {"title": "YoChat 阅读材料", "content": "# YoChat 阅读材料\n\n这是对 `YoChat-20261120` 项目的外部阅读整理，**不属于项目源码，也不修改项目**。目的是先建立整体理解，再进入具体需求与实现。\n\n## 文件\n\n| 文件 | 内容 |\n|---|---|\n| [`glossary.md`](glossary.md) | 按主题整理的术语表，含“最容易混淆的几组词” |\n| [`index.html`](index.html) | 生成的阅读页：设计图 + Markdown 弹窗（推荐从这里开始） |\n| [`build.py`](build.py) | 构建脚本：扫描 Markdown 与 SVG，生成 `index.html` |\n| `diagrams/01-modules.svg` | 模块概念图：5 个 Rust crate + Svelte UI 的职责与依赖方向 |\n| `diagrams/02-architecture.svg` | 三层架构与崩溃安全执行顺序 |\n| `diagrams/03-send-message.svg` | 发送一条消息的数据流（本机 → 对方 → ACK 回本机） |\n| `diagrams/04-receive-order.svg` | 接收、严格按序、等待与补齐路径 |\n| `diagrams/05-contact-exchange.svg` | 好友邀请与应答的控制流 |\n| `diagrams/06-device-revocation.svg` | 设备组、吊销与多设备同步 |\n\n## 推荐阅读顺序\n\n1. **01 模块概念图**：先知道代码由哪几块组成、依赖往哪个方向走。\n2. **02 架构框图**：理解“纯状态机 + 执行器 + 适配器”和崩溃安全顺序。\n3. **03 发送流程**：看一条消息从界面到对方的完整路径。\n4. **04 接收与排序**：理解为什么“缺失检测、等待、重发、通道重建”是一套东西。\n5. **05 好友交换**：理解没有中心服务时，关系如何靠邀请/应答 + 渠道绑定 + 安全码建立。\n6. **06 设备与吊销**：理解多设备、设备列表、吊销和历史同步的边界。\n\n术语表可以配合图随时查；最容易混的几组词放在最后一节。\n\n## 图与项目文档的对应\n\n| 图 | 主要依据 |\n|---|---|\n| 01 模块 | `README.md`、`Cargo.toml`、`docs/engineering/architecture.md`、`docs/engineering/decisions/technology-stack.md` |\n| 02 架构 | `docs/engineering/architecture.md`、`docs/engineering/state-runtime.md`、`docs/engineering/decisions/pure-state-machines.md` |\n| 03 发送 | `docs/product/messaging.md`、`docs/engineering/messaging.md`、`docs/engineering/local-store.md` |\n| 04 接收/排序 | `docs/product/messaging.md`、`docs/engineering/messaging.md`、`models/` 中的排序与重发模型 |\n| 05 好友交换 | `docs/product/contacts.md`、`docs/engineering/contact-exchange.md` |\n| 06 设备/吊销 | `docs/product/users-and-devices.md`、`docs/engineering/keys-and-devices.md` |\n\n## 阅读时注意\n\n- 项目文档当前几乎全部是 `status: draft`；需求是 `proposed`，不是最终冻结版。\n- 图中标“后续阶段”的文件发送与群聊**不在首个交付增量**内。\n- 首个交付增量在平台上先验收 macOS；Windows/Linux 的打包与通知验收按计划留在后续 CI 阶段。\n- 图中刻意省略了大量数值（超时、配额、上限、算法参数），这些以项目文档和代码为准。\n\n## 打开与维护\n\n```bash\n# 生成/更新阅读页\npython3 notes/build.py\n\n# 打开阅读页\nxdg-open notes/index.html\n```\n\n阅读页的行为：\n\n- 点击设计图 → 弹窗查看大图；`←` / `→` 切换，`Esc` 关闭，双击图片切换原始尺寸。\n- 点击 Markdown 卡片 → 弹窗渲染；正文里的 `.md` / `.svg` 链接也会在弹窗中打开。\n- 页面完全离线：Markdown 在构建时嵌入，不依赖 CDN 或本地服务器。\n\n维护约定：\n\n1. 修改 `notes/*.md` 或 `notes/diagrams/*.svg`；\n2. 运行 `python3 notes/build.py`；\n3. 刷新 `notes/index.html`。\n\n新增 SVG 时，把标题和说明写进 SVG 的 `<title>` 与 `<desc>`，卡片会自动出现；\n新增 Markdown 时，用第一个 `#` 标题作为卡片标题、第一段作为摘要。\n\nSVG 文字使用系统中文字体回退（Noto Sans SC / PingFang SC / Microsoft YaHei / sans-serif）；如果本机缺少中文字体，浏览器会显示方框，但不影响结构。\n", "lines": 73}}</script>
+<script type="application/json" id="diagrams-data">[{"src": "diagrams/01-modules.svg", "title": "YoChat 模块概念图", "desc": "五个 Rust crate 与 Svelte UI 的职责和依赖方向。", "width": 1400, "height": 900}, {"src": "diagrams/02-architecture.svg", "title": "YoChat 三层架构与崩溃安全执行顺序", "desc": "纯状态机、执行器与适配器的分层，以及状态与效果同事务、提交后执行、再标记完成的顺序。", "width": 1500, "height": 980}, {"src": "diagrams/03-send-message.svg", "title": "发送一条消息的数据流", "desc": "从界面撰写到核心状态推进、同事务落盘、加密发送、对方接收与确认的完整路径。", "width": 1500, "height": 900}, {"src": "diagrams/04-receive-order.svg", "title": "接收、严格按序与补齐路径", "desc": "入站数据经过准入、解密、去重与定序；缺口进入等待，并通过请求重发、兜底重发、通道重建或可验证声明放行。", "width": 1500, "height": 1020}, {"src": "diagrams/05-contact-exchange.svg", "title": "好友邀请与应答的控制流", "desc": "A 生成邀请，经外部渠道传给 B；B 生成加密应答回传；A 在签发设备确认并发出首条认证操作；双方再做安全码带外比对。", "width": 1500, "height": 920}, {"src": "diagrams/06-device-revocation.svg", "title": "设备组、吊销与多设备同步", "desc": "用户私钥只存在于指定设备；设备列表由用户私钥签名并分发；吊销声明只影响设备公钥，不影响用户身份与安全码。", "width": 1500, "height": 920}]</script>
+<script>
+(function () {
+  'use strict';
+
+  var DOCS = JSON.parse(document.getElementById('docs-data').textContent);
+  var DIAGRAMS = JSON.parse(document.getElementById('diagrams-data').textContent);
+  var DIAGRAM_BY_SRC = {};
+  DIAGRAMS.forEach(function (diagram) { DIAGRAM_BY_SRC[diagram.src] = diagram; });
+
+  var BT = String.fromCharCode(96);
+  var FENCE = BT + BT + BT;
+  var INLINE_CODE = new RegExp(BT + '([^' + BT + ']+)' + BT, 'g');
+  var CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
+
+  var modal = document.getElementById('modal');
+  var modalTitle = document.getElementById('modal-title');
+  var modalBody = document.getElementById('modal-body');
+  var prevBtn = document.getElementById('prev-btn');
+  var nextBtn = document.getElementById('next-btn');
+  var zoomBtn = document.getElementById('zoom-btn');
+  var rawLink = document.getElementById('raw-link');
+  var closeBtn = document.getElementById('close-btn');
+  var backdrop = document.getElementById('modal-backdrop');
+
+  var lastFocus = null;
+  var mode = 'doc';
+  var diagramIndex = -1;
+
+  function escHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function escAttr(value) {
+    return escHtml(value).replace(/'/g, '&#39;');
+  }
+
+  function renderInline(text, ctx) {
+    var codes = [];
+    var source = String(text).replace(INLINE_CODE, function (_, code) {
+      codes.push(code);
+      return '\u0000' + (codes.length - 1) + '\u0000';
+    });
+    source = escHtml(source);
+    source = source.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (_, label, hrefRaw) {
+      var href = hrefRaw.replace(/&amp;/g, '&');
+      var key = href.replace(/^\.\//, '');
+      var attrs;
+      if (/^(https?:|mailto:)/.test(href)) {
+        attrs = ' href="' + escAttr(href) + '" target="_blank" rel="noopener"';
+      } else if (href.charAt(0) === '#') {
+        attrs = ' href="' + escAttr(href) + '"';
+      } else if (ctx.docs[key]) {
+        attrs = ' href="#" data-doc="' + escAttr(key) + '"';
+      } else if (ctx.diagramsBySrc[key]) {
+        attrs = ' href="#" data-diagram="' + escAttr(key) + '"';
+      } else {
+        attrs = ' href="' + escAttr(href) + '" target="_blank" rel="noopener"';
+      }
+      return '<a' + attrs + '>' + label + '</a>';
+    });
+    source = source.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    source = source.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    source = source.replace(/\u0000(\d+)\u0000/g, function (_, index) {
+      return '<code>' + escHtml(codes[+index]) + '</code>';
+    });
+    return source;
+  }
+
+  function joinLines(lines) {
+    return lines.reduce(function (acc, line) {
+      if (!acc) return line.trim();
+      var left = acc.charAt(acc.length - 1);
+      var right = line.trim().charAt(0);
+      return acc + ((CJK.test(left) && CJK.test(right)) ? '' : ' ') + line.trim();
+    }, '');
+  }
+
+  function isTableSeparator(line) {
+    return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+  }
+
+  function splitRow(line) {
+    var text = line.trim();
+    if (text.charAt(0) === '|') text = text.slice(1);
+    if (text.charAt(text.length - 1) === '|') text = text.slice(0, -1);
+    return text.split('|').map(function (cell) { return cell.trim(); });
+  }
+
+  function isBlockStart(line, next) {
+    if (!line) return true;
+    if (/^#{1,6}\s/.test(line)) return true;
+    if (line.indexOf(FENCE) === 0) return true;
+    if (/^---+\s*$/.test(line)) return true;
+    if (/^\s*>\s?/.test(line)) return true;
+    if (/^\s*[-*]\s+/.test(line)) return true;
+    if (/^\s*\d+\.\s+/.test(line)) return true;
+    if (line.indexOf('|') >= 0 && next !== undefined && isTableSeparator(next)) return true;
+    return false;
+  }
+
+  function renderMarkdown(markdown, docName, ctx) {
+    var lines = String(markdown).replace(/\r\n?/g, '\n').split('\n');
+    var out = [];
+    var index = 0;
+    while (index < lines.length) {
+      var line = lines[index];
+      if (!line.trim()) { index += 1; continue; }
+
+      if (line.indexOf(FENCE) === 0) {
+        var lang = line.slice(3).trim();
+        var code = [];
+        index += 1;
+        while (index < lines.length && lines[index].indexOf(FENCE) !== 0) {
+          code.push(lines[index]);
+          index += 1;
+        }
+        if (index < lines.length) index += 1;
+        out.push('<pre><code' + (lang ? ' class="lang-' + escAttr(lang) + '"' : '') + '>' + escHtml(code.join('\n')) + '</code></pre>');
+        continue;
+      }
+
+      var heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        var level = heading[1].length;
+        out.push('<h' + level + '>' + renderInline(heading[2], ctx) + '</h' + level + '>');
+        index += 1;
+        continue;
+      }
+
+      if (/^---+\s*$/.test(line)) { out.push('<hr>'); index += 1; continue; }
+
+      if (/^\s*>\s?/.test(line)) {
+        var quote = [];
+        while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
+          quote.push(lines[index].replace(/^\s*>\s?/, ''));
+          index += 1;
+        }
+        out.push('<blockquote>' + quote.filter(function (item) { return item.trim(); }).map(function (item) {
+          return '<p>' + renderInline(item.trim(), ctx) + '</p>';
+        }).join('') + '</blockquote>');
+        continue;
+      }
+
+      if (line.indexOf('|') >= 0 && index + 1 < lines.length && isTableSeparator(lines[index + 1])) {
+        var header = splitRow(line);
+        index += 2;
+        var rows = [];
+        while (index < lines.length && lines[index].trim() && lines[index].indexOf('|') >= 0) {
+          rows.push(splitRow(lines[index]));
+          index += 1;
+        }
+        var headHtml = header.map(function (cell) { return '<th>' + renderInline(cell, ctx) + '</th>'; }).join('');
+        var bodyHtml = rows.map(function (row) {
+          return '<tr>' + row.map(function (cell) { return '<td>' + renderInline(cell, ctx) + '</td>'; }).join('') + '</tr>';
+        }).join('');
+        out.push('<div class="table-wrap"><table><thead><tr>' + headHtml + '</tr></thead><tbody>' + bodyHtml + '</tbody></table></div>');
+        continue;
+      }
+
+      if (/^\s*[-*]\s+/.test(line) || /^\s*\d+\.\s+/.test(line)) {
+        var ordered = /^\s*\d+\.\s+/.test(line);
+        var items = [];
+        while (index < lines.length && (/^\s*[-*]\s+/.test(lines[index]) || /^\s*\d+\.\s+/.test(lines[index]))) {
+          items.push(lines[index].replace(/^\s*(?:[-*]|\d+\.)\s+/, ''));
+          index += 1;
+        }
+        var tag = ordered ? 'ol' : 'ul';
+        out.push('<' + tag + '>' + items.map(function (item) { return '<li>' + renderInline(item, ctx) + '</li>'; }).join('') + '</' + tag + '>');
+        continue;
+      }
+
+      var paragraph = [];
+      while (index < lines.length && lines[index].trim() && !isBlockStart(lines[index], lines[index + 1])) {
+        paragraph.push(lines[index]);
+        index += 1;
+      }
+      if (!paragraph.length) {
+        out.push('<p>' + renderInline(line, ctx) + '</p>');
+        index += 1;
+      } else {
+        out.push('<p>' + renderInline(joinLines(paragraph), ctx) + '</p>');
+      }
+    }
+    return out.join('\n');
+  }
+
+  function openShell() {
+    if (!modal.hidden) return;
+    lastFocus = document.activeElement;
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
+  }
+
+  function closeModal() {
+    if (modal.hidden) return;
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+    modalBody.innerHTML = '';
+    mode = 'doc';
+    diagramIndex = -1;
+    if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+    lastFocus = null;
+  }
+
+  function configureHeader(title, showPager, showZoom, rawHref, rawLabel) {
+    modalTitle.textContent = title;
+    prevBtn.hidden = !showPager;
+    nextBtn.hidden = !showPager;
+    zoomBtn.hidden = !showZoom;
+    rawLink.hidden = !rawHref;
+    if (rawHref) {
+      rawLink.href = rawHref;
+      rawLink.textContent = rawLabel;
+    }
+    closeBtn.focus();
+  }
+
+  function showDiagram(requested) {
+    if (!DIAGRAMS.length) return;
+    openShell();
+    mode = 'image';
+    diagramIndex = ((requested % DIAGRAMS.length) + DIAGRAMS.length) % DIAGRAMS.length;
+    var diagram = DIAGRAMS[diagramIndex];
+    var number = String(diagramIndex + 1).padStart(2, '0');
+    var total = String(DIAGRAMS.length).padStart(2, '0');
+    configureHeader('图 ' + number + '/' + total + ' · ' + diagram.title, true, true, diagram.src, '原始 SVG');
+    modalBody.className = 'modal-body image-mode';
+    modalBody.innerHTML = '<div class="diagram-stage" id="diagram-stage">' +
+      '<img id="modal-image" class="modal-image" src="' + escAttr(diagram.src) + '" alt="' + escAttr(diagram.title) + '"' +
+      (diagram.width ? ' width="' + diagram.width + '"' : '') +
+      (diagram.height ? ' height="' + diagram.height + '"' : '') + '>' +
+      '</div>';
+    modalBody.scrollTop = 0;
+    zoomBtn.textContent = '原始尺寸';
+    zoomBtn.setAttribute('aria-pressed', 'false');
+    var image = document.getElementById('modal-image');
+    if (image) image.addEventListener('dblclick', toggleZoom);
+  }
+
+  function showDoc(name) {
+    var doc = DOCS[name];
+    if (!doc) return;
+    openShell();
+    mode = 'doc';
+    configureHeader(doc.title, false, false, name, '原始 Markdown');
+    modalBody.className = 'modal-body doc-mode';
+    modalBody.innerHTML = '<article class="md">' + renderMarkdown(doc.content, name, {
+      docs: DOCS,
+      diagramsBySrc: DIAGRAM_BY_SRC
+    }) + '</article>';
+    modalBody.scrollTop = 0;
+  }
+
+  function toggleZoom() {
+    var image = document.getElementById('modal-image');
+    var stage = document.getElementById('diagram-stage');
+    if (!image || !stage) return;
+    var actual = image.classList.toggle('actual');
+    stage.classList.toggle('zoomed', actual);
+    zoomBtn.textContent = actual ? '适应窗口' : '原始尺寸';
+    zoomBtn.setAttribute('aria-pressed', actual ? 'true' : 'false');
+  }
+
+  function trapFocus(event) {
+    var focusables = Array.prototype.slice.call(
+      modal.querySelectorAll('button:not([hidden]), a[href]:not([hidden])')
+    ).filter(function (element) { return element.offsetParent !== null; });
+    if (!focusables.length) return;
+    var first = focusables[0];
+    var last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    var card = event.target.closest('[data-open-diagram]');
+    if (card) {
+      event.preventDefault();
+      showDiagram(parseInt(card.getAttribute('data-open-diagram'), 10));
+      return;
+    }
+    var docCard = event.target.closest('[data-open-doc]');
+    if (docCard) {
+      event.preventDefault();
+      showDoc(docCard.getAttribute('data-open-doc'));
+      return;
+    }
+    var link = event.target.closest('a[data-doc], a[data-diagram]');
+    if (link) {
+      event.preventDefault();
+      if (link.hasAttribute('data-doc')) {
+        showDoc(link.getAttribute('data-doc'));
+      } else {
+        var wanted = link.getAttribute('data-diagram');
+        var found = -1;
+        DIAGRAMS.forEach(function (diagram, position) { if (diagram.src === wanted) found = position; });
+        if (found >= 0) showDiagram(found);
+      }
+    }
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (!modal.hidden) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeModal();
+        return;
+      }
+      if (event.key === 'Tab') {
+        trapFocus(event);
+        return;
+      }
+      if (mode === 'image') {
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault();
+          showDiagram(diagramIndex - 1);
+          return;
+        }
+        if (event.key === 'ArrowRight') {
+          event.preventDefault();
+          showDiagram(diagramIndex + 1);
+          return;
+        }
+      }
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      var card = event.target.closest('[data-open-diagram], [data-open-doc]');
+      if (card) {
+        event.preventDefault();
+        card.click();
+      }
+    }
+  });
+
+  closeBtn.addEventListener('click', closeModal);
+  backdrop.addEventListener('click', closeModal);
+  prevBtn.addEventListener('click', function () { showDiagram(diagramIndex - 1); });
+  nextBtn.addEventListener('click', function () { showDiagram(diagramIndex + 1); });
+  zoomBtn.addEventListener('click', toggleZoom);
+})();
+</script>
+</body>
+</html>

@@ -9,7 +9,7 @@ Two 2026-11-20 documents record the postmortem of the first YoChat implementatio
 
 ## Related reading
 
-- [flw's six YoChat diagrams and prompts](../references/2026-11-20-flw-yochat-diagrams/README.md) — an external visual reading of the old implementation, 2026-11-20.
+- [flw's complete YoChat notes package](../references/2026-11-20-flw-yochat-diagrams/README.md) — six diagrams, glossary, offline reading page, and the prompts, 2026-11-20.
 
 ## How to cite
 
