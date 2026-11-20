@@ -44,15 +44,15 @@
 | B1 | 首次运行只看 DB/密钥，`identity.bin` 独存时可生成新 master | 只有 DB/identity/keystore/keychain 全无才创建；其余 `InstancePartiallyPresent`（ADR §2） | 0.5 人日 |
 | M1 | generation 只在 sessions，contact/invitation 旧写在锁后仍可落 | 全局 `meta.lock-generation` CAS 每个写事务；sessions generation 保留在 AAD（ADR §5） | 0.5 人日 |
 | M2 | body/wire 一致性要求在 store 不可实现 | body AAD 绑定 `SHA-256(wire)`；不读 message key（ADR §3） | 0.25 人日 |
-| M3 | contact/invitation AAD 的 version 没证据 | 表加 version；G11 明确交接读/交换/回滚/点查；spike 只证明写入与目录扫描 | 0.5 人日 |
+| M3 | contact/invitation AAD 的 version 没证据 | 表加 version；G11 明确交接读/交换/回滚/点查；生产 store 测试已覆盖正向读取、swap、回滚、tombstone 与索引 | 0.5 人日 |
 | M4 | 威胁模型声称 messages 删除受保护 | 明示只保护 sessions/contacts/invitations 的部分恢复；messages/conversations 是已知约束 | 0.25 人日 |
-| M5 | 备份指引复制运行中 DB/WAL | backup 用 Online Backup API 或 `transactRaw` 的 `VACUUM INTO`；口令/钥匙串路径分开 | 0.5 人日 |
+| M5 | 备份指引复制运行中 DB/WAL | backup 用 Online Backup API 或 `rawTrans` 的 `VACUUM INTO`；口令/钥匙串路径分开 | 0.5 人日 |
 | M6 | G1/G2 断言超出 spike 证据 | G1 缩到 session/message；G2 在连接打开时扫描 WAL/SHM，并加第二 master 失败；receipt 更新 | 1–2 小时 |
 | M7 | parity/gate 名字与断言漂移 | G8 拆 3 断言；G10/G11 换真实测试名；ZTSE 改 `REWRITE` 并留人签字 | 0.5 人日 |
 | M8 | 聊天列表无索引 | `(conversation_id, author_pub, seq)` 索引 + list plan gate | 2 小时 |
 | M9 | 本地 Active 就删旧会话会吃掉重试 | cutover 需双向 Confirm/Ack 且无 pending；pending 保留 ReadOnly/wire；G12 加 lost-ACK | 0.5 人日 |
 | M10 | `safety_verified` 两份权威 | contact sealed 为权威；session 副本同事务更新，rekey 从 contact 继承；不一致失败关闭 | 0.25 人日 |
-| R2-1 | Hikari pool autoCommit=false 会让归还连接继续持写锁 | pool autoCommit=true；doobie 事务内 false/commit/rollback；维护走 `transactRaw`；G16 待实现验证 | 0.5 人日 |
+| R2-1 | Hikari pool autoCommit=false 会让归还连接继续持写锁 | pool autoCommit=true；doobie 事务内 false/commit/rollback；维护走 RC14 的 `rawTrans`；G16 已由写者阻塞/释放测试验证 | 0.5 人日 |
 | R2-2 | G15 没验证 UPDATE 行数/异常类型 | doobie smoke 要求 changed==1 且 forced rollback；重新跑 PASS | 0.1 人日 |
 | R2-3 | G3 wire 测试被 body 顺序混淆 | 先恢复 body1 并读成功，再只换 wire；重新跑 PASS | 0.1 人日 |
 | R2-4 | ZTSE 的「非明文 SQLite 头」不成立 | test-parity 改 `REWRITE`，写明 header 可见、错误 key 在解锁/首行解密失败；待签字 | 0.25 人日 |
@@ -61,6 +61,16 @@
 ## ADR-0007 未关闭 / 后续
 
 - ADR-0007 已 accepted（内部 round 1/2/closure，无剩余 BLOCKER/MAJOR）；外部密码学评审未做。不得把 spike PASS 当 S1 完成。
-- 生产 `store/`、`KeyProvider`、`identity.bin`、联系人/邀请高水位、备份、崩溃注入、G8–G14/G16 未实现。
-- `ZTSE` 的 `REWRITE` 与人签字仍未完成；`G10` 的合法 key source 重开、`G11` 的 contact/invitation 点查未跑。
+- 生产 `store/`、`KeyProvider`、`identity.bin`、联系人/邀请高水位、备份、崩溃注入、G8–G14/G16 在 ADR-0007 接受时未实现；本文件末尾的“生产 store 与 G8–G16 实现记录”关闭其中可执行部分，G13/G10 shell/G14 launcher 仍开放。
+- `ZTSE` 的 `REWRITE` 与人签字仍未完成；G10 的合法 key source 重开和 G11 的 contact/invitation 点查已由生产 store 测试覆盖，keychain shell 仍属 G10 外部。
 - 1,000 条 <5s、≤800MB、14 条 E2E 未跑；storage/doobie spike 不是这些门的替代。
+
+## 生产 `store/` 与 G8–G16 实现记录
+
+- 对象: `store/src/yochat/store`、`store/test/src/yochat/store`、`build.mill`、`check.sh`；父提交 `bc3a9f0`。
+- 范围: 生产 doobie `ConnectionIO`/`Transactor[IO]`、Hikari(max 1)、SQLite WAL/FULL/IMMEDIATE/secure_delete、应用层 AEAD、`master → identity/database → 域密钥`、`KeyFile`（Argon2id）、`identity.bin`、首次运行部分实例、`meta` 高水位/锁代次、sessions/messages/contacts/invitations/conversations、安全状态同一事务、旧会话 cutover、`VACUUM INTO` 备份。没有新增表、服务或第二套 effect 栈；复用 ADR-0007 的 6 张表和同一 doobie 接入层。
+- 事务锁序: `invitations → contacts → sessions → messages → meta`；状态候选在事务内封印，提交成功后才返回 `SessionRecord`/`AppendResult`；失败由 `StoreAbort`/SQLite 回滚，不发布候选。
+- 测试: `./mill store.test` 20 个测试，全部通过。覆盖 G8（重复 seq 回滚、损坏 state 报错不返回空）、G9（真实子进程 halt-before/after-commit，after 的 wire 原样读回）、G10（keyfile 创建/错误口令/参数上界/部分实例/provider 拒绝）、G11（contact/invitation swap、version 回滚、删除重插、安全状态不一致、rekey 继承、索引计划）、G12（initiator/responder、pending、lost-ACK、tombstone、历史 body）、G14（运行中备份 + native-access 子进程）、G15（PRAGMA、schema fail-closed、索引计划、生产事务）、G16（max-one 写者阻塞/释放、强制回滚、维护路径）。
+- 性能回执: `STORE_THROUGHPUT inserts=1000 reads=1000 insert_ms=1576 read_ms=145 total_ms=1721`（一次完整 `./check.sh` 的 `./mill store.test`；临时目录；不是两进程 E2E，不替代 G13）。
+- 发现并修复: `keystore.bin` 曾把已含 `YCE1` 的 AEAD 信封再塞进无 magic 的文件格式，导致正确口令也解不开；`identity.bin` 曾重复保存 nonce/信封，长度与 ADR 格式不符；邀请 codec 用 `fixed(32)` 读取带 u32 长度前缀的 ephemeral key，导致正向读取失败。三处都有正向加载测试，不再只测错误路径。
+- 未关闭: G13 的两进程 1,000 条 E2E 待 M3/M5；G10 的 Electron keychain shell 与 G14 的 Electron launcher 在 shell 模块实现；外部密码学评审仍是发布门。

@@ -10,6 +10,9 @@ if grep -RInE '\b(Future|ExecutionContext|Await|runBlocking|unsafeRun|unsafeToFu
   echo "core must remain pure: no Future/effect execution, random, or wall clock" >&2
   exit 1
 fi
+./mill store.checkFormat
+./mill store.fix --check
+./mill store.test
 ./mill spike.checkFormat
 ./mill spike.fix --check
 ./mill spike.compile

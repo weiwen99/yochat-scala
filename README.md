@@ -4,7 +4,7 @@ A serverless, end-to-end-encrypted, friend-to-friend messenger. This repository 
 
 ## Status
 
-Bootstrap. The constraints are imported and plan 0001 is in design; there is no product code yet.
+Plan 0001 is at the M2/M3 boundary. `core/` (crypto + protocol state) and the production `store/` (doobie + SQLite + application-layer AEAD) exist; transport, UI/shell, the 14 E2E contracts and the two-process 1,000-message receipt are not implemented. The storage gates G8–G12/G15/G16 pass in `store/`; G10 keychain shell, G14 launcher, G13 E2E, and external cryptographic review remain open.
 
 ## Read first
 

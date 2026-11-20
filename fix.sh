@@ -5,5 +5,7 @@ cd "$(dirname "$0")"
 
 ./mill core.fix
 ./mill core.reformat
+./mill store.fix
+./mill store.reformat
 ./mill spike.fix
 ./mill spike.reformat

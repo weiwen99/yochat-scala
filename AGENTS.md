@@ -101,4 +101,4 @@ Scala 代码必须遵守 `scala-best-practices`。写、改、重构或评审 Sc
 
 ## 10. 当前状态
 
-计划 0001 在 M1/M2 边界：`core/` 加密与状态机已实现；ADR-0006 accepted，ADR-0007 accepted（doobie + SQLite + 应用层 AEAD）；storage 与 doobie access-layer spike PASS。`store/`、transport、UI、E2E 与性能回执尚未实现。下一步是生产 `store/` 与 M2 Quint 模型；不要把 spike 当 S1 完成。
+计划 0001 在 M2/M3 边界：`core/` 加密与状态机、生产 `store/`（doobie + SQLite + 应用层 AEAD、高水位、锁代次、备份、崩溃注入）已实现；ADR-0006/0007 accepted。G8–G12、G15、G16 由生产 store 测试覆盖；G10 的 Electron keychain shell、G14 的 Electron launcher、G13 的两进程 1,000 条 E2E、transport、UI 与 14 条 E2E 回执尚未完成。下一步是 M2 应用状态机/Quint、transport 与 shell；不要把存储测试当 S1 完成。

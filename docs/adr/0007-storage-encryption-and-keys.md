@@ -1,6 +1,6 @@
 # 本地存储：doobie + 应用层 AEAD、密钥层次与回滚边界
 
-**状态**: accepted (2026-11-20，revision 5；内部评审 round 1/2/closure 完成，无剩余 BLOCKER/MAJOR；外部密码学评审仍是发布门)
+**状态**: accepted (2026-11-20，revision 5；内部评审 round 1/2/closure 完成，无剩余 BLOCKER/MAJOR；2026-11-20 补充生产 `store/` 的 G8–G16 门状态；外部密码学评审仍是发布门)
 
 **前序**: ADR-0002（技术栈）、ADR-0004（测试/性能门）、ADR-0006（S1 加密）。本 ADR 取代 ADR-0002、ADR-0006 与 `design.md` 中「storage 方案待定」的占位；不改写已接受的 ADR-0005/0006。
 
@@ -165,7 +165,7 @@ JCE 的 `doFinal` 输出 ciphertext || tag；写入方不重新编码，读取�
 
 ### 5. 事务、锁序与崩溃
 
-- **单写者 + 至多一个借用连接**：Hikari 的 `maximumPoolSize=1` + `Semaphore(1)`；`Transactor[IO]` 同一时刻最多借一条连接，读/写串行。Hikari 可以在归还后替换物理连接，不能假设「永远同一条」。Hikari 的池默认 `autoCommit=true`；doobie 的 `Strategy` 在业务事务内设 false、commit/rollback，连接归还时 Hikari 恢复 true，避免空闲连接继续持有 SQLite 写锁。`VACUUM INTO` 等维护操作走 RC14 的 `transactRaw`，不包在默认事务里。sqlite-jdbc 的 `Connection` 不是线程安全的；不假装只读连接可以并发。以后加读连接池必须同时给 WAL checkpoint 策略和每线程连接，另写 ADR。
+- **单写者 + 至多一个借用连接**：Hikari 的 `maximumPoolSize=1` + `Semaphore(1)`；`Transactor[IO]` 同一时刻最多借一条连接，读/写串行。Hikari 可以在归还后替换物理连接，不能假设「永远同一条」。Hikari 的池默认 `autoCommit=true`；doobie 的 `Strategy` 在业务事务内设 false、commit/rollback，连接归还时 Hikari 恢复 true，避免空闲连接继续持有 SQLite 写锁。`VACUUM INTO` 等维护操作走 RC14 的 `rawTrans`（非事务解释器；旧草稿写作 `transactRaw`），不包在默认事务里。sqlite-jdbc 的 `Connection` 不是线程安全的；不假装只读连接可以并发。以后加读连接池必须同时给 WAL checkpoint 策略和每线程连接，另写 ADR。
 - **开始**：`SQLiteConfig.TransactionMode.IMMEDIATE` 让驱动以 `BEGIN IMMEDIATE` 开始事务；doobie `Transactor` 的默认 `Strategy` 设 autoCommit=false、成功 commit、失败 rollback。不嵌套事务；一次业务操作一个事务。
 - **锁序**（全局）：`invitations` → `contacts` → `sessions` → `messages` → `meta`。消息路径是 `sessions` → `messages` → `meta`，与 ADR-0006 一致。邀请接受/安全码确认按上述全序写，不先拿 `sessions` 再回头写 `invitations`。SQLite 单写者下表序不承担并发锁语义，但它是跨表操作的固定顺序，避免实现漂移。
 - **锁代次**：`meta["lock-generation"]` 是全局 `i64`，在锁/身份替换事务内递增。每个写事务带 `expectedLockGeneration`，在事务内读 `meta` 并比较；不等返回 `StaleGeneration`，不写任何行。`sessions.generation` 仍是 state AAD 的字段，写候选时使用当前锁代次；`contacts`/`invitations` 不复制 generation，由这个全局 CAS 拦截旧在途结果。
@@ -209,7 +209,7 @@ JCE 的 `doFinal` 输出 ciphertext || tag；写入方不重新编码，读取�
 - 解锁后 master/子密钥只在内存；不写临时文件、不写 `meta`、不进 Electron 渲染进程。进程退出/锁定时丢弃引用；Java 不能保证擦除所有副本，这是已知限制。
 - 口令回退的 Argon2id 只在解锁时运行；参数和 salt 从认证头读取并按 §2 的上下界校验。口令错误、密钥文件损坏、钥匙串拒绝统一返回 `UnlockFailed`，不泄露是哪一步失败。旧 `keystore.bin` 副本在改口令后仍可用旧口令解开同一 master；S1 不承诺撤销。
 - 应用锁/空闲锁定由状态机 `lock-generation` 驱动；存储层拒绝旧代次写入，但不自行判断 UI 锁状态。
-- **备份**：运行中的 SQLite 不得直接拷贝 `data.db + -wal + -shm`（三份文件不是原子快照）。`store/` 提供 `backup`，使用 SQLite Online Backup API 或 doobie RC14 `transactRaw` 中的 `VACUUM INTO` 生成一致副本（不能用默认事务包 `VACUUM INTO`）；复制 `identity.bin`。口令路径额外复制 `keystore.bin`（0600；它是包裹后的 master，不是明文密钥，恢复仍需原口令）；钥匙串路径不复制钥匙串项，恢复需要同一钥匙串。只复制 `data.db` 会丢身份/密钥源。备份中的数据库仍是密文；密钥源不在钥匙串备份里时不承诺可恢复。
+- **备份**：运行中的 SQLite 不得直接拷贝 `data.db + -wal + -shm`（三份文件不是原子快照）。`store/` 提供 `backup`，使用 SQLite Online Backup API 或 doobie RC14 `rawTrans` 中的 `VACUUM INTO` 生成一致副本（不能用默认事务包 `VACUUM INTO`）；复制 `identity.bin`。口令路径额外复制 `keystore.bin`（0600；它是包裹后的 master，不是明文密钥，恢复仍需原口令）；钥匙串路径不复制钥匙串项，恢复需要同一钥匙串。只复制 `data.db` 会丢身份/密钥源。备份中的数据库仍是密文；密钥源不在钥匙串备份里时不承诺可恢复。
 - **JDK 25 native access**：`sqlite-jdbc` 加载 native SQLite；JDK 25 会警告 `System::load` 受限。发布启动器必须加 `--enable-native-access=ALL-UNNAMED`（或升级到不触发警告的驱动）；否则未来 JDK 可能拒绝加载。该参数进 shell 启动配置，不进用户可调配置。
 
 ## 备选与否决
@@ -248,25 +248,26 @@ JCE 的 `doFinal` 输出 ciphertext || tag；写入方不重新编码，读取�
 | G5 | 删除 tombstone（session） | 删除后重插旧 session 版本，返回 `StaleGeneration`；contact/invitation 见 G11 | PASS（spike revision 4） |
 | G6 | 查询计划 | session/message 去重点查、聊天列表 `(conversation_id, author_pub, seq)` 均无 `SCAN`/`TEMP B-TREE`；contact/invitation 点查在 G11 | PASS（spike revision 4） |
 | G7 | 1,000 次插入+读取总耗时 | 1,000 次插入与 1,000 次点查**总计** `<2s`；实测 168ms；输入哈希 `e369…b70`、命令和版本见 receipt | PASS（spike revision 4） |
-| G8 | 事务失败不发布候选 | 强制回滚后旧状态可读；读失败不返回空；写失败不多不少；候选/消息 key 不落盘 | 实现测试（`SM-store-failure`，3 个断言） |
-| G9 | 崩溃/重启 | 进程在提交前后被终止，重启只看到完整提交；待发 wire 原样重发 | 实现测试（真实 SQLite 故障注入） |
-| G10 | 密钥源与部分实例 | 部分存在组合失败关闭（含 `identity.bin` 独存）；DB + identity + **任一合法密钥源**可重开；钥匙串拒绝/口令错误/identity 缺失均失败；密钥不出现在 argv/env/日志 | `shell-keychain` spike、`UT-keyfile-create`、`UT-keyfile-single-device`、`E2E-log-secrets`；尚未实现 |
-| G11 | 联系人/邀请绑定、回滚与安全状态 | 交换 contact/invitation sealed、回滚 version、删除后重插旧版本均被拒；contact/invitation 点查与聊天列表走索引；`safety_verified` 翻转被拒；contact/session 不一致失败关闭；rekey 后从 contact 继承 true | `ST-store-at-rest`、`SM-rekey`；尚未实现 |
-| G12 | 旧会话删除 | 双向 Confirm/Ack 完成且有 pending 时不删；lost-ACK + **零 pending** 时应答方仍保留旧 state，直到收到新 session 首个已认证数据帧；发起方收到 ACK 且无 pending 才删；旧 state 不能复活；历史 body 仍可读 | `SM-rekey`、store 测试；尚未实现 |
-| G13 | 1,000 条 E2E `<5s` | 两进程真实消息路径，含本存储方案；硬门，不校准 | M5 性能回执；尚未实现 |
-| G14 | 备份与 native 启动 | 运行中 `backup` 生成一致副本；恢复身份/密钥源按路径说明；JDK 25 启动带 native access 参数 | `ST-backup`、shell spike；尚未实现 |
-| G15 | doobie/SQLite 接入 | Hikari(max 1) + `Transactor[IO]`；建表、参数化写入、读回、强制回滚（确认 update 影响 1 行且异常是 forced rollback）、PRAGMA WAL/FULL、点查走索引 | PASS（doobie spike；pool autoCommit=true，事务由 doobie 管理） |
-| G16 | Hikari 归还连接/维护路径 | 事务持有写锁时第二条连接被阻塞；commit/rollback 后连接可写；`VACUUM INTO` 走 `transactRaw` | `ST-store-transaction`、`ST-backup`；尚未实现 |
+| G8 | 事务失败不发布候选 | 强制回滚后旧状态可读；读失败不返回空；写失败不多不少；候选/消息 key 不落盘 | PASS（`ST-store-failure`：重复 seq 回滚、损坏 state 报错不返回空） |
+| G9 | 崩溃/重启 | 进程在提交前后被终止，重启只看到完整提交；待发 wire 原样重发 | PASS（`ST-crash-recovery`：真实子进程 halt-before/after-commit） |
+| G10 | 密钥源与部分实例 | 部分存在组合失败关闭（含 `identity.bin` 独存）；DB + identity + **任一合法密钥源**可重开；钥匙串拒绝/口令错误/identity 缺失均失败；密钥不出现在 argv/env/日志 | PARTIAL（`UT-keyfile-create`、`UT-keyfile-bounds`、`UT-partial-instance`、`UT-provider-refusal` PASS；Electron keychain shell 不在本仓） |
+| G11 | 联系人/邀请绑定、回滚与安全状态 | 交换 contact/invitation sealed、回滚 version、删除后重插旧版本均被拒；contact/invitation 点查与聊天列表走索引；`safety_verified` 翻转被拒；contact/session 不一致失败关闭；rekey 后从 contact 继承 true | PASS（`ST-contacts-invitations`，含 swap/rollback/tombstone/safety/mismatch/rekey） |
+| G12 | 旧会话删除 | 双向 Confirm/Ack 完成且有 pending 时不删；lost-ACK + **零 pending** 时应答方仍保留旧 state，直到收到新 session 首个已认证数据帧；发起方收到 ACK 且无 pending 才删；旧 state 不能复活；历史 body 仍可读 | PASS（`ST-cutover`：initiator/responder、pending、lost-ACK、tombstone、历史 body） |
+| G13 | 1,000 条 E2E `<5s` | 两进程真实消息路径，含本存储方案；硬门，不校准 | 未实现（M5；`ST-store-throughput` 1,000 写+读约 1.5s，不替代两进程 E2E） |
+| G14 | 备份与 native 启动 | 运行中 `backup` 生成一致副本；恢复身份/密钥源按路径说明；JDK 25 启动带 native access 参数 | PARTIAL（`ST-backup`、`ST-native-access` PASS；Electron launcher 不在本仓） |
+| G15 | doobie/SQLite 接入 | Hikari(max 1) + `Transactor[IO]`；建表、参数化写入、读回、强制回滚（确认 update 影响 1 行且异常是 forced rollback）、PRAGMA WAL/FULL、点查走索引 | PASS（生产 `store/` 测试覆盖 PRAGMA、事务回滚、索引计划、schema fail-closed） |
+| G16 | Hikari 归还连接/维护路径 | 事务持有写锁时第二条连接被阻塞；commit/rollback 后连接可写；`VACUUM INTO` 走 `rawTrans` | PASS（`ST-store-transaction`、`ST-backup`；RC14 实际 API 是 `rawTrans`） |
 
-Gate 口径：G1–G7 是 storage spike 的可执行证据，G15 是 doobie 接入层 smoke；见 `docs/plans/2026/11/0001-yochat-rewrite/spike-storage.md`。G8–G14、G16 是生产 `store/`/shell 的实现门，spike 通过不替代它们。G10 的钥匙串/Argon2id 不是本 spike 范围；未跑就是未跑，不写成 PASS。
+Gate 口径：G1–G7 是 storage spike 的可执行证据；G15 已由生产 `store/` 测试覆盖，不再只是 doobie smoke。G8–G12/G16 由 `store/test/src/yochat/store` 的实现测试覆盖；G10 的 keychain shell 与 G14 的 Electron launcher 不在本仓，保持 PARTIAL；G13 仍是 M5 的两进程 E2E，store-only 回执不替代。未跑就是未跑，不写成 PASS。
 
 ## 评审与未关闭
 
 - 内部设计评审 round 1：1 个 BLOCKER（首次运行部分实例）、10 个 MAJOR、14 个 MINOR；revision 2 已处理 blocker/MAJOR，并修正 G1/G2/G3/G7 的虚假 PASS 口径。
-- 内部设计评审 round 2（doobie）+ closure：4 个 MAJOR（Hikari autoCommit/写锁、G15 未验证 UPDATE 行数、G3 wire 测试被顺序混淆、G12 本地 Active 过早删旧会话）已修；G12 的应答方 closure 已确认：必须等新 session 首个已认证数据帧且无 pending；MINOR（G7 输入哈希、stale write、G10/G11 缺项、SQLCipher 措辞、tombstone 增长）已并入 revision 4/5。Hikari 归还连接/维护路径另立 G16，未跑不写成 PASS。最终复核没有剩余 BLOCKER/MAJOR。
+- 内部设计评审 round 2（doobie）+ closure：4 个 MAJOR（Hikari autoCommit/写锁、G15 未验证 UPDATE 行数、G3 wire 测试被顺序混淆、G12 本地 Active 过早删旧会话）已修；G12 的应答方 closure 已确认：必须等新 session 首个已认证数据帧且无 pending；MINOR（G7 输入哈希、stale write、G10/G11 缺项、SQLCipher 措辞、tombstone 增长）已并入 revision 4/5。Hikari 归还连接/维护路径另立 G16，现由生产 store 测试验证。最终复核没有剩余 BLOCKER/MAJOR。
 - round 1 的 MINOR 处理：人日改为 10–14；保留按会话子密钥并说明目的；邀请 tombstone 承认会累积、不假装由单待处理邀请限制；`meta.value` 只放整数并拒绝更高 schema；Argon2 上下界；高水位精确写；单连接串行；`fullfsync` 不提未入回执数字；AAD 定长/身份域分离；高水位逃生条款写入取代关系；错误码扩展；`messageId` 从 AAD 删除。
 - 外部密码学评审：仍是发布门；本 ADR 的密钥层次、Argon2id 参数、AEAD AAD 必须和 ADR-0006 一起送审。内部评审不是密码学证明。
-- 未实现：`store/` 模块、`KeyProvider`、`identity.bin`、联系人/邀请高水位、备份、崩溃注入、G8–G14、G16。
+- 已实现：生产 `store/`（doobie/Hikari/SQLite、AEAD、高水位、锁代次、联系人/邀请/会话/消息/聊天仓）、`MasterKeyProvider`/`KeyFile`/`identity.bin`、备份、真实子进程崩溃注入，以及 G8–G12/G15/G16 测试。
+- 未实现：Electron keychain shell（G10）、Electron launcher 的 native-access 配置（G14；store 子进程探针已过）、M5 两进程 1,000 条 E2E（G13）、外部密码学评审。
 - 明确的后续输入：电源级持久性（`fullfsync`）、master 轮换、恢复短语、S2 多设备；不在 S1 里用新表/新协议预支。
 
 ## 取代关系
