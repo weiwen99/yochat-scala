@@ -1,6 +1,6 @@
 # 技术栈：Scala 3 + Pekko + ScalaJS/Laminar + Electron，A-first 无 Rust
 
-**状态**: accepted (2026-11-20)
+**状态**: accepted (2026-11-20；同日增补 effect boundary)
 
 ## 背景
 
@@ -24,6 +24,15 @@
 - **密码学**：JDK 25 JCE 提供 Ed25519、X25519、ChaCha20-Poly1305；HKDF 用本地 RFC 5869 实现。BouncyCastle 只用于 JCE 缺少的算法（如 Argon2id）或作为经过审查的备选；不手写原语。邀请/应答与两方 ratchet 所需的状态机在 `core/` 中以纯函数实现，并有 Quint 模型与测试向量。
 - **网络（v1）**：relay-only。客户端通过 WebSocket/TCP 连接中继，中继转发密文；不做 NAT 打洞、不做直连。中继可见端点、时间、字节数，内容端到端加密。
 - **A-first**：JVM-only。若 A-first 传输/加密 spike 的命名 gate 失败，切 B：iroh/p2panda 作为外部 sidecar，经窄 IPC 调用；产品代码仍不写 Rust。冷启动/内存、存储/重启、壳/UI 的失败各自走自己的 spike 决策，不自动触发 B。
+
+### 副作用与 Future 边界（2026-11-20 增补）
+
+- **纯核心不选 effect 类型**：`core/` 仍是 `Either[DomainError, A]` + 纯数据；无 `IO`、`Future`、`SecureRandom`、时钟或 IO。
+- **副作用默认 cats-effect 3**：store、transport、执行器、身份/密钥生命周期、文件与网络副作用一律用 cats-effect 的 `IO`；生命周期用 `Resource`，并发原语用 cats-effect 的 `Ref`/`Queue`/`Semaphore`。
+- **Future 只存在于 Pekko 适配层**：Pekko actor/stream/HTTP 只接受/返回 `Future` 的 API 放在 `server/`（以及直接包装 Pekko 的适配文件）；`Future` 不得向上泄漏到 `core/`、`store/`、`transport/` 或 UI 服务接口。
+- **边界转换**：Pekko `Future` → `IO` 用 `IO.fromFuture`（显式 runtime）；`IO` → Pekko `Future` 只在 Pekko 边界用 `unsafeToFuture`。`Await`、`runBlocking`、在业务代码里直接 `unsafeRun*` 都禁止。
+- **单一 effect 栈**：不混用 ZIO、Future 业务接口或其他 effect 系统；Laminar/Airstream 是 UI 的响应式流，不是副作用代数，异步边界仍按上面的 `IO` 规则。
+- cats-effect 的精确版本在第一次引入 effectful 模块时从最新稳定版钉到 `build.mill`；当前纯 `core/` 不添加未使用的依赖。
 
 ## A → B 的触发条件
 

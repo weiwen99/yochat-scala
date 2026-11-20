@@ -154,7 +154,12 @@ CKs, CKr                32B or None
 Ns, Nr, PN              u64
 skipped                 Map[(DHrPub, N) -> messageKey], max MAX_SKIP_TOTAL
 retiredDh               Set[X25519 public], max MAX_RETIRED_RATCHETS
-rekey                   RekeyState or None (R1/R2 private, rekeyId, epoch, pending new state)
+phase                   Active | Pending | ReadOnly
+safetyVerified          bool
+rekeyAttempts           u32 (start attempts in this session)
+rekeyCooldownUntilMs    u64 (event-time cooldown after abort)
+rekey                   RekeyState or None (R1/R2 private, rekeyId, epoch, phase,
+                        pending new-session id, cached accept bytes)
 ```
 
 KDF：
@@ -288,7 +293,7 @@ sig         Ed25519(devicePriv, transcript)
 - `lastRekeyEpoch` 记录已接受的最高请求 epoch；发送方每次新 attempt 取 `rekeyEpoch = max(localNextAttempt, lastRekeyEpoch + 1)` 并回写本地计数（失败重试也算一次），避免对端已接受后本端 epoch 被压死；`rekeyId` 随 epoch 唯一且永不复用；newSessionId/newRoot salt 都含 epoch；新会话的 `rekeyEpoch=0`、`lastRekeyEpoch=0`。
 - 以 R1/R2 作为新的初始 ratchet 密钥对，重新初始化 Double Ratchet；发起方为 initiator。
 - **提交阶段**：发起方收到 `RekeyAccept` 后双方仍保留旧会话为 read-only（旧状态不再发送新消息，但可解密在途旧帧）。**只有发起方**在新会话发 `kind=2` 的 `RekeyConfirm`（header 的 control extension 含 `rekeyId`/`rekeyEpoch`，应用载荷为空）；应答方验签/AEAD 后把新会话标为 active，回 `kind=3` 的 `RekeyConfirmAck`；发起方收到 ack 后 active。应答方不发送 `kind=2`，避免双方互等。pending 的新会话状态始终接受入站数据/控制帧并提交；`active` 只约束发送和旧 `sessions` 行删除。双方 active 后删除旧行，晚到旧消息按丢失处理；不再使用旧状态发送。
-- `RekeyConfirm/Ack` 丢失时在新会话重试（新的 `n`/message key，不重放同一帧）；`REKEY_COOLDOWN=60s` 内未完成则保留旧会话并提示/重试；超过 `MAX_REKEY_ATTEMPTS=3` 则提示重新配对。任何时刻不静默切换或静默丢消息。
+- `RekeyConfirm/Ack` 丢失时在新会话重试（新的 `n`/message key，不重放同一帧）；重复的 confirm 在 responder 已 active 时重新生成 ack；`REKEY_COOLDOWN=60s` 内未完成则 `abort` 回旧会话并提示/重试；超过 `MAX_REKEY_ATTEMPTS=3` 则提示重新配对。任何时刻不静默切换或静默丢消息。
 - 旧 `rootKey`/`rekeyBase` 丢失或状态损坏时不能 rekey，只能重新走邀请/应答（用户重新配对）；这是 S1 的已知约束。
 - 冷却 `REKEY_COOLDOWN=60s`，每会话最多 `MAX_REKEY_ATTEMPTS=3` 次；超过则提示用户，不再自动重试。
 

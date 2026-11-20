@@ -25,6 +25,8 @@ tools/      check scripts, fixtures, spikes
 
 `core/` does not depend on Pekko, JDBC, or the UI. Effects are executed by `server/`, `store/`, `transport/`, or `shell/`.
 
+Mill source roots are `<module>/src` and `<module>/test/src`, matching CFA. Do **not** use Maven/sbt's `src/main/scala` or `src/test/scala`; Mill would compile test sources into the main module. There is no `main/` level in this repo.
+
 ## Pure core
 
 ```scala
@@ -60,7 +62,9 @@ def step(state: State, event: Event): (State, Vector[Effect])
 
 ## Errors and effects
 
-`Either[DomainError, A]` is the default; `Try` only at Java/library boundaries, converted immediately; exceptions only for unrecoverable bugs. Do not translate storage failures into "empty"/"not found" semantic answers; return existence and readability as separate answers.
+`Either[DomainError, A]` is the default in pure code; `Try` only at Java/library boundaries, converted immediately; exceptions only for unrecoverable bugs. Do not translate storage failures into "empty"/"not found" semantic answers; return existence and readability as separate answers.
+
+Effectful code defaults to **cats-effect 3 `IO`**; lifecycle uses `Resource`. `Future` is allowed only in the Pekko adapter layer (`server/` and files that directly call Pekko APIs), because those APIs expose `Future`. Convert `Future` to `IO` at that boundary (`IO.fromFuture` with an explicit runtime) and `IO` to `Future` only at the Pekko edge (`unsafeToFuture`). Do not leak `Future` into `core/`, `store/`, `transport/`, or UI service interfaces. No second effect system, no `Await`, no `runBlocking`, and no `unsafeRun*` in business code. The pure `core/` uses neither `IO` nor `Future`.
 
 All waits, queues, retries, broadcasts, and background steps are bounded. Every wait has a deadline; every retry has a cap; every queue has a capacity. No deadlock, no infinite wait.
 

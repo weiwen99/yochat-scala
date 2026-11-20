@@ -14,7 +14,7 @@
 
 ## 实现
 
-- `spike/src/main/scala/yochat/spike/Crypto.scala`：JDK 25 JCE 原语 + RFC 5869 HKDF。
+- `spike/src/yochat/spike/Crypto.scala`：JDK 25 JCE 原语 + RFC 5869 HKDF。
 - `Wire.scala`：邀请、应答、消息、设备帧的有界二进制格式。
 - `Protocol.scala`：邀请/应答、会话根、两方 hash chain、乱序窗口、重放拒绝。
 - `Relay.scala`：长度前缀 TCP 中继 + 客户端；注册确认避免启动竞态。

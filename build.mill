@@ -10,7 +10,7 @@ import mill.*
 import scalalib.*
 import scalalib.scalafmt.*
 
-object spike extends ScalaModule with ScalafmtModule with ScalafixModule:
+trait CommonModule extends ScalaModule:
 
   def scalaVersion = "3.10.1"
 
@@ -24,5 +24,19 @@ object spike extends ScalaModule with ScalafmtModule with ScalafixModule:
     "-source", "future",
     "-Xmax-inlines", "64"
   )
+
+object core extends CommonModule with ScalafmtModule with ScalafixModule:
+
+  def mvnDeps = Seq(
+    mvn"org.scodec::scodec-bits:1.2.1"
+  )
+
+  object test extends ScalaTests with TestModule.Munit:
+
+    def mvnDeps = Seq(
+      mvn"org.scalameta::munit:1.1.1"
+    )
+
+object spike extends CommonModule with ScalafmtModule with ScalafixModule:
 
   def mainClass = Some("yochat.spike.SpikeMain")

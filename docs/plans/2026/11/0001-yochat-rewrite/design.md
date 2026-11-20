@@ -113,7 +113,7 @@ flowchart LR
 def step(state: State, event: Event): (State, Vector[Effect])
 ```
 
-- `State` 只含纯数据：身份、联系人、会话、消息索引、待发/待确认集合、邀请、定时器身份、连接状态、加密会话状态（root/rekeyBase/ratchet/chain/skipped/retiredDh/rekey）、`lock`（locked/unlocked + generation）、`idleDeadline`、待确认关系。
+- `State` 只含纯数据：身份、联系人、会话、消息索引、待发/待确认集合、邀请、定时器身份、连接状态、加密会话状态（phase/safetyVerified/root/rekeyBase/ratchet/chain/skipped/retiredDh/rekey/rekeyAttempts/rekeyCooldown）、`lock`（locked/unlocked + generation）、`idleDeadline`、待确认关系。
 - `Event`：用户动作、网络到达、定时器到期、对端可达性变化、效果完成/失败、`Lock`/`Unlock`/`IdleTimeout`、邀请过期。
 - `Effect`：`Persist`、`Send`、`StartTimer`、`RequestRandom`、`Notify`。核心不产生包含正文、密钥、联系人名或公钥的日志事件；执行器统一脱敏。
 - 执行器负责：状态与效果同事务提交、效果幂等、稳定定时器身份、出站前重查授权；锁定事件递增 `lock.generation`，旧代数的在途结果不落地。
@@ -127,7 +127,7 @@ def step(state: State, event: Event): (State, Vector[Effect])
 | `conversations` | `id`, `peer_user_pub`, `created_at`, `last_applied_seq` | 一对一；每个用户各一台设备 |
 | `messages` | `id`, `conversation_id`, `session_id`, `author_pub`, `device_pub`, `seq`, `body`, `wire`, `state`, `created_at` | `wire` 是完整 `header || ct || sig`，重发原样使用；`(session_id, device_pub, seq)` 唯一；`seq` 每作者每会话、跨 rekey 不重置 |
 | `invitations` | `id`, `ephemeral_priv`, `peer_account`, `expires_at`, `state`, `confirm_state`, `payload` | 一次性私钥只留在签发设备；过期/作废后删除；不符账号进待确认 |
-| `sessions` | `id`, `peer_user_pub`, `peer_device_pub`, `state`, `state_version`, `generation`, `updated_at` | `state` 加密后存 root/rekeyBase/ratchet/chain/skipped/retiredDh/rekey；`state_version` 防回滚 |
+| `sessions` | `id`, `peer_user_pub`, `peer_device_pub`, `state`, `state_version`, `generation`, `updated_at` | `state` 加密后存 phase/safetyVerified/root/rekeyBase/ratchet/chain/skipped/retiredDh/rekey/rekeyAttempts/rekeyCooldown；`state_version` 防回滚 |
 | `meta` | `key`, `value` | schema 版本、计数器、配置快照、锁配置 |
 
 密钥材料不放在明文表：用户私钥/设备私钥/数据库密钥由系统钥匙串或口令派生保护；`sessions.state` 整体加密，具体存储机制由 ADR-0007 决定。
