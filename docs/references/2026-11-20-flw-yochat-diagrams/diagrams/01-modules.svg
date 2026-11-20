@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 900" role="img" aria-labelledby="t d">
+  <title id="t">YoChat 模块概念图</title>
+  <desc id="d">五个 Rust crate 与 Svelte UI 的职责和依赖方向。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6B7280"/>
+    </marker>
+    <marker id="arrowRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#B91C1C"/>
+    </marker>
+    <style>
+      svg { font-family: 'Noto Sans SC','PingFang SC','Microsoft YaHei','DejaVu Sans',sans-serif; }
+      .title { font-size: 30px; font-weight: 700; fill: #111827; }
+      .sub { font-size: 15px; fill: #4B5563; }
+      .h { font-size: 17px; font-weight: 700; fill: #111827; }
+      .h2 { font-size: 16px; font-weight: 700; fill: #111827; }
+      .b { font-size: 14px; fill: #1F2937; }
+      .s { font-size: 12.5px; fill: #4B5563; }
+      .mono { font-family: 'DejaVu Sans Mono', monospace; font-size: 13px; fill: #374151; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="900" fill="#FCFCFA"/>
+
+  <text x="48" y="52" class="title">YoChat 模块概念图</text>
+  <text x="48" y="82" class="sub">5 个 Rust crate + Svelte UI；依赖方向由外向内，核心不反向依赖任何适配器</text>
+
+  <line x1="1000" y1="46" x2="1054" y2="46" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="1064" y="51" class="s">依赖 / 调用</text>
+  <line x1="1000" y1="72" x2="1054" y2="72" stroke="#B91C1C" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrowRed)"/>
+  <text x="1064" y="77" class="s">禁止的反向依赖</text>
+
+  <!-- 界面层 -->
+  <text x="48" y="126" class="h">① 界面层</text>
+  <rect x="48" y="145" width="520" height="110" rx="12" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <text x="68" y="176" class="h2">ui — Svelte 5 + Vite</text>
+  <text x="68" y="203" class="b">会话视图 · 联系人 · 邀请 · 设置 · 通知</text>
+  <text x="68" y="227" class="b">只接收业务 DTO；不接触原始网络帧与密钥材料</text>
+
+  <rect x="640" y="145" width="712" height="110" rx="12" fill="#DFF0E6" stroke="#2F7D5B" stroke-width="1.5"/>
+  <text x="660" y="176" class="h2">yochat-app — Tauri 2 桌面外壳</text>
+  <text x="660" y="203" class="b">窗口 · 应用锁 · 系统钥匙串 · 系统通知 · 组装运行时</text>
+  <text x="660" y="227" class="b">把核心事件流转换为界面可消费的 DTO，不共享内部结构</text>
+
+  <line x1="568" y1="200" x2="632" y2="200" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="578" y="188" class="s">IPC</text>
+
+  <!-- 核心 -->
+  <rect x="48" y="300" width="1304" height="330" rx="16" fill="#E7F0F7" stroke="#1F5F8B" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="68" y="332" class="h2">yochat-core — 领域核心（不依赖 Tauri；公开签名中不出现 iroh / p2panda 类型）</text>
+
+  <line x1="996" y1="255" x2="996" y2="296" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="1006" y="282" class="s">命令 / 事件</text>
+
+  <rect x="72" y="352" width="380" height="156" rx="10" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="92" y="382" class="h">纯状态机层</text>
+  <text x="92" y="410" class="mono">step(state, event) → (state, effects)</text>
+  <text x="92" y="436" class="b">消息排序 · 等待 · 重发 · 通道重建</text>
+  <text x="92" y="460" class="b">联系人引导 · 设备列表 · 吊销 · 删除</text>
+  <text x="92" y="484" class="b">应用锁 · 配额 · 超时（不读时钟/随机/IO）</text>
+
+  <rect x="476" y="352" width="400" height="156" rx="10" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="496" y="382" class="h">执行器</text>
+  <text x="496" y="410" class="b">驱动 step、持久化状态、执行效果</text>
+  <text x="496" y="436" class="b">状态 + 待执行效果同事务落盘</text>
+  <text x="496" y="460" class="b">效果提交后执行，再标记完成</text>
+  <text x="496" y="484" class="b">效果幂等 / 可去重；出站前重查授权</text>
+
+  <rect x="900" y="352" width="428" height="156" rx="10" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="920" y="382" class="h">存储接口 Store</text>
+  <text x="920" y="410" class="b">包住 SQLCipher 句柄（rusqlite 0.42）</text>
+  <text x="920" y="436" class="b">消息 · 联系人 · 设备列表 · 密钥材料</text>
+  <text x="920" y="460" class="b">失败区分“不存在”与“读失败”</text>
+  <text x="920" y="484" class="b">全文搜索 · 删除墓碑 · 配额</text>
+
+  <rect x="72" y="530" width="380" height="76" rx="10" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="92" y="558" class="h">网络窄接口</text>
+  <text x="92" y="584" class="b">发送字节 · 订阅到达 · 查询可达性</text>
+
+  <rect x="476" y="530" width="400" height="76" rx="10" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="496" y="558" class="h">加密后端契约 CryptoBackend</text>
+  <text x="496" y="584" class="b">结构化候选、密钥与表示转换由 protocol 实现</text>
+
+  <rect x="900" y="530" width="428" height="76" rx="10" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="920" y="558" class="h">横切约束</text>
+  <text x="920" y="584" class="b">授权代数 · 单调截止 · 准入预算 · 有界重试</text>
+
+  <text x="900" y="620" class="s" fill="#B91C1C">✕ core 不反向依赖 net / protocol / Tauri</text>
+
+  <!-- 实现层 -->
+  <text x="48" y="660" class="h">② 实现与进程层</text>
+
+  <rect x="48" y="680" width="420" height="150" rx="12" fill="#FBF0E4" stroke="#A35A1F" stroke-width="1.5"/>
+  <text x="68" y="711" class="h2">yochat-net</text>
+  <text x="68" y="739" class="b">iroh 1.4.1 传输；p2panda 产出被承载的字节</text>
+  <text x="68" y="763" class="b">握手/解密前的准入预算 · 中转/直连/发现</text>
+  <text x="68" y="787" class="b">地址与连接的有界生命周期</text>
+  <text x="68" y="811" class="b">实现 core 窄接口；依赖 core，反向不依赖</text>
+
+  <rect x="492" y="680" width="420" height="150" rx="12" fill="#F1EBF9" stroke="#6B4E9B" stroke-width="1.5"/>
+  <text x="512" y="711" class="h2">yochat-protocol</text>
+  <text x="512" y="739" class="b">具体群状态 · 密钥管理 · 表示转换</text>
+  <text x="512" y="763" class="b">p2panda-encryption 0.8.1 适配</text>
+  <text x="512" y="787" class="b">实现 CryptoBackend；Core 不反向依赖</text>
+  <text x="512" y="811" class="b">协议帧 / 签名 / 加密的规范表示</text>
+
+  <rect x="936" y="680" width="416" height="150" rx="12" fill="#EFEFEF" stroke="#555555" stroke-width="1.5"/>
+  <text x="956" y="711" class="h2">yochat-node</text>
+  <text x="956" y="739" class="b">无界面二进制，复用 yochat-core</text>
+  <text x="956" y="763" class="b">不链接任何界面依赖（构建期证明）</text>
+  <text x="956" y="787" class="b">第一期常在线职责由桌面进程承担</text>
+  <text x="956" y="811" class="b">无界面形态与无钥匙串解锁：后续阶段</text>
+
+  <line x1="258" y1="680" x2="258" y2="634" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="268" y="662" class="s">实现窄接口</text>
+  <line x1="702" y1="680" x2="702" y2="634" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="712" y="662" class="s">实现 CryptoBackend</text>
+  <line x1="1144" y1="680" x2="1144" y2="634" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="1154" y="662" class="s">复用</text>
+
+  <text x="48" y="868" class="s">首个交付增量只覆盖桌面端的一对一会话与自身会话；文件与群聊在后续阶段。版本号随 Cargo.lock / pnpm-lock.yaml 变化。</text>
+</svg>

@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 920" role="img" aria-labelledby="t d">
+  <title id="t">好友邀请与应答的控制流</title>
+  <desc id="d">A 生成邀请，经外部渠道传给 B；B 生成加密应答回传；A 在签发设备确认并发出首条认证操作；双方再做安全码带外比对。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6B7280"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2F7D5B"/>
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6B4E9B"/>
+    </marker>
+    <style>
+      svg { font-family: 'Noto Sans SC','PingFang SC','Microsoft YaHei','DejaVu Sans',sans-serif; }
+      .title { font-size: 30px; font-weight: 700; fill: #111827; }
+      .sub { font-size: 15px; fill: #4B5563; }
+      .h { font-size: 17px; font-weight: 700; fill: #111827; }
+      .h2 { font-size: 15.5px; font-weight: 700; fill: #111827; }
+      .b { font-size: 13.5px; fill: #1F2937; }
+      .s { font-size: 12.5px; fill: #4B5563; }
+    </style>
+  </defs>
+
+  <rect width="1500" height="920" fill="#FCFCFA"/>
+
+  <text x="60" y="52" class="title">好友邀请与应答的控制流</text>
+  <text x="60" y="82" class="sub">两轮交换、各自确认；邀请与应答只经人复制粘贴，系统不从网络接受入站邀请或应答</text>
+
+  <text x="60" y="138" class="s" font-weight="700">A 发起方（签发设备）</text>
+  <text x="500" y="138" class="s" font-weight="700">外部渠道（双方已在用）</text>
+  <text x="1060" y="138" class="s" font-weight="700">B 应答方</text>
+
+  <!-- Row 1 -->
+  <rect x="60" y="160" width="380" height="120" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <text x="80" y="190" class="h2">① 生成邀请（用户私钥签名）</text>
+  <text x="80" y="218" class="b">用户公钥 · 渠道标签 + 权威账号</text>
+  <text x="80" y="242" class="b">一台设备公钥（签发设备）</text>
+  <text x="80" y="266" class="b">一次性公钥（= 邀请标识）· 有效期 · 备注</text>
+
+  <rect x="500" y="160" width="500" height="120" rx="10" fill="#FBF0E4" stroke="#A35A1F" stroke-width="1.5"/>
+  <text x="520" y="190" class="h2">② 经已有渠道传递（人复制粘贴）</text>
+  <text x="520" y="218" class="b">系统不从网络接受入站邀请或应答。</text>
+  <text x="520" y="242" class="b">定向邀请：仅私下发给指定账号；不定向：可公开张贴。</text>
+  <text x="520" y="266" class="b">公开张贴会暴露设备公钥与渠道账号，生成时须说明。</text>
+
+  <rect x="1060" y="160" width="380" height="120" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <text x="1080" y="190" class="h2">③ 粘贴邀请 → 验签 / 长度</text>
+  <text x="1080" y="218" class="b">回到该渠道核对发件账号</text>
+  <text x="1080" y="242" class="b">生成应答：一次性公钥加密</text>
+  <text x="1080" y="266" class="b">用 B 的用户私钥签名</text>
+
+  <line x1="440" y1="220" x2="494" y2="220" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1000" y1="220" x2="1054" y2="220" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Row 2 (right to left) -->
+  <rect x="1060" y="330" width="380" height="120" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <text x="1080" y="360" class="h2">④ 应答内容</text>
+  <text x="1080" y="388" class="b">B 用户公钥 · B 渠道身份</text>
+  <text x="1080" y="412" class="b">B 一台设备公钥 · 所应答邀请的摘要</text>
+  <text x="1080" y="436" class="b">邀请标识在密文外，A 可直接定位</text>
+
+  <rect x="500" y="330" width="500" height="120" rx="10" fill="#FBF0E4" stroke="#A35A1F" stroke-width="1.5"/>
+  <text x="520" y="360" class="h2">⑤ 经同一渠道回传</text>
+  <text x="520" y="388" class="b">只有 A 能解开；B 不向 A 之外的任何人公开自己的标识。</text>
+  <text x="520" y="412" class="b">应答签名覆盖整份邀请的摘要，不能被改换作者或重放。</text>
+
+  <rect x="60" y="330" width="380" height="120" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <text x="80" y="360" class="h2">⑥ 在签发设备粘贴并确认</text>
+  <text x="80" y="388" class="b">一次性私钥只在该设备</text>
+  <text x="80" y="412" class="b">解密 → 验签 → 待确认列表</text>
+  <text x="80" y="436" class="b">列表显示 B 的身份与渠道；A 确认</text>
+
+  <line x1="1060" y1="390" x2="1006" y2="390" stroke="#6B4E9B" stroke-width="2" marker-end="url(#arrowPurple)"/>
+  <line x1="500" y1="390" x2="446" y2="390" stroke="#6B4E9B" stroke-width="2" marker-end="url(#arrowPurple)"/>
+  <line x1="1250" y1="280" x2="1250" y2="324" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="250" y1="450" x2="250" y2="494" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Row 3 -->
+  <rect x="60" y="500" width="380" height="120" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <text x="80" y="530" class="h2">⑦ 发出首条认证操作</text>
+  <text x="80" y="558" class="b">A 确认后发出设备组加入操作</text>
+  <text x="80" y="582" class="b">不要求 A 之后还必须发应用消息</text>
+  <text x="80" y="606" class="b">B 据此把关系置为已建立</text>
+
+  <rect x="1060" y="500" width="380" height="120" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <text x="1080" y="530" class="h2">⑧ 收到首条操作 → 关系建立</text>
+  <text x="1080" y="558" class="b">设备组加入操作即认证操作</text>
+  <text x="1080" y="582" class="b">来自邀请中用户公钥之外的消息一律拒绝</text>
+
+  <line x1="440" y1="560" x2="1054" y2="560" stroke="#2F7D5B" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <text x="640" y="550" class="s">首条认证操作（设备组加入）</text>
+
+  <!-- Row 4 -->
+  <rect x="60" y="670" width="440" height="140" rx="10" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.2"/>
+  <text x="80" y="700" class="h2">安全码带外比对</text>
+  <text x="80" y="728" class="b">换一条独立于邀请渠道的途径，双方各念一半。</text>
+  <text x="80" y="752" class="b">比对结果只存本地；对方增删设备不改变安全码。</text>
+  <text x="80" y="776" class="b">安全码只解决首次取得对方用户公钥的问题。</text>
+
+  <rect x="520" y="670" width="440" height="140" rx="10" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.2"/>
+  <text x="540" y="700" class="h2">超时与降级</text>
+  <text x="540" y="728" class="b">邀请有效期 + 宽限；两侧时限相同。</text>
+  <text x="540" y="752" class="b">过期后双方降级并提示“这次交换已过期”，</text>
+  <text x="540" y="776" class="b">不断言对方没回应；迟到的操作按过期交换识别。</text>
+
+  <rect x="980" y="670" width="460" height="140" rx="10" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.2"/>
+  <text x="1000" y="700" class="h2">拒绝、丢弃与拉黑</text>
+  <text x="1000" y="728" class="b">拒绝一份应答不产生任何 YoChat 应用层信号。</text>
+  <text x="1000" y="752" class="b">无匹配记录的入站应答一律丢弃；丢弃计数可见。</text>
+  <text x="1000" y="776" class="b">拉黑与删除联系人另见通讯录和设备要求。</text>
+
+  <text x="60" y="870" class="s">注：邀请/应答的承载形式（纯文本、二维码、深层链接）属于交互方案；产品需求只约束结果、长度检查与告知义务。</text>
+  <text x="60" y="894" class="s">关系状态：B 自发出应答起完成本方确认；A 的首条认证操作让 B 建立关系；在此之前 B 不向 A 发送消息。</text>
+</svg>

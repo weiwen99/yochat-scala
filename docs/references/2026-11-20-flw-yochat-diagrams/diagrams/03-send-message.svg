@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 900" role="img" aria-labelledby="t d">
+  <title id="t">发送一条消息的数据流</title>
+  <desc id="d">从界面撰写到核心状态推进、同事务落盘、加密发送、对方接收与确认的完整路径。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6B7280"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2F7D5B"/>
+    </marker>
+    <style>
+      svg { font-family: 'Noto Sans SC','PingFang SC','Microsoft YaHei','DejaVu Sans',sans-serif; }
+      .title { font-size: 30px; font-weight: 700; fill: #111827; }
+      .sub { font-size: 15px; fill: #4B5563; }
+      .h { font-size: 17px; font-weight: 700; fill: #111827; }
+      .h2 { font-size: 15.5px; font-weight: 700; fill: #111827; }
+      .b { font-size: 13.5px; fill: #1F2937; }
+      .s { font-size: 12.5px; fill: #4B5563; }
+      .mono { font-family: 'DejaVu Sans Mono', monospace; font-size: 12.5px; fill: #374151; }
+      .num { font-size: 13px; font-weight: 700; fill: #FFFFFF; }
+    </style>
+  </defs>
+
+  <rect width="1500" height="900" fill="#FCFCFA"/>
+
+  <text x="30" y="52" class="title">发送一条消息的数据流</text>
+  <text x="30" y="82" class="sub">先落盘、后发送；崩溃或失败都能用同一份原文重试，不重新加密、不改消息标识</text>
+
+  <text x="30" y="130" class="h">发送路径（本机 → 对方）</text>
+
+  <!-- 上排：7 个阶段 -->
+  <rect x="30" y="150" width="190" height="130" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <circle cx="48" cy="168" r="12" fill="#2F7D5B"/>
+  <text x="48" y="173" text-anchor="middle" class="num">1</text>
+  <text x="52" y="205" class="h2">UI 撰写</text>
+  <text x="52" y="231" class="b">Tauri command</text>
+  <text x="52" y="253" class="b">业务 DTO</text>
+
+  <rect x="240" y="150" width="190" height="130" rx="10" fill="#E7F0F7" stroke="#1F5F8B" stroke-width="1.5"/>
+  <circle cx="258" cy="168" r="12" fill="#1F5F8B"/>
+  <text x="258" y="173" text-anchor="middle" class="num">2</text>
+  <text x="262" y="205" class="h2">Core step</text>
+  <text x="262" y="231" class="b">(State, Effects)</text>
+  <text x="262" y="253" class="b">保存 / 发送 / 定时器</text>
+
+  <rect x="450" y="150" width="190" height="130" rx="10" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.5"/>
+  <circle cx="468" cy="168" r="12" fill="#8A6D0B"/>
+  <text x="468" y="173" text-anchor="middle" class="num">3</text>
+  <text x="472" y="205" class="h2">单事务</text>
+  <text x="472" y="231" class="b">状态 + 原文</text>
+  <text x="472" y="253" class="b">+ 待发效果</text>
+
+  <rect x="660" y="150" width="190" height="130" rx="10" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.5"/>
+  <circle cx="678" cy="168" r="12" fill="#8A6D0B"/>
+  <text x="678" y="173" text-anchor="middle" class="num">4</text>
+  <text x="682" y="205" class="h2">COMMIT</text>
+  <text x="682" y="231" class="b">取出冻结帧</text>
+  <text x="682" y="253" class="b">不可变字节</text>
+
+  <rect x="870" y="150" width="190" height="130" rx="10" fill="#F1EBF9" stroke="#6B4E9B" stroke-width="1.5"/>
+  <circle cx="888" cy="168" r="12" fill="#6B4E9B"/>
+  <text x="888" y="173" text-anchor="middle" class="num">5</text>
+  <text x="892" y="205" class="h2">Protocol</text>
+  <text x="892" y="231" class="b">加密 + 签名</text>
+  <text x="892" y="253" class="b">规范表示</text>
+
+  <rect x="1080" y="150" width="190" height="130" rx="10" fill="#FBF0E4" stroke="#A35A1F" stroke-width="1.5"/>
+  <circle cx="1098" cy="168" r="12" fill="#A35A1F"/>
+  <text x="1098" y="173" text-anchor="middle" class="num">6</text>
+  <text x="1102" y="205" class="h2">Net（iroh）</text>
+  <text x="1102" y="231" class="b">发送 / 重试</text>
+  <text x="1102" y="253" class="b">30 秒单调截止</text>
+
+  <rect x="1290" y="150" width="190" height="130" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <circle cx="1308" cy="168" r="12" fill="#2F7D5B"/>
+  <text x="1308" y="173" text-anchor="middle" class="num">7</text>
+  <text x="1312" y="205" class="h2">对方设备</text>
+  <text x="1312" y="231" class="b">准入 → 解密</text>
+  <text x="1312" y="253" class="b">去重 → 定序</text>
+
+  <line x1="220" y1="215" x2="234" y2="215" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="430" y1="215" x2="444" y2="215" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="640" y1="215" x2="654" y2="215" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="850" y1="215" x2="864" y2="215" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1060" y1="215" x2="1074" y2="215" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1270" y1="215" x2="1284" y2="215" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- 网络细节 -->
+  <rect x="30" y="310" width="1450" height="86" rx="10" fill="#FBF0E4" stroke="#A35A1F" stroke-width="1.2"/>
+  <text x="50" y="337" class="h2">网络细节：中转 Relay 或直接连接</text>
+  <text x="50" y="363" class="b">中转可见：双方设备端点标识 · 连接/投递时间 · 字节数与帧数 · 本机网络地址 · 协议版本 · 设备认证签名</text>
+  <text x="50" y="385" class="b">中转看不到：消息正文、任何解密材料、用户公钥、聊天会话成员名单。设备端点可见 ≠ 用户身份可读。</text>
+
+  <!-- 下排：6 个阶段（从右往左） -->
+  <text x="30" y="440" class="h">接收与确认路径（对方 → 本机）</text>
+
+  <rect x="1290" y="460" width="190" height="120" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <circle cx="1308" cy="478" r="12" fill="#2F7D5B"/>
+  <text x="1308" y="483" text-anchor="middle" class="num">8</text>
+  <text x="1312" y="512" class="h2">应用 + 落盘</text>
+  <text x="1312" y="538" class="b">单事务 + 游标</text>
+  <text x="1312" y="560" class="b">已落盘</text>
+
+  <rect x="1080" y="460" width="190" height="120" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <circle cx="1098" cy="478" r="12" fill="#2F7D5B"/>
+  <text x="1098" y="483" text-anchor="middle" class="num">9</text>
+  <text x="1102" y="512" class="h2">业务 ACK</text>
+  <text x="1102" y="538" class="b">已接收 ≠ 已读</text>
+  <text x="1102" y="560" class="b">任一设备落盘即可</text>
+
+  <rect x="870" y="460" width="190" height="120" rx="10" fill="#FBF0E4" stroke="#A35A1F" stroke-width="1.5"/>
+  <circle cx="888" cy="478" r="12" fill="#A35A1F"/>
+  <text x="888" y="483" text-anchor="middle" class="num">10</text>
+  <text x="892" y="512" class="h2">网络回传</text>
+  <text x="892" y="538" class="b">iroh / 中转</text>
+  <text x="892" y="560" class="b">结果作为 Event</text>
+
+  <rect x="660" y="460" width="190" height="120" rx="10" fill="#E7F0F7" stroke="#1F5F8B" stroke-width="1.5"/>
+  <circle cx="678" cy="478" r="12" fill="#1F5F8B"/>
+  <text x="678" y="483" text-anchor="middle" class="num">11</text>
+  <text x="682" y="512" class="h2">本机收 ACK</text>
+  <text x="682" y="538" class="b">Event</text>
+  <text x="682" y="560" class="b">效果完成结果</text>
+
+  <rect x="450" y="460" width="190" height="120" rx="10" fill="#E7F0F7" stroke="#1F5F8B" stroke-width="1.5"/>
+  <circle cx="468" cy="478" r="12" fill="#1F5F8B"/>
+  <text x="468" y="483" text-anchor="middle" class="num">12</text>
+  <text x="472" y="512" class="h2">step</text>
+  <text x="472" y="538" class="b">送达状态</text>
+  <text x="472" y="560" class="b">“对方已收到”</text>
+
+  <rect x="240" y="460" width="190" height="120" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <circle cx="258" cy="478" r="12" fill="#2F7D5B"/>
+  <text x="258" y="483" text-anchor="middle" class="num">13</text>
+  <text x="262" y="512" class="h2">UI 事件</text>
+  <text x="262" y="538" class="b">刷新状态</text>
+  <text x="262" y="560" class="b">不阻塞输入</text>
+
+  <line x1="1290" y1="520" x2="1276" y2="520" stroke="#2F7D5B" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <line x1="1080" y1="520" x2="1066" y2="520" stroke="#2F7D5B" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <line x1="870" y1="520" x2="856" y2="520" stroke="#2F7D5B" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <line x1="660" y1="520" x2="646" y2="520" stroke="#2F7D5B" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <line x1="450" y1="520" x2="436" y2="520" stroke="#2F7D5B" stroke-width="2" marker-end="url(#arrowGreen)"/>
+
+  <!-- 关键保证 -->
+  <rect x="30" y="620" width="460" height="100" rx="10" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="50" y="648" class="h2">先落盘，后发送</text>
+  <text x="50" y="674" class="b">发送失败或进程崩溃时，原文仍在本地；</text>
+  <text x="50" y="696" class="b">下次连通继续补齐，不需要用户取舍。</text>
+
+  <rect x="510" y="620" width="460" height="100" rx="10" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="530" y="648" class="h2">重试复用冻结帧</text>
+  <text x="530" y="674" class="b">不重新加密、不重新签名、不改消息标识；</text>
+  <text x="530" y="696" class="b">接收方按消息标识去重，重复投递只呈现一次。</text>
+
+  <rect x="990" y="620" width="490" height="100" rx="10" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="1010" y="648" class="h2">送达状态只到“已接收”</text>
+  <text x="1010" y="674" class="b">对方任一未吊销设备落盘即为“已收到”，</text>
+  <text x="1010" y="696" class="b">不提供已读回执；人是否看见无从得知。</text>
+
+  <text x="30" y="780" class="s">时序说明：3–4 必须同时提交；6 的 30 秒截止从接受发送开始，覆盖排队、连接、开流、写入与等待读取，阶段推进不续期。</text>
+  <text x="30" y="806" class="s">重发与重试受连通纪元/滑动窗口预算约束；对方离线不导致丢弃，消息停在“已写入本地”。</text>
+</svg>

@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 1020" role="img" aria-labelledby="t d">
+  <title id="t">接收、严格按序与补齐路径</title>
+  <desc id="d">入站数据经过准入、解密、去重与定序；缺口进入等待，并通过请求重发、兜底重发、通道重建或可验证声明放行。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6B7280"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1F5F8B"/>
+    </marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#A35A1F"/>
+    </marker>
+    <style>
+      svg { font-family: 'Noto Sans SC','PingFang SC','Microsoft YaHei','DejaVu Sans',sans-serif; }
+      .title { font-size: 30px; font-weight: 700; fill: #111827; }
+      .sub { font-size: 15px; fill: #4B5563; }
+      .h { font-size: 17px; font-weight: 700; fill: #111827; }
+      .b { font-size: 14px; fill: #1F2937; }
+      .s { font-size: 12.5px; fill: #4B5563; }
+      .num { font-size: 13px; font-weight: 700; fill: #FFFFFF; }
+    </style>
+  </defs>
+
+  <rect width="1500" height="1020" fill="#FCFCFA"/>
+
+  <text x="48" y="52" class="title">接收、严格按序与补齐路径</text>
+  <text x="48" y="82" class="sub">正常路径只做一件事：按（会话，作者设备）的日志位置连续应用；缺口进入右侧恢复路径，不跳过</text>
+
+  <text x="48" y="126" class="h">正常路径（按序应用）</text>
+  <text x="820" y="126" class="h">缺口与恢复路径（不丢消息）</text>
+
+  <!-- 左列 -->
+  <rect x="48" y="170" width="700" height="64" rx="9" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.2"/>
+  <text x="68" y="208" class="b">入站帧（应用层已准入的字节）</text>
+
+  <rect x="48" y="248" width="700" height="64" rx="9" fill="#FBF0E4" stroke="#A35A1F" stroke-width="1.2"/>
+  <text x="68" y="286" class="b">准入预算：全局并发 / 握手速率 / 任务数 / 内存 + 来源桶</text>
+
+  <rect x="48" y="326" width="700" height="64" rx="9" fill="#F1EBF9" stroke="#6B4E9B" stroke-width="1.2"/>
+  <text x="68" y="364" class="b">解密 + 验签（Protocol）</text>
+
+  <rect x="48" y="404" width="700" height="64" rx="9" fill="#E7F0F7" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="68" y="442" class="b">去重：按消息标识；记录本次操作的日志位置</text>
+
+  <rect x="48" y="482" width="700" height="64" rx="9" fill="#E7F0F7" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="68" y="520" class="b">定序：该日志位置是否等于应用游标？</text>
+
+  <rect x="48" y="560" width="700" height="64" rx="9" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.2"/>
+  <text x="68" y="598" class="b">应用：单事务写消息 / 引用 / 游标 / 待执行效果</text>
+
+  <rect x="48" y="638" width="700" height="64" rx="9" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.2"/>
+  <text x="68" y="676" class="b">推进应用游标（全部持久化效果提交之后）</text>
+
+  <rect x="48" y="716" width="700" height="64" rx="9" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.2"/>
+  <text x="68" y="754" class="b">UI 事件 + 业务 ACK（已接收，不等于已读）</text>
+
+  <line x1="398" y1="234" x2="398" y2="246" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="398" y1="312" x2="398" y2="324" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="398" y1="390" x2="398" y2="402" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="398" y1="468" x2="398" y2="480" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="398" y1="546" x2="398" y2="558" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="398" y1="624" x2="398" y2="636" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="398" y1="702" x2="398" y2="714" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- 右列 -->
+  <rect x="820" y="248" width="632" height="64" rx="9" fill="#FFFFFF" stroke="#555555" stroke-width="1.2"/>
+  <text x="840" y="286" class="b">准入拒绝：静默丢弃 + 计数（不产生应用层响应）</text>
+
+  <rect x="820" y="326" width="632" height="64" rx="9" fill="#F1EBF9" stroke="#6B4E9B" stroke-width="1.2"/>
+  <text x="840" y="364" class="b">解密失败 / 超容忍上限：通道重建（滑动窗限速）</text>
+
+  <rect x="820" y="404" width="632" height="64" rx="9" fill="#FFFFFF" stroke="#555555" stroke-width="1.2"/>
+  <text x="840" y="442" class="b">重复到达：按幂等丢弃（不产生第二次呈现）</text>
+
+  <rect x="820" y="482" width="632" height="64" rx="9" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.2"/>
+  <text x="840" y="520" class="b">非期望位置：乱序缓冲 → 等待（行内、非打扰）</text>
+
+  <rect x="820" y="560" width="632" height="64" rx="9" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.2"/>
+  <text x="840" y="598" class="b">等待超时：接收方请求重发 / 发送方兜底重发</text>
+
+  <rect x="820" y="638" width="632" height="64" rx="9" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.2"/>
+  <text x="840" y="676" class="b">被请求方全部设备签名“不再提供” → 放行</text>
+
+  <rect x="820" y="716" width="632" height="64" rx="9" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.2"/>
+  <text x="840" y="754" class="b">超时仍无答复 → 暂不可得 → 放行并标记原因</text>
+
+  <rect x="820" y="794" width="632" height="64" rx="9" fill="#E7F0F7" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="840" y="832" class="b">已放行位置后收到内容 → 接受并应用，不按重复丢弃</text>
+
+  <line x1="748" y1="280" x2="814" y2="280" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="756" y="270" class="s">拒绝</text>
+  <line x1="748" y1="358" x2="814" y2="358" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="756" y="348" class="s">失败</text>
+  <line x1="748" y1="436" x2="814" y2="436" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="756" y="426" class="s">重复</text>
+  <line x1="748" y1="514" x2="814" y2="514" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="756" y="504" class="s">缺口</text>
+
+  <line x1="1136" y1="546" x2="1136" y2="558" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1136" y1="624" x2="1136" y2="636" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1136" y1="702" x2="1136" y2="714" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1136" y1="780" x2="1136" y2="792" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <text x="1148" y="620" class="s">签名声明或超时</text>
+
+  <!-- 底部不变量 -->
+  <rect x="48" y="892" width="1404" height="96" rx="12" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.5"/>
+  <text x="68" y="922" class="b">已决 = 已应用 + 已放行 + 已删除，始终是形如 1 到 k 的连续区间；不得因超时、缓冲上限、内存压力或资源紧张而跳过。</text>
+  <text x="68" y="948" class="b">放行不是跳过：每个放行位置都带可展示的原因与所依据的设备列表版本；等待在缺失到达后自行结束，不呈现为需要用户处理的问题。</text>
+  <text x="68" y="974" class="b">缓冲区达到接收方上限时请求重发而不是丢弃；通道重建按滑动时间窗限速，窗口滚动后自动恢复尝试。</text>
+</svg>

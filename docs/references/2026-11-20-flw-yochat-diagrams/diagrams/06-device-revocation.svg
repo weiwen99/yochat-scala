@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 920" role="img" aria-labelledby="t d">
+  <title id="t">设备组、吊销与多设备同步</title>
+  <desc id="d">用户私钥只存在于指定设备；设备列表由用户私钥签名并分发；吊销声明只影响设备公钥，不影响用户身份与安全码。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6B7280"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1F5F8B"/>
+    </marker>
+    <style>
+      svg { font-family: 'Noto Sans SC','PingFang SC','Microsoft YaHei','DejaVu Sans',sans-serif; }
+      .title { font-size: 30px; font-weight: 700; fill: #111827; }
+      .sub { font-size: 15px; fill: #4B5563; }
+      .h { font-size: 17px; font-weight: 700; fill: #111827; }
+      .h2 { font-size: 15.5px; font-weight: 700; fill: #111827; }
+      .b { font-size: 13.5px; fill: #1F2937; }
+      .s { font-size: 12.5px; fill: #4B5563; }
+    </style>
+  </defs>
+
+  <rect width="1500" height="920" fill="#FCFCFA"/>
+
+  <text x="48" y="52" class="title">设备组、吊销与多设备同步</text>
+  <text x="48" y="82" class="sub">用户私钥只在指定设备；设备列表由用户私钥签名；吊销作用在设备公钥上，用户身份与安全码不变</text>
+
+  <text x="48" y="126" class="h">设备组</text>
+  <text x="760" y="126" class="h">吊销一台设备 B：控制流</text>
+
+  <!-- 左：设备组 -->
+  <rect x="60" y="150" width="220" height="70" rx="10" fill="#F1EBF9" stroke="#6B4E9B" stroke-width="1.5"/>
+  <text x="80" y="180" class="h2">用户私钥</text>
+  <text x="80" y="204" class="b">只在用户指定的设备上</text>
+
+  <rect x="60" y="280" width="160" height="100" rx="10" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.5"/>
+  <text x="80" y="310" class="h2">设备 A</text>
+  <text x="80" y="336" class="b">持有用户私钥</text>
+  <text x="80" y="358" class="b">可签发 / 吊销 / 邀请</text>
+
+  <rect x="270" y="280" width="160" height="100" rx="10" fill="#FFFFFF" stroke="#555555" stroke-width="1.5"/>
+  <text x="290" y="310" class="h2">设备 B（将被吊销）</text>
+  <text x="290" y="336" class="b">不持有用户私钥</text>
+  <text x="290" y="358" class="b">能正常收发</text>
+
+  <rect x="480" y="280" width="160" height="100" rx="10" fill="#FFFFFF" stroke="#555555" stroke-width="1.5"/>
+  <text x="500" y="310" class="h2">设备 C</text>
+  <text x="500" y="336" class="b">不持有用户私钥</text>
+  <text x="500" y="358" class="b">能正常收发</text>
+
+  <line x1="140" y1="280" x2="140" y2="224" stroke="#6B4E9B" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+  <text x="150" y="256" class="s">持有</text>
+  <text x="290" y="270" class="s">不持有 ↛</text>
+  <text x="500" y="270" class="s">不持有 ↛</text>
+
+  <line x1="140" y1="380" x2="140" y2="414" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="350" y1="380" x2="350" y2="414" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="560" y1="380" x2="560" y2="414" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="60" y="420" width="580" height="90" rx="10" fill="#E7F0F7" stroke="#1F5F8B" stroke-width="1.5"/>
+  <text x="80" y="450" class="h2">设备列表（用户私钥签名，有版本）</text>
+  <text x="80" y="476" class="b">随关系同步给本人其他设备与全部联系人；版本变化本身可被观察。</text>
+  <text x="80" y="498" class="b">消息寻址到用户，再由系统分发到列表中的设备。</text>
+
+  <line x1="350" y1="510" x2="350" y2="536" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="60" y="540" width="580" height="90" rx="10" fill="#FBF0E4" stroke="#A35A1F" stroke-width="1.5"/>
+  <text x="80" y="570" class="h2">联系人</text>
+  <text x="80" y="596" class="b">看到设备列表与吊销声明；收到声明后拒绝被吊销设备的后续消息。</text>
+  <text x="80" y="618" class="b">尚未收到声明的联系人，在收到之前仍会接受该设备的消息。</text>
+
+  <rect x="60" y="660" width="580" height="120" rx="10" fill="#FFFFFF" stroke="#555555" stroke-width="1.2"/>
+  <text x="80" y="690" class="h2">新设备加入</text>
+  <text x="80" y="716" class="b">新设备证明持有设备私钥 → A 签入设备列表 → 发布加入事件。</text>
+  <text x="80" y="740" class="b">其他设备察觉版本变化却未收到加入事件时，应告警。</text>
+  <text x="80" y="764" class="b">新设备默认只读加入之后的消息；历史同步须在持有历史的设备上发起。</text>
+
+  <!-- 右：吊销流程 -->
+  <rect x="760" y="150" width="692" height="80" rx="9" fill="#F1EBF9" stroke="#6B4E9B" stroke-width="1.2"/>
+  <text x="780" y="180" class="h2">1  A 签发吊销声明</text>
+  <text x="780" y="206" class="b">携带 B 的设备公钥 + 时间戳，由用户私钥签名</text>
+
+  <rect x="760" y="242" width="692" height="80" rx="9" fill="#FBF0E4" stroke="#A35A1F" stroke-width="1.2"/>
+  <text x="780" y="272" class="h2">2  随设备列表分发</text>
+  <text x="780" y="298" class="b">本人其他设备 + 全部联系人；依赖连接逐步传开，没有中心通知</text>
+
+  <rect x="760" y="334" width="692" height="80" rx="9" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.2"/>
+  <text x="780" y="364" class="h2">3  收到声明后</text>
+  <text x="780" y="390" class="b">拒绝 B 此后发出的消息；B 无法解密此后的消息</text>
+
+  <rect x="760" y="426" width="692" height="80" rx="9" fill="#FFFFFF" stroke="#555555" stroke-width="1.2"/>
+  <text x="780" y="456" class="h2">4  不改变的东西</text>
+  <text x="780" y="482" class="b">用户公钥与安全码不变；B 已持有的本地数据不被撤回</text>
+
+  <rect x="760" y="518" width="692" height="80" rx="9" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.2"/>
+  <text x="780" y="548" class="h2">5  邀请处置</text>
+  <text x="780" y="574" class="b">本人其余设备不再受理 B 签发的未过期邀请，并提示撤下已张贴文本</text>
+
+  <rect x="760" y="610" width="692" height="80" rx="9" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.2"/>
+  <text x="780" y="640" class="h2">6  能力边界（必须如实说明）</text>
+  <text x="780" y="666" class="b">B 不持用户私钥：不能再以本人名义结识新人；持有时无法阻止（等同恢复短语泄漏）</text>
+
+  <rect x="760" y="702" width="692" height="80" rx="9" fill="#E7F0F7" stroke="#1F5F8B" stroke-width="1.2"/>
+  <text x="780" y="732" class="h2">7  判定依据</text>
+  <text x="780" y="758" class="b">本机接收时间 + 本机收到声明的时间；不用消息自称的创建时间</text>
+
+  <line x1="1106" y1="230" x2="1106" y2="240" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1106" y1="322" x2="1106" y2="332" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1106" y1="414" x2="1106" y2="424" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1106" y1="506" x2="1106" y2="516" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1106" y1="598" x2="1106" y2="608" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1106" y1="690" x2="1106" y2="700" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- 底部 -->
+  <rect x="48" y="812" width="1404" height="70" rx="12" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.5"/>
+  <text x="68" y="842" class="b">多设备同步：联系人、拉黑、校验状态、备注、分组、未读、删除指令。删除在本机立即生效，传播到其他设备只是“指令”，须逐设备确认；重发按被请求用户的设备并集提供。</text>
+  <text x="68" y="868" class="b">新设备默认只读加入之后；历史同步可中断续传且不产生重复。常在线设备持有解密密钥，应部署在用户自己控制的机器上。</text>
+
+  <text x="48" y="910" class="s">边界：没有远程擦除；吊销不能撤回已解密的过去，也不能让尚未收到声明的联系人立刻停止接受该设备。</text>
+</svg>

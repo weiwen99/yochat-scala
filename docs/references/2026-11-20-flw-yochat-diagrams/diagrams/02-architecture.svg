@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 980" role="img" aria-labelledby="t d">
+  <title id="t">YoChat 三层架构与崩溃安全执行顺序</title>
+  <desc id="d">纯状态机、执行器与适配器的分层，以及状态与效果同事务、提交后执行、再标记完成的顺序。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6B7280"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1F5F8B"/>
+    </marker>
+    <marker id="arrowBoth" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6B7280"/>
+    </marker>
+    <style>
+      svg { font-family: 'Noto Sans SC','PingFang SC','Microsoft YaHei','DejaVu Sans',sans-serif; }
+      .title { font-size: 30px; font-weight: 700; fill: #111827; }
+      .sub { font-size: 15px; fill: #4B5563; }
+      .h { font-size: 17px; font-weight: 700; fill: #111827; }
+      .h2 { font-size: 16px; font-weight: 700; fill: #111827; }
+      .b { font-size: 14px; fill: #1F2937; }
+      .s { font-size: 12.5px; fill: #4B5563; }
+      .mono { font-family: 'DejaVu Sans Mono', monospace; font-size: 13px; fill: #374151; }
+    </style>
+  </defs>
+
+  <rect width="1500" height="980" fill="#FCFCFA"/>
+
+  <text x="48" y="52" class="title">三层架构与崩溃安全执行顺序</text>
+  <text x="48" y="82" class="sub">状态机只产生新状态与效果；执行器保证“状态先落盘、效果后执行”，并允许崩溃后重放</text>
+
+  <text x="48" y="126" class="h">① 纯状态机（无 IO、可序列化）</text>
+  <text x="420" y="126" class="h">② 执行器（崩溃安全的中层）</text>
+  <text x="1112" y="126" class="h">③ 适配器（只被执行器调用）</text>
+
+  <!-- 左列 -->
+  <rect x="48" y="145" width="340" height="600" rx="14" fill="#F1EBF9" stroke="#6B4E9B" stroke-width="1.5"/>
+  <rect x="68" y="170" width="300" height="62" rx="8" fill="#FFFFFF" stroke="#6B4E9B" stroke-width="1"/>
+  <text x="84" y="207" class="b">消息排序 / 等待 / 重发 / 重建</text>
+  <rect x="68" y="244" width="300" height="62" rx="8" fill="#FFFFFF" stroke="#6B4E9B" stroke-width="1"/>
+  <text x="84" y="281" class="b">联系人引导 / 邀请 / 应答</text>
+  <rect x="68" y="318" width="300" height="62" rx="8" fill="#FFFFFF" stroke="#6B4E9B" stroke-width="1"/>
+  <text x="84" y="355" class="b">设备列表 / 吊销 / 历史同步</text>
+  <rect x="68" y="392" width="300" height="62" rx="8" fill="#FFFFFF" stroke="#6B4E9B" stroke-width="1"/>
+  <text x="84" y="429" class="b">删除 / 墓碑 / 逐设备确认</text>
+  <rect x="68" y="466" width="300" height="62" rx="8" fill="#FFFFFF" stroke="#6B4E9B" stroke-width="1"/>
+  <text x="84" y="503" class="b">应用锁 / 实例隔离</text>
+  <rect x="68" y="540" width="300" height="62" rx="8" fill="#FFFFFF" stroke="#6B4E9B" stroke-width="1"/>
+  <text x="84" y="577" class="b">配额 / 准入 / 超时上限</text>
+
+  <text x="68" y="636" class="s" font-weight="700">事件字母表（执行器构造）：</text>
+  <text x="68" y="660" class="s">外部数据 / 用户动作 / 定时器到期</text>
+  <text x="68" y="682" class="s">可达性变化（不可达→可达）</text>
+  <text x="68" y="704" class="s">效果完成或失败的结果</text>
+  <text x="68" y="730" class="s">State 不含句柄，必须可序列化且往返相等</text>
+
+  <!-- 中列：执行器 -->
+  <rect x="420" y="145" width="650" height="600" rx="14" fill="#E7F0F7" stroke="#1F5F8B" stroke-width="1.5"/>
+  <text x="444" y="180" class="h2">执行器 Executor</text>
+
+  <rect x="444" y="200" width="602" height="64" rx="8" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1"/>
+  <text x="460" y="237" class="b">1  收 Event：外部数据 / 用户动作 / 定时器 / 可达性 / 效果结果</text>
+
+  <rect x="444" y="282" width="602" height="52" rx="8" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1"/>
+  <text x="460" y="313" class="b">2  取 State：缓存命中，或从 SQLite 恢复</text>
+
+  <rect x="444" y="352" width="602" height="52" rx="8" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1"/>
+  <text x="460" y="383" class="mono">3  step(state, event) → (state', effects)</text>
+
+  <rect x="444" y="422" width="602" height="64" rx="8" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.2"/>
+  <text x="460" y="459" class="b">4  单事务：State' + 待执行 effects + 定时器 / 去重集</text>
+
+  <rect x="444" y="504" width="602" height="40" rx="8" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.2"/>
+  <text x="460" y="530" class="mono">5  COMMIT</text>
+
+  <rect x="444" y="562" width="602" height="64" rx="8" fill="#E8F3EC" stroke="#2F7D5B" stroke-width="1.2"/>
+  <text x="460" y="599" class="b">6  执行 effects：发送 / 持久化 / 定时器 / 随机 / 通知</text>
+
+  <rect x="444" y="644" width="602" height="48" rx="8" fill="#FFFFFF" stroke="#2F7D5B" stroke-width="1"/>
+  <text x="460" y="673" class="b">7  另一事务：标记完成</text>
+
+  <rect x="436" y="410" width="618" height="146" rx="12" fill="none" stroke="#1F5F8B" stroke-width="1.5" stroke-dasharray="6 4"/>
+
+  <line x1="745" y1="264" x2="745" y2="280" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="745" y1="334" x2="745" y2="350" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="745" y1="404" x2="745" y2="420" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="745" y1="486" x2="745" y2="502" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="745" y1="544" x2="745" y2="560" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="745" y1="626" x2="745" y2="642" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <text x="444" y="712" class="s">崩溃发生在 4–7 之间 → 重启重放未完成 effect；</text>
+  <text x="444" y="732" class="s">同一（等待对象，尝试序号）至多产生一次到期事件。</text>
+
+  <!-- 右列：适配器 -->
+  <rect x="1112" y="145" width="340" height="110" rx="12" fill="#FBF0E4" stroke="#A35A1F" stroke-width="1.5"/>
+  <text x="1132" y="175" class="h2">网络适配器</text>
+  <text x="1132" y="201" class="b">iroh / p2panda / 中转 / 直连</text>
+  <text x="1132" y="225" class="b">准入预算 · 可达性观察（连通纪元）</text>
+
+  <rect x="1112" y="270" width="340" height="110" rx="12" fill="#E3F2F2" stroke="#0F6B6B" stroke-width="1.5"/>
+  <text x="1132" y="300" class="h2">存储适配器</text>
+  <text x="1132" y="326" class="b">SQLCipher + rusqlite 0.42</text>
+  <text x="1132" y="350" class="b">同事务写入 · CAS · 失败区分</text>
+
+  <rect x="1112" y="395" width="340" height="100" rx="12" fill="#EFEFEF" stroke="#555555" stroke-width="1.5"/>
+  <text x="1132" y="425" class="h2">时钟 / 随机</text>
+  <text x="1132" y="451" class="b">单调截止 · 尝试序号</text>
+  <text x="1132" y="475" class="b">随机数只作为事件进入状态机</text>
+
+  <rect x="1112" y="510" width="340" height="100" rx="12" fill="#EFEFEF" stroke="#555555" stroke-width="1.5"/>
+  <text x="1132" y="540" class="h2">钥匙串 / 通知</text>
+  <text x="1132" y="566" class="b">数据库密钥封装 · 系统通知</text>
+  <text x="1132" y="590" class="b">密钥材料不进入日志与崩溃报告</text>
+
+  <rect x="1112" y="625" width="340" height="105" rx="12" fill="#FFFFFF" stroke="#555555" stroke-width="1.5"/>
+  <text x="1132" y="655" class="h2">外部设施</text>
+  <text x="1132" y="681" class="b">n0 中转 / 发现，或用户自建</text>
+  <text x="1132" y="705" class="b">e2e 构建默认两者都关</text>
+
+  <line x1="1070" y1="300" x2="1106" y2="300" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="1074" y="292" class="s">调用</text>
+  <line x1="1106" y1="340" x2="1070" y2="340" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="1076" y="358" class="s">结果</text>
+  <line x1="1070" y1="470" x2="1106" y2="470" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <line x1="420" y1="300" x2="392" y2="300" stroke="#6B7280" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="394" y="316" class="s">step</text>
+
+  <!-- 底部 -->
+  <rect x="48" y="775" width="700" height="160" rx="12" fill="#FFF7D6" stroke="#8A6D0B" stroke-width="1.5"/>
+  <text x="68" y="805" class="h2">失败分三类（不得互相冒充）</text>
+  <text x="68" y="833" class="b">业务拒绝：按规则答复，带明确错误码，不重试</text>
+  <text x="68" y="859" class="b">暂时故障：呈现为状态，超过时限才告知，并说明会自动继续</text>
+  <text x="68" y="885" class="b">不变量破坏：该操作快速失败并如实上报，不拖垮整个应用</text>
+  <text x="68" y="911" class="b">存储失败必须报告为失败，不得翻译成“没有数据 / 空列表”</text>
+
+  <rect x="780" y="775" width="672" height="160" rx="12" fill="#FFFFFF" stroke="#1F5F8B" stroke-width="1.5"/>
+  <text x="800" y="805" class="h2">出站效果执行前重查当前授权</text>
+  <text x="800" y="833" class="b">目标仍是联系人？已被拉黑？设备仍在列表？引用消息已删除？</text>
+  <text x="800" y="859" class="b">任一不成立 → 丢弃 effect 并记录，不照旧发送。</text>
+  <text x="800" y="885" class="b">所有操作有界结束：固定截止、取消、超时都结束本次执行。</text>
+  <text x="800" y="911" class="b">网络超时不当作成功，也不表示对端一定没收到。</text>
+
+  <text x="48" y="962" class="s">说明：效果必须幂等或可去重；定时器按（状态机实例，等待种类，等待对象，授权代数，尝试序号）派生稳定标识。</text>
+</svg>

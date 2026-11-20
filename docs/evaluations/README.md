@@ -7,6 +7,10 @@ Two 2026-11-20 documents record the postmortem of the first YoChat implementatio
 | YoChat postmortem (published) | <https://draft.weiwen.org/p/im-yochat-6qfpamtf2f7yz47s> | [draft.md](2026-11-20-yochat-postmortem/draft.md) | [summary.md](2026-11-20-yochat-postmortem/summary.md) |
 | CFA session (working record and 0x1/CFA comparison) | <https://w7.tailb5692.ts.net/chat/s/61a839fd-92fb-4ca1-a6b9-b9abefb781ca> | [session.json](2026-11-20-cfa-session/session.json), [transcript.md](2026-11-20-cfa-session/transcript.md) | [summary.md](2026-11-20-cfa-session/summary.md) |
 
+## Related reading
+
+- [flw's six YoChat diagrams and prompts](../references/2026-11-20-flw-yochat-diagrams/README.md) — an external visual reading of the old implementation, 2026-11-20.
+
 ## How to cite
 
 - Cite the published postmortem as `docs/evaluations/2026-11-20-yochat-postmortem/draft.md#<heading>`.
