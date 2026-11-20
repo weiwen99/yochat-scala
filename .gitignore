@@ -1,0 +1,41 @@
+# Build output
+/target
+/out
+/.bloop
+/.metals
+/.bsp
+/ui/dist
+/ui/build
+/ui/.svelte-kit
+
+# Dependencies
+/node_modules
+/vendor/
+
+# Worktrees and the shared personal workspace
+/worktrees/
+/workspace
+
+# Local scratch and check receipts
+/tmp
+/.local
+/scratchpad/
+*.log
+*.log.gz
+
+# OS / editor
+.DS_Store
+
+# Coding-agent local settings
+.agents/
+.claude/
+.codex/
+.cursor/
+.kiro/
+.omp/
+.opencode/
+.qoder/
+
+# Python bytecode from local tools
+__pycache__/
+*.py[cod]

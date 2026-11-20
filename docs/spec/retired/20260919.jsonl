@@ -1,0 +1,4 @@
+{"id": "REQ_20260918_B91690HZ2AC5885F", "retired_on": "2026-09-19", "reason": "与 REQ_20260918_FXAWEFJ6Q0S22E5S 重复：后者已完整覆盖安全码随用户身份而定、不随增删设备而变，前者是其真子集。", "replaced_by": ["REQ_20260918_FXAWEFJ6Q0S22E5S"]}
+{"id": "TASK_20260919_YE8EW4G9C33FX590", "retired_on": "2026-09-19", "reason": "任务拆解：这一项把核心状态机、本地存储与模型对拍压在一个标题里，无法与具体需求对账，拆成工作区分层、会话与消息落盘、按序应用与回放对拍三项。", "replaced_by": ["TASK_20260919_MN1FTNNX11BEA7GQ", "TASK_20260919_5X1SXR1ZNC2XQAWC", "TASK_20260919_S8VPFC18M5CTXY2Z"]}
+{"id": "TASK_20260919_8ZS37KM5RGQVVZZB", "retired_on": "2026-09-19", "reason": "任务拆解：端到端链路被拆成好友交换与消息收发各自的任务，逐条绑定需求，由应答与关系建立、发送与接收路径、多设备同步三项取代。", "replaced_by": ["TASK_20260919_GWD9N0YMH757CHCV", "TASK_20260919_5FAQYYAJQXERDQHA", "TASK_20260919_73T31Y3GSPKQPM9Z"]}
+{"id": "TASK_20260919_GAX5389H5RS7J7ZW", "retired_on": "2026-09-19", "reason": "任务拆解：界面基线与十万条量级验收拆成布局可达性、量级测量、未读排序与桌面通知四项，各自绑定界面外壳的四条需求。", "replaced_by": ["TASK_20260919_0R2EC1M6896HVHT7", "TASK_20260919_0R84ESC1SZ2Y0FEM"]}
