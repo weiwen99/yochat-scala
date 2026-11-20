@@ -55,5 +55,5 @@ SPIKE messages=1000 total=1001 reconnect=true aliceSent=1001 aliceAcked=1001 ela
 ## 后果
 
 - B 不触发；不引入 iroh/p2panda sidecar。若最终方案评审无法在 S1 预算内满足安全门，再回到 ADR-0002 的 B 或重新设计。
-- 下一步：storage/state spike（SQLCipher 或应用层 AEAD、重启不丢、应用锁），shell spike（Electron/JVM/冷启动/内存），以及正式的两方棘轮设计 + 评审。
+- 下一步：storage/state spike（SQLCipher 或应用层 AEAD、重启不丢、应用锁），shell spike（Electron/JVM/冷启动/内存），以及正式的两方棘轮设计 + 评审。最终 S1 方案见 `0006-s1-encryption-scheme.md`；本 ADR 只记录 A-first 可行性，不改写为最终协议。
 - `spike/` 保留为可复现的可行性证据；生产代码不复用它的可变链实现，只复用已验证的原语选择与测试口径。

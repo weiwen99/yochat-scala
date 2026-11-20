@@ -13,9 +13,9 @@
 | 维度 | 用户要的 | 本计划产出 | 倍率 | 说明 |
 | --- | --- | --- | --- | --- |
 | 功能域 | 3（加好友、单聊、落盘/重连） | 3 | 1× | 不把发布级需求塞进 S1 |
-| 表 | 3（联系人、会话、消息） | 5（+邀请、meta） | 1.7× | 邀请需要持久化；密钥材料不落明文表 |
+| 表 | 3（联系人、会话、消息） | 6（+邀请、meta、sessions） | 2× | 邀请与加密会话需要持久化；密钥材料不落明文表 |
 | 组件 | 5（core、store、transport、server、UI/shell） | 6（shell 单列） | 1.2× | Electron 只做原生集成 |
-| 配置项 | 8 | 10 | 1.25× | 中继地址、数据目录、锁参数、性能阈值等 |
+| 配置项 | 8 | 16 | 2× | 中继地址、数据目录、锁参数、性能阈值、skip/rekey/retired-ratchet 上限 |
 | 工程师日 | 20（估算） | 25–35（估算） | 1.25–1.75× | 含 spike 与测试移植；不含 S2 |
 | 发布波次 | 1 | 1 | 1× | S1 一次交付 |
 | Quint 模型 | 旧 144（复盘口径；当前检出 170） | 5 | 0.03× | 只建模保留的一条协议路径 |
@@ -113,7 +113,7 @@ flowchart LR
 def step(state: State, event: Event): (State, Vector[Effect])
 ```
 
-- `State` 只含纯数据：身份、联系人、会话、消息索引、待发/待确认集合、邀请、定时器身份、连接状态、`lock`（locked/unlocked + generation）、`idleDeadline`、待确认关系。
+- `State` 只含纯数据：身份、联系人、会话、消息索引、待发/待确认集合、邀请、定时器身份、连接状态、加密会话状态（root/rekeyBase/ratchet/chain/skipped/retiredDh/rekey）、`lock`（locked/unlocked + generation）、`idleDeadline`、待确认关系。
 - `Event`：用户动作、网络到达、定时器到期、对端可达性变化、效果完成/失败、`Lock`/`Unlock`/`IdleTimeout`、邀请过期。
 - `Effect`：`Persist`、`Send`、`StartTimer`、`RequestRandom`、`Notify`。核心不产生包含正文、密钥、联系人名或公钥的日志事件；执行器统一脱敏。
 - 执行器负责：状态与效果同事务提交、效果幂等、稳定定时器身份、出站前重查授权；锁定事件递增 `lock.generation`，旧代数的在途结果不落地。
@@ -123,38 +123,39 @@ def step(state: State, event: Event): (State, Vector[Effect])
 
 | 表 | 关键列 | 说明 |
 | --- | --- | --- |
-| `contacts` | `user_pub`, `channel_label`, `channel_account`, `peer_channel_account`, `alias`, `note`, `safety_verified`, `confirmation_state`, `created_at` | 联系人；双方各自记录渠道/账号；安全码比对是人工结果 |
+| `contacts` | `user_pub`, `channel_label`, `channel_account`, `peer_channel_account`, `alias`, `note`, `safety_verified`, `confirmation_state`, `created_at` | 联系人；双方各自记录渠道/账号；`safety_verified=false` 时禁止发送/呈现正文 |
 | `conversations` | `id`, `peer_user_pub`, `created_at`, `last_applied_seq` | 一对一；每个用户各一台设备 |
-| `messages` | `id`, `conversation_id`, `author_pub`, `seq`, `body`, `state`, `created_at` | 本地明文正文受数据库加密保护；`state` 为待发/已发/已确认/等待 |
+| `messages` | `id`, `conversation_id`, `session_id`, `author_pub`, `device_pub`, `seq`, `body`, `wire`, `state`, `created_at` | `wire` 是完整 `header || ct || sig`，重发原样使用；`(session_id, device_pub, seq)` 唯一；`seq` 每作者每会话、跨 rekey 不重置 |
 | `invitations` | `id`, `ephemeral_priv`, `peer_account`, `expires_at`, `state`, `confirm_state`, `payload` | 一次性私钥只留在签发设备；过期/作废后删除；不符账号进待确认 |
+| `sessions` | `id`, `peer_user_pub`, `peer_device_pub`, `state`, `state_version`, `generation`, `updated_at` | `state` 加密后存 root/rekeyBase/ratchet/chain/skipped/retiredDh/rekey；`state_version` 防回滚 |
 | `meta` | `key`, `value` | schema 版本、计数器、配置快照、锁配置 |
 
-密钥材料不放在明文表：用户私钥/设备私钥/数据库密钥由系统钥匙串或口令派生保护；具体形态是 spike。
+密钥材料不放在明文表：用户私钥/设备私钥/数据库密钥由系统钥匙串或口令派生保护；`sessions.state` 整体加密，具体存储机制由 ADR-0007 决定。
 
 ### 协议路径（S1）
 
 1. **邀请**：S1 只做定向邀请。A 用用户私钥签名，携带 A 的用户公钥、A 的设备公钥、A 的渠道标签与权威账号、有效期、一次性公钥（同时是邀请 id）。邀请是文本，可粘贴到任何渠道。
 2. **应答**：B 生成自己的用户/设备密钥，用 A 的一次性公钥加密应答，签名覆盖整份邀请摘要与 B 的全部声明；B 的渠道标签/账号与 A 的声明进入载荷。只有 A 能解开。
-3. **建立关系**：A 解对应答，核对双方渠道账号；不符进待确认并标记。双方核对安全码（带外、人工）。B 在发出应答时完成本方确认；A 在第一条经认证操作后确认；邀请过期+宽限后降级并提示重新交换。拒绝应答只删本地待确认项，不产生任何信号。
-4. **单聊**：消息先落盘，再经中继发送；接收方解密、验签、按 `author_pub + seq` 去重与排序。入站先按联系人与邀请匹配；无匹配或未授权请求静默丢弃，不产生应用层响应。
+3. **建立关系**：A 解对应答，核对双方渠道账号；不符进待确认并标记。双方核对安全码（带外、人工）；`safety_verified=false` 前不发送/不呈现用户正文，只允许控制/rekey。B 在发出应答时完成本方确认；A 在第一条经认证操作后确认；邀请过期+宽限后降级并提示重新交换。拒绝应答只删本地待确认项，不产生任何信号。
+4. **单聊**：消息先落盘，再经中继发送；接收方先验签，再按 `(session_id, device_pub, seq)` 去重、解密、按 `author_pub + seq` 排序。入站先按联系人与邀请匹配；无匹配或未授权请求静默丢弃，不产生应用层响应。
 5. **等待/重发**：缺失消息时显示「等待」，由接收方在时限后请求重发；发送方在无确认时兜底重发。两者都有上限。
 6. **通道重建**：解密失败时由接收方发起重建并重传未确认消息；超过上限才告知用户。
 7. **断网重连**：连接状态变化是 `Event`；重连后有界重放未确认消息。
 
 S1 每个用户各一台设备，协议按「两成员组」建模；S2 扩展到多成员时沿用同一成员语义，不另写一套。S1 只保证同一作者顺序；跨作者最终全序（GBNV）在 S2，T1 标记为不等价。
 
-### 加密与密钥（S1 spike）
+### 加密与密钥（S1，ADR-0006）
 
-A-first 不能直接用 Rust 的 p2panda 群棘轮。S1 的第一项 spike 必须给出：
+A-first 不能直接用 Rust 的 p2panda 群棘轮。ADR-0006 已接受 S1 的最终方案：**Signal Double Ratchet 两方子集**；spike 只证明原语/传输，不把对称 hash chain 当生产实现。
 
 - 原语：JDK 25 JCE 的 Ed25519、X25519、ChaCha20-Poly1305；HKDF-SHA256 用本地 RFC 5869 实现（已由 A-first harness 验证）。BouncyCastle 只用于 JCE 缺少的算法（如 Argon2id）或经过审查的备选；不手写原语。
-- 会话密钥：spike 先用对称 hash chain 证明两条单向链、乱序窗口、重放拒绝与重建可行；最终两方 ratchet/前向保密是单独的方案 gate，不在 5 天传输 spike 内。
-- ADR-0005 必须先做 D2 复用分析：现有 JVM ratchet/Noise 候选、它们的维护状态、许可证、缺口，以及为什么不能复用；不得默认从零实现。
-- 数据库：SQLCipher/JDBC 或应用层 AEAD；密钥来自系统钥匙串或口令派生（Argon2id）。
-- 测试向量：邀请/应答签名、密文篡改、重放、密钥分离。
-- 安全论证：前向保密、后加入者读不到旧消息（S1 单设备不涉及，但方案不能堵死 S2）、失败即拒绝。
+- 会话密钥：root chain + 两条方向链；DH ratchet、`N`/`PN`、有界 skipped keys、每条消息唯一 message key；具体 KDF/初始 ratchet/消息 header/rekey 见 ADR-0006。
+- D2：ADR-0006 已列出 JVM ratchet/Noise 候选与拒绝理由；没有自包含、宽松许可、无外部服务的现成 Double Ratchet。
+- 数据库：`sessions.state` 整体加密；SQLCipher/JDBC 或应用层 AEAD 由 ADR-0007 决定；密钥来自系统钥匙串或口令派生（Argon2id）。
+- 测试向量：邀请/应答签名、初始 root、ratchet/乱序/重放、密文/签名篡改、密钥分离、安全码、rekey、重启。
+- 安全论证：前向保密、DH ratchet 后的 break-in recovery、后加入者读不到旧消息（S1 单设备不涉及，但方案不能堵死 S2）、失败即拒绝。
 
-spike 产出 ADR-0005 后才能写消息加密实现。旧 `encryption-scheme.md` 是参考，不是 S1 的既成方案；旧 `conversation-as-device-group.md` 的成员语义保留，群棘轮实现推迟到 S2。
+实现按 ADR-0006；外部密码学评审是发布门。旧 `encryption-scheme.md` 是参考，不是 S1 的既成方案；旧 `conversation-as-device-group.md` 的成员语义保留，群棘轮实现推迟到 S2。
 
 ### UI（三屏）
 
@@ -199,7 +200,7 @@ spike 的产物是代码、测量记录与 ADR，不是「调研结论」。没�
 
 ## 风险
 
-1. **两方 ratchet/前向保密**：最高风险，但它是单独的方案 gate。ADR-0005 先做 D2 复用分析（候选、维护状态、许可证、缺口）；若无法在预算内满足，重新设计或用新 ADR 再评估 B，不把失败记成 JVM/relay 路线不可行。
+1. **两方 ratchet/前向保密**：最高风险，但它是单独的方案 gate。ADR-0006 已做 D2 复用分析并选定 Signal Double Ratchet 两方子集；若实现或外部评审无法满足，重新设计或用新 ADR 再评估 B，不把失败记成 JVM/relay 路线不可行。
 2. **SQLCipher/JDBC 不可用**：应用层 AEAD 是备选；再不行则升级存储设计。
 3. **Electron + JVM 资源与生命周期**：shell spike 先验证；冷启动只校准一次，内存与 1,000 条门不放宽。
 4. **relay-only 改变产品叙事**：v1 明确写「没有账号服务器，但有一个中继」；不宣称完全 p2p。
@@ -209,7 +210,7 @@ spike 的产物是代码、测量记录与 ADR，不是「调研结论」。没�
 ## 里程碑
 
 - M0 约束与计划（本提交）。
-- M1 spike + ADR-0005（加密）、ADR-0006（存储，如需）。
+- M1 spike + ADR-0006（加密）、ADR-0007（存储，如需）。
 - M2 core 状态机 + 5 个 Quint 模型 + 对拍。
 - M3 store + transport + relay + 邀请/应答。
 - M4 UI 三屏 + Electron 壳。
@@ -220,7 +221,7 @@ spike 的产物是代码、测量记录与 ADR，不是「调研结论」。没�
 
 - `docs/spec/engineering/decisions/technology-stack.md` → ADR-0002。
 - 旧产品文档的 v1 范围 → ADR-0003（仅 v1；旧文档仍是后续版本输入）。
-- 旧 `encryption-scheme.md` 的群棘轮实现 → S2；S1 方案由 ADR-0005 决定。
+- 旧 `encryption-scheme.md` 的群棘轮实现 → S2；S1 方案由 ADR-0006 决定。
 - 旧 `docs/plans/` 不取代：它们是历史，不是需求。
 
 ## 验收

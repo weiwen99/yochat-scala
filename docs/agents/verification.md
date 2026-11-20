@@ -51,6 +51,8 @@ Quint registry: `models/checks.json` with the main module, backend, invariants, 
 
 Contact removal and blocking are S3, not S1; they are not a behavior contract for v1.
 
+Safety gate (S1 security enhancement, not a new scenario count): after the handshake, `contacts.safety_verified` is false; `#1/#2/#3` must assert that no user body is sent or displayed until the out-of-band safety number is verified. Only control/rekey frames may flow before that.
+
 Unit tests may be rewritten. Every bug fix starts with a failing case. Do not chase coverage percentages.
 
 ## Test parity (T1)

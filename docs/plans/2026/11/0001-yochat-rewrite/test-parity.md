@@ -84,7 +84,7 @@ S1 只冻结 5 个新模型。下表先列每个新模型的性质来源与显�
 新测试缩写：
 
 - `Q1` 邀请/应答、`Q2` 排序/去重、`Q3` 等待/重发、`Q4` 重连、`Q5` 通道重建：设计规定的 5 个 Quint 模型。
-- `SM`：Scala 属性/状态机测试（真实 SQLite 或纯 `step`）；`ST`：Scala 存储测试；`UT`：Scala 单元/性质测试；`VEC`：ADR-0005 加密测试向量。
+- `SM`：Scala 属性/状态机测试（真实 SQLite 或纯 `step`）；`ST`：Scala 存储测试；`UT`：Scala 单元/性质测试；`VEC`：ADR-0006 加密测试向量。
 - `E2E#n`：`docs/agents/verification.md` 行为契约编号。
 
 ### A. 身份、密钥、本地加密、应用锁、诊断
@@ -93,7 +93,7 @@ S1 只冻结 5 个新模型。下表先列每个新模型的性质来源与显�
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `4DYMP7NVJDKNPTKR` | 用户是本机生成的一对密钥 | `identity_creation.qnt` 2 配置（`durableCreationConfirmationChecks`、`initialAuthorBindingChecks`）；`core/tests/keyfile.rs` 1 个 proptest；`e2e/identity` 6 场景；`app/src/identity.rs` 创建路径 | Quint + Rust prop + E2E | `UT-keyfile-create`；`E2E first-run-create`（移植 identity 创建路径）；无 Quint 模型（见理由） | `REWRITE` | 旧 E2E 同时断言 24 词恢复与回填，属 S3；设计只冻结 5 个协议模型，`identity_creation.qnt` 没有模型槽位。属性改由 Scala 承担，模型层等价缺失需签字。 | FULL | |
 | `R1J6B5CH21YFFP32` | 用户私钥只存在于用户指定的设备上 | `keyfile.rs`；`app/src/identity.rs::holds_user_key`；`e2e/user-key` 4 场景（S2 多设备）；`backend-restart` 断言只有第一台设备持有用户私钥 | Rust prop + E2E | `UT-keyfile-single-device`；`E2E#4/#5` 重启后仍持钥；S2 的转交场景 OMIT | `PORT` | S1 退化为单设备；`user-key` 的转交、D 设备加入属于 S2，明确 OMIT。 | FULL | |
-| `ZTSEXMZQ2VHS21R6` | 本地数据静态加密 | `core/tests/store_at_rest.rs` 3 场景：全目录找不到消息/联系人/密钥标记、正确密钥可读回、实例互解不开 | Rust + E2E | `ST-store-at-rest`（真实 SQLite + 全目录标记扫描 + 重开）；`E2E#4/#5` | `PORT` | 旧实现用 SQLCipher；新存储若改应用层 AEAD，断言不变，机制按 ADR-0005。 | FULL | |
+| `ZTSEXMZQ2VHS21R6` | 本地数据静态加密 | `core/tests/store_at_rest.rs` 3 场景：全目录找不到消息/联系人/密钥标记、正确密钥可读回、实例互解不开 | Rust + E2E | `ST-store-at-rest`（真实 SQLite + 全目录标记扫描 + 重开）；`E2E#4/#5` | `PORT` | 旧实现用 SQLCipher；新存储若改应用层 AEAD，断言不变，机制按 ADR-0007。 | FULL | |
 | `B9Y4E73VMQ8RS99X` | 应用锁是安全边界而不是界面切换 | `core/tests/app_lock.rs` 6（含 1 个 200 例 proptest：旧代数结果永不落地）；`idle_autolock.qnt`；`ui/tests/idle-lock` 12；`e2e/idle-lock` 1 | Rust prop + UI + E2E | `SM-app-lock`；`E2E#13` app lock/unlock | `PORT` | 锁代数、在途结果失效、切换实例拒旧凭据均保留。 | FULL | |
 | `YQW27DXZJSHAR0Z0` | 空闲超时自动锁定 | `idle_autolock.qnt`（`safe`、`expires`、`lockEnds`）；`app_lock.rs::空闲超时触发锁定_且不被后台活动重置`；`e2e/idle-lock` 1；`ui/tests/idle-lock` 12 | Quint + Rust + UI + E2E | `SM-idle-lock`；`E2E#13` | `REWRITE` | 设计只保留 5 个协议模型，空闲锁不在其中；模型属性降为 Scala 属性测试。若要求 Quint 级等价，需另加模型并修改设计的模型预算。 | FULL | |
 | `865PCSHV46Q4X2XF` | 密钥材料不进入日志与崩溃报告 | `e2e/log-secrets` 2 场景（最高级日志确有内容、秘密标记一处不命中）；`e2e/diagnostics` 默认日志场景 | E2E | `E2E-log-secrets`（扫描日志与崩溃输出）；`UT-log-redaction` | `PORT` | 场景与断言保留；旧 Tauri harness 换成 Electron harness。 | FULL | |
@@ -112,7 +112,7 @@ S1 只冻结 5 个新模型。下表先列每个新模型的性质来源与显�
 | `HYREM42TB44CYAHF` | 无匹配记录的入站一律丢弃 | `core/tests/admission.rs` 10；`inbound_discard.rs` 10；`inbound_gate.rs` 10（陌生对端什么都不发生） | Rust | `SM-admission`；`UT-inbound-discard` | `PORT` | 单元层已覆盖；旧 E2E 没有“陌生对端零响应”场景，E2E 层记 `GAP`，由新捕获测试补。 | FULL | |
 | `KWW858WDBR49C9KS` | 拒绝一份应答不产生任何 YoChat 层面的信号 | `core/tests/exchange.rs::拒绝一份应答只删本地那一行`；`exchange.qnt responderSilentWhileConfirmed` | Rust + Quint | `SM-reject-silent`（断言无 Send/Notify 效果） | `PORT` | 旧 E2E 只测界面不出现联系人，没有断言网络静默；新测试在核心层断言零效果。 | FULL | |
 | `A1MZYZ7JV43G7EJ3` | 应答方自发出应答起即完成本方确认 | `exchange.qnt responderFollowsInitiator`；`e2e/exchange` 12（应答方生成后立刻看到联系人）；`exchange.rs` 18 | Quint + E2E | `Q1`；`E2E#1/#2` | `PORT` | 发起方仍须另行确认；不把两侧确认合并成一次。 | FULL | |
-| `FXAWEFJ6Q0S22E5S` | 安全码可带外比对 | `core/tests/safety.rs` 8（含 3 条 proptest 性质：对称、两侧应念段不同且覆盖 39 位、零填充）；`authenticity.qnt` 1；`e2e/exchange` 两段勾选；`tools/safety_number_vectors.py` | Rust prop + Quint + E2E | `SM-safety-number`；`E2E#1`；`VEC-safety` | `PORT` | 人工带外核对本身不可自动化；测试只验码的派生与展示。 | FULL | |
+| `FXAWEFJ6Q0S22E5S` | 安全码可带外比对 | `core/tests/safety.rs` 8（含 3 条 proptest 性质：对称、两侧应念段不同且覆盖 39 位、零填充）；`authenticity.qnt` 1；`e2e/exchange` 两段勾选；`tools/safety_number_vectors.py` | Rust prop + Quint + E2E | `SM-safety-number`；`E2E#1`；`VEC-safety` | `PORT` | 人工带外核对本身不可自动化；测试验码的派生与展示，并验 `safety_verified=false` 时禁止正文（ADR-0006 安全门）。 | FULL | |
 | `WEXAYYYH18M9XH5Y` | 关系建立之后的一切由签名承担 | `envelope.rs` 12；`core/src/message_order/tests.rs` 7（伪造高度/作者、截断、旧 tag）；`live_authentication.rs` 3；`inbound_gate.rs` 10；envelope 4 个 Kani | Rust prop + Kani | `SM-signed-message`；`VEC-signature`；`E2E#11` | `PORT` | 旧 group membership 签名场景 OMIT；S1 的签名对象是消息与关系声明，不是成员变更。 | FULL | |
 
 ### C. 单聊发送、加密、准入
@@ -120,7 +120,7 @@ S1 只冻结 5 个新模型。下表先列每个新模型的性质来源与显�
 | ID | 需求 | 旧测试/场景 | 层 | 新测试计划 | 状态 | 理由与省略 | 清点 | 人签字 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `JW13382752N6T1XR` | 发送与接收一条消息 | `protocol/tests/delivery.rs` 19（写入、发送、收到、离线、状态）；`e2e/exchange` 12；`ui/tests/chat-flow` 89 | Rust + E2E + UI | `E2E#3`；`SM-message-lifecycle` | `PORT` | 旧测试包含多设备/历史分支；S1 只取一台发送、一台接收、先落盘再发。 | PARTIAL | |
-| `DCNS38550F4AY1K5` | 消息端到端加密 | `protocol/tests/delivery.rs`、`envelope.rs`、`membership_keys` 相关测试、`crypto_backend`；旧 DCGKA/p2panda 群棘轮 | Rust + old crypto | `VEC-aead`；`SM-crypto-state`；`E2E#10` | `REWRITE` | ADR-0005 决定 S1 两方 ratchet，旧测试锁的是群棘轮实现；只保留“中继不可读、篡改必拒”的性质，按新方案重写向量。 | PARTIAL | |
+| `DCNS38550F4AY1K5` | 消息端到端加密 | `protocol/tests/delivery.rs`、`envelope.rs`、`membership_keys` 相关测试、`crypto_backend`；旧 DCGKA/p2panda 群棘轮 | Rust + old crypto | `VEC-aead`；`SM-crypto-state`；`E2E#10` | `REWRITE` | ADR-0006 决定 S1 两方 ratchet，旧测试锁的是群棘轮实现；只保留“中继不可读、篡改必拒”的性质，按新方案重写向量。 | PARTIAL | |
 | `RYGFPP529TDA9R6X` | 不与未建立关系的对端交换消息 | `core/tests/admission.rs` 10；`inbound_gate.rs` 10；`delivery.rs` 的准入分支 | Rust | `SM-admission`；`E2E#9`（错误邀请）；无关对端 E2E 记 `GAP` | `PORT` | 无关系、已删除、未确认三类拒绝都保留；S1 不做拉黑。旧层没有无关对端的 UI/传输 E2E，需补或接受核心层覆盖。 | PARTIAL | |
 | `P7X1QGZCYA41GAQT` | 内容与参与者对中转设施不可读 | 旧 `yochat-net` 125 个 test 属性（iroh/QUIC/relay 回退）、`relay_receive.qnt`、`tools/check_relay_receive.py` | Rust + net model + tool | `relay-sees-ciphertext-only` 集成测试（relay 进程侧收到帧断言）；E2E 只验用户路径 | `REWRITE` | 旧实现是 p2p 优先、relay 回退，测试绑定 iroh 端点与地址；S1 是 relay-only。只保留“中继只见密文与路由信息”的断言。 | PARTIAL | |
 | `MXHYRG96W0VKB031` | 对未获授权的请求不产生响应 | `inbound_gate.rs` 10；`admission.rs` 10；`inbound_discard.rs` 10；`authenticity.qnt` | Rust + Quint | `SM-inbound-gate`（断言无响应效果）；E2E 捕获测试 | `PORT` | 旧层没有端到端“无响应”断言，E2E 记 `GAP`；核心层断言保留。 | PARTIAL | |
@@ -176,7 +176,7 @@ S1 只冻结 5 个新模型。下表先列每个新模型的性质来源与显�
 | --- | --- | --- |
 | Kani 有界证明 | 19 个 harness：`core/src/devices.rs` 6、`envelope/mod.rs` 4、`invite/mod.rs` 3、`proofs.rs` 4、`protocol/src/wire.rs` 2 | 没有 Scala/Kani 等价层。逐条登记为 `GAP`；用 Scala 属性测试覆盖可覆盖的输入域，剩余边界由人裁决。不得把属性测试写成“证明”。 |
 | iroh/QUIC/PKARR 传输 | `yochat-net` 125 个 test 属性、45 个 `.rs`；`address_budget`、`mapped_address`、`network_deadline`、`relay_receive` 等模型 | S1 relay-only。旧 p2p 地址发布、打洞、QUIC 信用、映射地址测试 `OMIT`；只重写重连、有界队列、帧边界、relay 不可读等性质。 |
-| 旧群棘轮/DCGKA 与 group/welcome | `membership_keys.qnt`、`shared_prekeys.qnt`、`exchange.qnt` 的 bundle/welcome 配置、`protocol/tests/crypto_commit.rs`、`dcgka_membership.rs` 等 | S1 用 ADR-0005 的两方 ratchet。旧实现内部断言不可移植；只保留一次性密钥、不可重放、篡改必拒、前向保密等性质。 |
+| 旧群棘轮/DCGKA 与 group/welcome | `membership_keys.qnt`、`shared_prekeys.qnt`、`exchange.qnt` 的 bundle/welcome 配置、`protocol/tests/crypto_commit.rs`、`dcgka_membership.rs` 等 | S1 用 ADR-0006 的两方 ratchet。旧实现内部断言不可移植；只保留一次性密钥、不可重放、篡改必拒、前向保密等性质。 |
 | 旧 Tauri/Svelte 原生与 UI harness | `e2e/wdio.*`、`ui/tests` 32 个文件；macOS 通知点击、IME 手工观察 | 新 Electron/Laminar 下 harness 重写。场景与 DOM 断言意图可移植，组件 API、Tauri invoke、WDIO 服务不可复用。真实通知点击与 IME 仍是人工项，不是自动通过。 |
 | 旧 trace 导出/回放 | 61 个 `export_*_traces.sh`；`journal_parity.rs` 等 | 导出格式绑旧 Rust 状态名与 JSON 字段。新回放器按 Scala `step` 重写；旧脚本不直接复用。 |
 | 旧 `checks.json` 注册表 | 334 条配置、170 个模型 | 不是测试等价单位。S1 只对 5 个新模型登记安全/时序性质与源码指纹；旧注册表只作为性质来源。 |
