@@ -75,7 +75,7 @@ S1 只冻结 5 个新模型。下表先列每个新模型的性质来源与显�
 | `Q5` 通道重建 | 解密失败→重建→重传未确认、限频 | `rebuild.qnt` | `REWRITE`（重建有界与不静默分叉保留；群 epoch 细节 `OMIT`） | S1 是两方 ratchet/通道重建，不是群 epoch | |
 | 无模型槽 | 身份创建、空闲自动锁定 | `identity_creation.qnt`、`idle_autolock.qnt` | `REWRITE` 为 Scala 属性 | 5 个协议模型没有这两个槽位；是否加模型预算需人裁决 | |
 
-说明：本表的处理是旧文件级判定。`Q1` 的 `authenticity.qnt`/`contact_reply.qnt`/`contact_confirmation.qnt` 为 `KEEP`，`exchange.qnt`/`shared_prekeys.qnt` 为 `REWRITE`；`Q2` 的 `message_order.qnt`/`cursor.qnt` 为 `KEEP`；`Q3`/`Q4`/`Q5` 的旧文件均为 `REWRITE`。逐行签字见 `test-parity-quint.md`。
+说明：本表的处理是旧文件级判定。`Q1` 的 `authenticity.qnt`/`contact_reply.qnt`/`contact_confirmation.qnt` 为 `KEEP`，`exchange.qnt`/`shared_prekeys.qnt` 为 `REWRITE`；`Q2` 的 `message_order.qnt`/`cursor.qnt` 为 `KEEP`；`Q3`/`Q4`/`Q5` 的旧文件均为 `REWRITE`。170 行整表签字见 `test-parity-quint.md`（用户 2026-11-20）。
 
 ## 2. 40 条 S1 需求映射
 

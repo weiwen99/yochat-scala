@@ -171,7 +171,7 @@ ADR-0003:41 的删除判据不是论证框架问题，而是规则过宽；归�
 
 修复轮修改了：`AGENTS.md`、`DESIGN-DISCIPLINE.md`、`docs/adr/0002-technology-stack.md`、`docs/adr/0003-v1-scope.md`、`docs/adr/0004-test-parity-and-performance-gates.md`、`docs/agents/engineering.md`、`docs/agents/verification.md`、`docs/plans/2026/11/0001-yochat-rewrite/design.md`、`docs/plans/2026/11/0001-yochat-rewrite/test-parity.md`、`docs/plans/2026/11/0001-yochat-rewrite/test-parity-quint.md`。
 
-用户 2026-11-20 签字：#12 OMIT、11 条 S1 不变量范围、GBNV 在 S2/T1 不等价。
+用户 2026-11-20 签字：#12 OMIT、11 条 S1 不变量范围、GBNV 在 S2/T1 不等价；F6 的 170 行模型映射整表签字。
 
 | Finding | 状态 | 关闭证据 | 未完成 |
 | --- | --- | --- | --- |
@@ -180,9 +180,9 @@ ADR-0003:41 的删除判据不是论证框架问题，而是规则过宽；归�
 | F3 跨作者最终顺序被静默忽略 | 已关闭（用户签字 2026-11-20） | `design.md` 非目标/已知约束与验收写入 GBNV S2、T1 不等价；AGENTS/DESIGN-DISCIPLINE 同步；`test-parity.md` 1.3 增加 DROP 行 | 无 |
 | F4 relay-only 与规则文本冲突 | 已关闭 | `AGENTS.md`、`DESIGN-DISCIPLINE.md`、`docs/agents/verification.md` 改为 relay-only；ADR-0002/0003/design 一致 | 无 |
 | F5 A-first gate 不可测/不可证伪 | 已关闭 | ADR-0002 命名 gate；`design.md` 增加 gate→spike→证据、SQLCipher/Laminar/Electron 阈值、冷启动/内存移出 A-first、ratchet 单独方案 gate、D2 复用分析入口、移除 JavaFX WebView fallback | 阈值是估算，spike 回执为准 |
-| F6 T1 Quint 等价缩水无映射/签字 | 映射完成，待逐行签字 | `test-parity.md` 1.3 增加 Q1–Q5 与 identity/idle lock 的 KEEP/DROP；ADR-0004 改为 5 模型 + 映射表；`test-parity-quint.md` 覆盖 170 模型/334 配置，5 KEEP、22 REWRITE、143 DROP | 170 行逐行签字 |
+| F6 T1 Quint 等价缩水无映射/签字 | 已关闭（用户 2026-11-20 整表签字） | `test-parity.md` 1.3 增加 Q1–Q5 与 identity/idle lock 的 KEEP/DROP；ADR-0004 改为 5 模型 + 映射表；`test-parity-quint.md` 覆盖 170 模型/334 配置，5 KEEP、22 REWRITE、143 DROP，170 行均有用户签字 | 无 |
 | F7 旧实现最大文件数引用 CFA | 已关闭 | `design.md` 改为生产 6,008（handshake.rs）、测试 13,373；5,454 标明是 CFA 的 SessionEntity.scala | 无 |
 
 未纳入 finding 的观察已处理：`design.md` 改为「每个用户各一台设备」；Quint 规模行改为「旧 144（复盘口径；当前检出 170）」。
 
-Round 2 只做 F6 的 170 行逐行签字核对；映射已补完，不新增设计范围，不新增 finding，除非出现与上述关闭证据直接矛盾的新事实。
+F6 已关闭，Round 1 的 7 条 finding 全部关闭；无 Round 2 待办。不新增设计范围，不新增 finding，除非出现与上述关闭证据直接矛盾的新事实。
