@@ -13,6 +13,7 @@ fi
 ./mill store.checkFormat
 ./mill store.fix --check
 ./mill store.test
+./models/check.sh
 ./mill spike.checkFormat
 ./mill spike.fix --check
 ./mill spike.compile

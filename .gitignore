@@ -20,6 +20,8 @@
 /tmp
 /.local
 /scratchpad/
+/_apalache-out/
+/models/_apalache-out/
 *.log
 *.log.gz
 
