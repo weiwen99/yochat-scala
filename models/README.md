@@ -35,6 +35,14 @@ Q1–Q5 的有限模型，对应 `docs/plans/2026/11/0001-yochat-rewrite/design.
 - `q5` 是有限状态 cutover 模型；真实 control-frame 编解码、持久化和 SQLite 删除仍由 `core`/`store` 测试承担。
 ## Trace replay
 
-`traces/q2_order.itf.json` 是 `--seed=0x1` 的 Q2 模拟轨迹（9 个状态，接收顺序 3、2、1，最终应用 1..3）。`core/test/src/yochat/core/app/ReplaySpec.scala` 读取该 ITF，按 `seen` 差分推导 `receive1/2/3`，逐步调用真实 `Application.step`，比较 `seen`、`applied`、`buffered`；trace SHA-256 也固定在测试与 `checks.json` 中。
+`--seed=0x1` 生成的固定轨迹放在 `traces/`；`checks.json` 同时固定源码与 trace 的 SHA-256。
 
-Q1/Q3/Q4/Q5 的 trace replay 尚未实现；当前其它模型与 Scala 语义测试仍是并列证据，不能互相替代。
+| Trace | 状态数 | Scala 重放 |
+| --- | ---: | --- |
+| `q1_relationship.itf.json` | 11 | `ReplayModelsSpec`：reply、mismatch、安全码、正文门；比较双方联系人与 outgoing 投影。 |
+| `q2_order.itf.json` | 9 | `ReplaySpec`：按 `seen` 差分推导 receive 3→2→1，比较 `seen/applied/buffered`。 |
+| `q3_resend.itf.json` | 11 | `ReplayModelsSpec`：三次尝试耗尽、通知、离线；比较 attempts/online/pending/notified。 |
+| `q4_reconnect.itf.json` | 11 | `ReplayModelsSpec`：离线队列、两次连接重放；比较 attempts/connected/pending。 |
+| `q5_rekey.itf.json` | 11 | `ReplayModelsSpec`：按核心 rekey 序列执行 start/confirm/ack/firstData，并对每个 trace 状态检查 Q5 安全不变量。 |
+
+Q1/Q3/Q4 是逐状态观测投影；Q5 的 `start`/`firstData` 是抽象动作，无法与真实 control-frame 顺序一一对应，因此只做安全不变量投影，不声称状态逐字段等价。所有重放都直接调用真实 `Application.step`，不是另写模型。

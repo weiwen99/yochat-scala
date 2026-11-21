@@ -82,8 +82,8 @@
 - 覆盖: 应用锁/空闲锁定/旧代次结果丢弃（`AppLockSpec`）；邀请/应答、账号不符、拒绝静默、过期、安全码门（`RelationshipSpec`）；写前落盘：`PersistOutbound` 成功前不产生 `SendWire`，持久化失败不发（`OutboxSpec`）；单作者顺序、缺口缓冲、连续冲刷、去重（`ConversationSpec`、`InboundSpec`）；无匹配/锁定入站静默；重连有界重放、重试上限（`OutboxSpec`）；Q5 rekey request/accept/confirm/ack、旧 ReadOnly 会话在 cutover 后删除（`RekeyAppSpec`）。
 - 测试: `./mill core.test` 全绿；新增 app 测试 16 个。`AppEffect` 的持久化组由后续执行器按事务/顺序落地；当前 `PersistSession`/`PersistInbound` 是描述，不是已接 store 的 executor。
 - Quint: `models/` 有 Q1–Q5 五个有限模型与 `checks.json`；`./models/check.sh` 用 Quint 0.33.1 + Apalache 0.62.4 检查 `safe`，Q2/Q4/Q5 的 temporal 用 TLC。8 个 check 全部 `[ok]`；Q4 活性前提是连接最终稳定，Q3 不声称不公平网络下送达。模型抓到了 Q5 删除后追加 pending 的反例并已修正，也让 Q4 的公平性前提收紧。
-- Replay: `models/traces/q2_order.itf.json`（seed=0x1，9 状态，接收 3→2→1）由 `ReplaySpec` 读取；按 `seen` 差分推导 receive 动作，逐步调用真实 `Application.step`，比较 `seen/applied/buffered`，trace SHA-256 固定。Q1/Q3/Q4/Q5 replay 尚未实现。
-- 未关闭: `AppState` 尚未接 `store/`、transport、server/UI；Q5 的 control-frame 路由由执行器传入显式事件；没有真实 E2E/性能回执。下一步是 `AppEffect` 执行器接到 store/transport。
+- Replay: `models/traces/{q1_relationship,q2_order,q3_resend,q4_reconnect,q5_rekey}.itf.json` 都是 seed=0x1 的固定轨迹，SHA-256 固定在 `checks.json` 与测试中。`ReplaySpec` 重放 Q2；`ReplayModelsSpec` 重放 Q1/Q3/Q4/Q5。Q1/Q3/Q4 比较逐状态观测投影；Q5 因 `start`/`firstData` 是抽象动作、与真实 control-frame 顺序不能一一对应，只执行核心 rekey 序列并检查每个 trace 状态的 Q5 安全不变量，不声称逐字段等价。所有重放直接调用真实 `Application.step`。
+- 未关闭: `AppState` 尚未接 `store/`、transport、server/UI；Q5 的 control-frame 路由由执行器传入显式事件；没有真实 E2E/性能回执。下一步是阶段 review；review 通过后再接 transport/runtime。
 
 ## AppEffect 执行器（第二段）
 
