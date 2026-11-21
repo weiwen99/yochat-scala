@@ -33,6 +33,8 @@ object Application:
             id = messageId,
             conversationId = conversationId,
             sessionId = session.state.sessionId,
+            authorPub = identity.user.publicKey,
+            devicePub = identity.device.publicKey,
             seq = session.nextSeq,
             body = body,
             wire = wire,
@@ -70,7 +72,20 @@ object Application:
       case AppEvent.SendSucceeded(messageId, generation)                                        =>
         matchOutgoing(state, messageId, generation, Set(OutgoingState.Queued, OutgoingState.Sent)) match
           case None        => (state, Vector.empty)
-          case Some(value) => (state.copy(outgoing = state.outgoing.updated(messageId, value.copy(state = OutgoingState.Sent))), Vector.empty)
+          case Some(value) =>
+            (
+              state.copy(outgoing = state.outgoing.updated(messageId, value.copy(state = OutgoingState.Sent))),
+              Vector(
+                AppEffect.UpdateMessageState(
+                  value.conversationId,
+                  value.sessionId,
+                  value.authorPub,
+                  value.devicePub,
+                  value.seq,
+                  MessageTransition.Sent
+                )
+              )
+            )
       case AppEvent.SendFailed(messageId, generation, nowMs)                                    =>
         matchOutgoing(state, messageId, generation, Set(OutgoingState.Queued, OutgoingState.Sent)) match
           case None        => (state, Vector.empty)
@@ -116,16 +131,17 @@ object Application:
               sessions = updated.foldLeft(state.sessions)((map, session) => map.updated(session.state.sessionId, session))
             )
             (next, AppEffect.PersistContact(verified) +: updated.map(AppEffect.PersistSession.apply))
-      case AppEvent.InvitationCreated(invitation, expectedAccount, _)                           =>
+      case AppEvent.InvitationCreated(invitation, ephemeralPrivate, expectedAccount, _)         =>
         val id     = invitation.fields.ephPub.bytes
-        val record = AppInvitation(id, invitation, expectedAccount, InvitationLifecycle.Issued, invitation.fields.expiresAt)
+        val record =
+          AppInvitation(id, invitation, Some(ephemeralPrivate), expectedAccount, InvitationLifecycle.Issued, invitation.fields.expiresAt)
         val next   = state.copy(invitations = state.invitations.updated(id, record))
         (next, Vector(AppEffect.PersistInvitation(record)))
       case AppEvent.InvitationReceived(invitation, expectedAccount, _)                          =>
         val id     = invitation.fields.ephPub.bytes
-        val record = AppInvitation(id, invitation, expectedAccount, InvitationLifecycle.AwaitingReply, invitation.fields.expiresAt)
+        val record = AppInvitation(id, invitation, None, expectedAccount, InvitationLifecycle.AwaitingReply, invitation.fields.expiresAt)
         val next   = state.copy(invitations = state.invitations.updated(id, record))
-        (next, Vector(AppEffect.PersistInvitation(record)))
+        (next, Vector.empty)
       case AppEvent.ReplyCreated(invitationId, conversationId, result, nowMs)                   =>
         state.invitations.get(invitationId) match
           case None                                             => (state, Vector.empty)
@@ -280,11 +296,11 @@ object Application:
               case Left(_)       => (state, Vector(AppEffect.Notify(Notification.RekeyFailed)))
               case Right(result) =>
                 val active                    = value.copy(state = result.state, retireOldOnFirstData = false)
-                val (retired, retiredEffects) = retireOld(state, active)
+                val (retired, retiredEffects) = retireOld(state, active, SessionRetirement.InitiatorAck)
                 val next                      = retired.copy(sessions = retired.sessions.updated(newSessionId, active))
                 (next, AppEffect.PersistSession(active) +: retiredEffects)
 
-  private def retireOld(state: AppState, active: AppSession): (AppState, Vector[AppEffect]) =
+  private def retireOld(state: AppState, active: AppSession, retirement: SessionRetirement): (AppState, Vector[AppEffect]) =
     val retired = state.sessions.values
       .filter(session =>
         session.conversationId == active.conversationId &&
@@ -295,7 +311,7 @@ object Application:
       .map(_.state.sessionId)
       .toVector
     val next    = state.copy(sessions = retired.foldLeft(state.sessions)((sessions, id) => sessions - id))
-    (next, retired.map(AppEffect.DeleteSession.apply))
+    (next, retired.map(id => AppEffect.DeleteSession(id, retirement)))
 
   private def lock(state: AppState): (AppState, Vector[AppEffect]) =
     val cancelled  = state.timers.keys.toVector.map(AppEffect.CancelTimer.apply)
@@ -334,7 +350,20 @@ object Application:
       val failed = value.copy(state = OutgoingState.Failed, attempts = attempts)
       val timer  = TimerId(TimerKind.Delivery, value.id)
       val next   = state.copy(outgoing = state.outgoing.updated(value.id, failed), timers = state.timers - timer)
-      (next, Vector(AppEffect.Notify(Notification.MessageFailed)))
+      (
+        next,
+        Vector(
+          AppEffect.Notify(Notification.MessageFailed),
+          AppEffect.UpdateMessageState(
+            value.conversationId,
+            value.sessionId,
+            value.authorPub,
+            value.devicePub,
+            value.seq,
+            MessageTransition.Failed
+          )
+        )
+      )
     else
       val timer    = TimerId(TimerKind.Retry, value.id)
       val deadline = saturatingAdd(nowMs, AppLimits.RetryBackoffMs)
@@ -345,7 +374,20 @@ object Application:
   private def sendNow(state: AppState, value: OutgoingMessage, nowMs: Long): (AppState, Vector[AppEffect]) =
     if value.attempts >= AppLimits.MaxSendAttempts then
       val failed = value.copy(state = OutgoingState.Failed)
-      (state.copy(outgoing = state.outgoing.updated(value.id, failed)), Vector(AppEffect.Notify(Notification.MessageFailed)))
+      (
+        state.copy(outgoing = state.outgoing.updated(value.id, failed)),
+        Vector(
+          AppEffect.Notify(Notification.MessageFailed),
+          AppEffect.UpdateMessageState(
+            value.conversationId,
+            value.sessionId,
+            value.authorPub,
+            value.devicePub,
+            value.seq,
+            MessageTransition.Failed
+          )
+        )
+      )
     else
       val timer    = TimerId(TimerKind.Delivery, value.id)
       val deadline = saturatingAdd(nowMs, AppLimits.DeliveryTimeoutMs)
@@ -382,12 +424,13 @@ object Application:
         sessions = state.sessions.updated(sessionId, active),
         conversations = state.conversations.updated(nextConversation.id, nextConversation)
       )
-      val (next, retiredEffects)             = if firstData then retireOld(withSession, active) else (withSession, Vector.empty)
+      val (next, retiredEffects)             =
+        if firstData then retireOld(withSession, active, SessionRetirement.ResponderFirstData) else (withSession, Vector.empty)
       disposition match
         case InboundDisposition.Applied                                 =>
-          (next, sessionEffect ++ Vector(AppEffect.PersistInbound(message)) ++ retiredEffects)
+          (next, Vector(AppEffect.PersistInbound(message, active)) ++ retiredEffects)
         case InboundDisposition.Buffered                                =>
-          (next, sessionEffect ++ Vector(AppEffect.PersistInbound(message), AppEffect.Notify(Notification.Waiting)) ++ retiredEffects)
+          (next, Vector(AppEffect.PersistInbound(message, active), AppEffect.Notify(Notification.Waiting)) ++ retiredEffects)
         case InboundDisposition.Duplicate | InboundDisposition.Overflow =>
           (next, sessionEffect ++ retiredEffects)
     else (state.copy(sessions = state.sessions.updated(sessionId, active)), sessionEffect)

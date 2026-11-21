@@ -101,4 +101,4 @@ Scala 代码必须遵守 `scala-best-practices`。写、改、重构或评审 Sc
 
 ## 10. 当前状态
 
-计划 0001 在 M2/M3 边界：`core/` 协议核心、M2 纯应用状态机（`yochat.core.app`）、Q1–Q5 有限 Quint 模型（`models/`，Apalache 安全性质 + TLC 时间性质）与生产 `store/`（doobie + SQLite + 应用层 AEAD、高水位、锁代次、备份、崩溃注入）已实现；ADR-0006/0007 accepted。G8–G12、G15、G16 由生产 store 测试覆盖。Q2 已有 ITF trace → Scala `Application.step` 逐状态 replay；Q1/Q3/Q4/Q5 的 replay、`AppEffect` 到 store/transport 的执行器、transport、UI 与 14 条 E2E 尚未完成。G10 keychain shell、G14 Electron launcher、G13 两进程 1,000 条 E2E 仍开放；模型通过不替代 S1。
+计划 0001 在 M2/M3 边界：`core/` 协议核心、M2 纯应用状态机（`yochat.core.app`）、Q1–Q5 有限 Quint 模型（`models/`，Apalache 安全性质 + TLC 时间性质）与生产 `store/`（doobie + SQLite + 应用层 AEAD、高水位、锁代次、备份、崩溃注入）已实现；ADR-0006/0007 accepted。G8–G12、G15、G16 由生产 store 测试覆盖。Q2 已有 ITF trace → Scala `Application.step` 逐状态 replay；`server/` 已有 AppEffect 执行器（store 持久化 + transport sink），但真实 transport、Q1/Q3/Q4/Q5 replay、UI 与 14 条 E2E 尚未完成。G10 keychain shell、G14 Electron launcher、G13 两进程 1,000 条 E2E 仍开放；模型通过不替代 S1。

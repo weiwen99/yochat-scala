@@ -84,3 +84,12 @@
 - Quint: `models/` 有 Q1–Q5 五个有限模型与 `checks.json`；`./models/check.sh` 用 Quint 0.33.1 + Apalache 0.62.4 检查 `safe`，Q2/Q4/Q5 的 temporal 用 TLC。8 个 check 全部 `[ok]`；Q4 活性前提是连接最终稳定，Q3 不声称不公平网络下送达。模型抓到了 Q5 删除后追加 pending 的反例并已修正，也让 Q4 的公平性前提收紧。
 - Replay: `models/traces/q2_order.itf.json`（seed=0x1，9 状态，接收 3→2→1）由 `ReplaySpec` 读取；按 `seen` 差分推导 receive 动作，逐步调用真实 `Application.step`，比较 `seen/applied/buffered`，trace SHA-256 固定。Q1/Q3/Q4/Q5 replay 尚未实现。
 - 未关闭: `AppState` 尚未接 `store/`、transport、server/UI；Q5 的 control-frame 路由由执行器传入显式事件；没有真实 E2E/性能回执。下一步是 `AppEffect` 执行器接到 store/transport。
+
+## AppEffect 执行器（第二段）
+
+- 对象: `server/src/yochat/server/AppEffectExecutor.scala`、`server/src/yochat/server/AppTransport`、`server/test`；父提交 `89390f4`。
+- 执行: `executeAll(Vector[AppEffect])` 顺序执行，首个失败即停；`AppExecutionError` 只保留稳定 code。持久化走生产 `Store`，网络/定时器/通知走显式 `AppTransport`，执行器自己不打开 socket。
+- Store 补充: `appendInbound`（收件消息与 session 同事务）与 `setMessageStateByKey`（按 conversation/session/author/device/seq CAS，避免把 app 消息 id 当作 SQLite 行 id）。
+- AppEffect 调整: `PersistInbound(message, session)` 让消息与候选 session 同事务；`DeleteSession(id, retirement)` 携带 initiator/responder proof；`UpdateMessageState` 用业务键而不是行 id；本地邀请携带 ephemeral private 以写入 `invitations.sealed`。
+- 测试: 4 个 executor 测试，覆盖 PersistOutbound→SendWire 精确 wire、SendSucceeded→store `Sent`、PersistInbound→`Received`、DeleteSession proof、邀请私钥落库；`./server.test` 全绿。
+- 未关闭: `AppTransport` 只是接口，真实 relay client 未实现；收到的邀请不持久化（本地邀请持久化）；`AppEffect` 到 transport 的失败回灌、事务分组、应用层消息 id 与 store 行 id 的展示映射、UI/E2E 仍未接。外部密码学评审仍是发布门。

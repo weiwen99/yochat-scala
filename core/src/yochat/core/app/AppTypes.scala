@@ -2,7 +2,7 @@ package yochat.core.app
 
 import scodec.bits.ByteVector
 
-import yochat.core.{Ed25519KeyPair, Ed25519Public, Invitation, RatchetState, SessionId, WireFrame}
+import yochat.core.{Ed25519KeyPair, Ed25519Public, Invitation, RatchetState, SessionId, WireFrame, X25519Private}
 
 enum LockState:
   case Locked(generation: Long)
@@ -43,6 +43,7 @@ enum InvitationLifecycle:
 final case class AppInvitation(
   id: ByteVector,
   invitation: Invitation,
+  ephemeralPrivate: Option[X25519Private],
   expectedAccount: Option[String],
   lifecycle: InvitationLifecycle,
   expiresAt: Long
@@ -66,6 +67,8 @@ final case class OutgoingMessage(
   id: Long,
   conversationId: ByteVector,
   sessionId: SessionId,
+  authorPub: Ed25519Public,
+  devicePub: Ed25519Public,
   seq: Long,
   body: ByteVector,
   wire: WireFrame,
@@ -86,6 +89,12 @@ final case class TimerId(kind: TimerKind, messageId: Long)
 
 enum Notification:
   case Waiting, MessageFailed, RekeyRequired, RekeyFailed
+
+enum SessionRetirement:
+  case InitiatorAck, ResponderFirstData
+
+enum MessageTransition:
+  case Sent, Failed
 
 final case class MessageKey(authorPub: Ed25519Public, devicePub: Ed25519Public, seq: Long)
 

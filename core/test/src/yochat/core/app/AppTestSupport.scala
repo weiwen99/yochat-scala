@@ -12,6 +12,7 @@ object AppTestSupport:
     aliceState: AppState,
     bobState: AppState,
     invitation: Invitation,
+    aliceEphemeral: X25519KeyPair,
     bobReply: ReplyResult,
     aliceReply: ReplyResult
   )
@@ -53,7 +54,7 @@ object AppTestSupport:
       bobReply.state.copy(safetyVerified = true),
       conversation(aliceUser.publicKey, aliceDevice.publicKey)
     )
-    Peers(aliceIdentity, bobIdentity, aliceState, bobState, invitation, bobReply, aliceReply)
+    Peers(aliceIdentity, bobIdentity, aliceState, bobState, invitation, aliceEph, bobReply, aliceReply)
 
   def sessionState(
     identity: LocalIdentity,

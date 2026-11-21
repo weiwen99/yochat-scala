@@ -13,7 +13,8 @@ import yochat.core.{
   ReplyResult,
   SessionId,
   WireFrame,
-  X25519KeyPair
+  X25519KeyPair,
+  X25519Private
 }
 
 enum AppEvent:
@@ -36,7 +37,7 @@ enum AppEvent:
     nowMs: Long
   )
   case SafetyVerified(userPub: Ed25519Public, nowMs: Long)
-  case InvitationCreated(invitation: Invitation, expectedAccount: Option[String], nowMs: Long)
+  case InvitationCreated(invitation: Invitation, ephemeralPrivate: X25519Private, expectedAccount: Option[String], nowMs: Long)
   case InvitationReceived(invitation: Invitation, expectedAccount: Option[String], nowMs: Long)
   case ReplyCreated(invitationId: ByteVector, conversationId: ByteVector, result: ReplyResult, nowMs: Long)
 
@@ -70,12 +71,21 @@ enum AppEvent:
 
 enum AppEffect:
   case PersistOutbound(message: OutgoingMessage, session: AppSession)
-  case PersistInbound(message: BufferedMessage)
+  case PersistInbound(message: BufferedMessage, session: AppSession)
   case PersistContact(contact: AppContact)
   case PersistSession(session: AppSession)
   case PersistInvitation(invitation: AppInvitation)
   case DeleteInvitation(invitationId: ByteVector)
-  case DeleteSession(sessionId: SessionId)
+  case DeleteSession(sessionId: SessionId, retirement: SessionRetirement)
+
+  case UpdateMessageState(
+    conversationId: ByteVector,
+    sessionId: SessionId,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    seq: Long,
+    transition: MessageTransition
+  )
   case SendWire(messageId: Long, wire: WireFrame)
   case SendReply(invitationId: ByteVector, text: String)
   case SendRekeyRequest(sessionId: SessionId, request: RekeyRequest)

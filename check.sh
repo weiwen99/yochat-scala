@@ -13,6 +13,9 @@ fi
 ./mill store.checkFormat
 ./mill store.fix --check
 ./mill store.test
+./mill server.checkFormat
+./mill server.fix --check
+./mill server.test
 ./models/check.sh
 ./mill spike.checkFormat
 ./mill spike.fix --check

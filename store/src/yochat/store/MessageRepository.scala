@@ -39,6 +39,47 @@ private[store] object MessageRepository:
     wire: ByteVector,
     messageState: MessageState
   ): IO[Either[StorageError, AppendResult]] =
+    append(runtime, state, expectedVersion, expectedLockGeneration, conversationId, authorPub, devicePub, seq, body, wire, messageState)
+
+  def appendInbound(
+    runtime: StoreRuntime,
+    state: yochat.core.RatchetState,
+    expectedVersion: Long,
+    expectedLockGeneration: Long,
+    conversationId: ByteVector,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    seq: Long,
+    body: ByteVector,
+    wire: ByteVector
+  ): IO[Either[StorageError, AppendResult]] =
+    append(
+      runtime,
+      state,
+      expectedVersion,
+      expectedLockGeneration,
+      conversationId,
+      authorPub,
+      devicePub,
+      seq,
+      body,
+      wire,
+      MessageState.Received
+    )
+
+  private def append(
+    runtime: StoreRuntime,
+    state: yochat.core.RatchetState,
+    expectedVersion: Long,
+    expectedLockGeneration: Long,
+    conversationId: ByteVector,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    seq: Long,
+    body: ByteVector,
+    wire: ByteVector,
+    messageState: MessageState
+  ): IO[Either[StorageError, AppendResult]] =
     runtime.now.flatMap { now =>
       runtime.run {
         for
@@ -128,6 +169,28 @@ private[store] object MessageRepository:
         _       <- Sql.checkLock(expectedLockGeneration)
         changed <-
           sql"UPDATE messages SET state = ${MessageState.code(next)} WHERE id = $messageId AND state = ${MessageState.code(expected)}".update.run
+        _       <- Sql.changed(changed)
+      yield ()
+    }
+
+  def setStateByKey(
+    runtime: StoreRuntime,
+    conversationId: ByteVector,
+    sessionId: SessionId,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    seq: Long,
+    expected: MessageState,
+    next: MessageState,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, Unit]] =
+    runtime.run {
+      for
+        _       <- Sql.checkLock(expectedLockGeneration)
+        changed <- sql"""UPDATE messages SET state = ${MessageState.code(next)}
+                        |WHERE conversation_id = ${conversationId.toArray} AND session_id = ${sessionId.bytes.toArray}
+                        |  AND author_pub = ${authorPub.bytes.toArray} AND device_pub = ${devicePub.bytes.toArray}
+                        |  AND seq = $seq AND state = ${MessageState.code(expected)}""".stripMargin.update.run
         _       <- Sql.changed(changed)
       yield ()
     }

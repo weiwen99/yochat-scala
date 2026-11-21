@@ -49,7 +49,7 @@ class RekeyAppSpec extends FunSuite:
     )
     assertEquals(aliceAcked.sessions(newSessionId).state.phase, yochat.core.SessionPhase.Active)
     assert(!aliceAcked.sessions.contains(oldSessionId))
-    assert(ackEffects.exists { case AppEffect.DeleteSession(`oldSessionId`) => true; case _ => false })
+    assert(ackEffects.exists { case AppEffect.DeleteSession(`oldSessionId`, _) => true; case _ => false })
 
     val aliceNew                    = aliceAcked.sessions(newSessionId)
     val (_, frame)                  = Ratchet
@@ -70,6 +70,6 @@ class RekeyAppSpec extends FunSuite:
     )
     assertEquals(bobConfirmed.sessions(newSessionId).retireOldOnFirstData, true)
     assertEquals(bobConfirmed.sessions(oldSessionId).state.phase, yochat.core.SessionPhase.ReadOnly)
-    assert(dataEffects.exists { case AppEffect.DeleteSession(`oldSessionId`) => true; case _ => false }, dataEffects.toString)
+    assert(dataEffects.exists { case AppEffect.DeleteSession(`oldSessionId`, _) => true; case _ => false }, dataEffects.toString)
     assert(!bobAfterData.sessions.contains(oldSessionId))
   }

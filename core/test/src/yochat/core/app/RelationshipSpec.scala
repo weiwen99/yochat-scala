@@ -10,7 +10,8 @@ class RelationshipSpec extends FunSuite:
     val id                             = peers.invitation.fields.ephPub.bytes
     val aliceBase                      = AppState.empty.copy(identity = Some(peers.alice), lock = LockState.Unlocked(0L))
     val bobBase                        = AppState.empty.copy(identity = Some(peers.bob), lock = LockState.Unlocked(0L))
-    val (aliceInvited, _)              = Application.step(aliceBase, AppEvent.InvitationCreated(peers.invitation, Some("@bob"), 0L))
+    val (aliceInvited, _)              =
+      Application.step(aliceBase, AppEvent.InvitationCreated(peers.invitation, peers.aliceEphemeral.privateKey, Some("@bob"), 0L))
     val (bobInvited, _)                = Application.step(bobBase, AppEvent.InvitationReceived(peers.invitation, Some("@alice"), 0L))
     val conversation                   = ByteVector.fill(32)(0x55.toByte)
     val (bobReplied, replyEffects)     = Application.step(bobInvited, AppEvent.ReplyCreated(id, conversation, peers.bobReply, 1_000L))
@@ -30,7 +31,8 @@ class RelationshipSpec extends FunSuite:
     val id                          = peers.invitation.fields.ephPub.bytes
     val conversation                = ByteVector.fill(32)(0x56.toByte)
     val aliceBase                   = AppState.empty.copy(identity = Some(peers.alice), lock = LockState.Unlocked(0L))
-    val (aliceInvited, _)           = Application.step(aliceBase, AppEvent.InvitationCreated(peers.invitation, Some("@bob"), 0L))
+    val (aliceInvited, _)           =
+      Application.step(aliceBase, AppEvent.InvitationCreated(peers.invitation, peers.aliceEphemeral.privateKey, Some("@bob"), 0L))
     val (mismatch, mismatchEffects) = Application.step(
       aliceInvited,
       AppEvent.ReplyReceived(id, conversation, peers.aliceReply, Some("@wrong"), 1_000L)

@@ -46,7 +46,7 @@ class ReplaySpec extends FunSuite:
           )
       assertEquals(observable(nextState), after, s"state mismatch after ${action.fold("idle")(value => s"receive$value")}")
       action.foreach { sequence =>
-        assert(effects.exists { case AppEffect.PersistInbound(message) => message.seq == sequence.toLong; case _ => false })
+        assert(effects.exists { case AppEffect.PersistInbound(message, _) => message.seq == sequence.toLong; case _ => false })
       }
       nextState
     }

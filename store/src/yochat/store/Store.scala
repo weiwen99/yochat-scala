@@ -59,6 +59,30 @@ final class Store private[store] (
       messageState
     )
 
+  def appendInbound(
+    state: RatchetState,
+    expectedVersion: Long,
+    expectedLockGeneration: Long,
+    conversationId: ByteVector,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    seq: Long,
+    body: ByteVector,
+    wire: ByteVector
+  ): IO[Either[StorageError, AppendResult]] =
+    MessageRepository.appendInbound(
+      runtime,
+      state,
+      expectedVersion,
+      expectedLockGeneration,
+      conversationId,
+      authorPub,
+      devicePub,
+      seq,
+      body,
+      wire
+    )
+
   def loadMessage(
     conversationId: ByteVector,
     sessionId: SessionId,
@@ -82,6 +106,28 @@ final class Store private[store] (
     expectedLockGeneration: Long
   ): IO[Either[StorageError, Unit]] =
     MessageRepository.setState(runtime, messageId, expected, next, expectedLockGeneration)
+
+  def setMessageStateByKey(
+    conversationId: ByteVector,
+    sessionId: SessionId,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    seq: Long,
+    expected: MessageState,
+    next: MessageState,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, Unit]] =
+    MessageRepository.setStateByKey(
+      runtime,
+      conversationId,
+      sessionId,
+      authorPub,
+      devicePub,
+      seq,
+      expected,
+      next,
+      expectedLockGeneration
+    )
 
   def pendingCount(sessionId: SessionId): IO[Either[StorageError, Long]] =
     MessageRepository.pendingCount(runtime, sessionId)
