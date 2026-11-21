@@ -71,6 +71,14 @@
 - 范围: 生产 doobie `ConnectionIO`/`Transactor[IO]`、Hikari(max 1)、SQLite WAL/FULL/IMMEDIATE/secure_delete、应用层 AEAD、`master → identity/database → 域密钥`、`KeyFile`（Argon2id）、`identity.bin`、首次运行部分实例、`meta` 高水位/锁代次、sessions/messages/contacts/invitations/conversations、安全状态同一事务、旧会话 cutover、`VACUUM INTO` 备份。没有新增表、服务或第二套 effect 栈；复用 ADR-0007 的 6 张表和同一 doobie 接入层。
 - 事务锁序: `invitations → contacts → sessions → messages → meta`；状态候选在事务内封印，提交成功后才返回 `SessionRecord`/`AppendResult`；失败由 `StoreAbort`/SQLite 回滚，不发布候选。
 - 测试: `./mill store.test` 20 个测试，全部通过。覆盖 G8（重复 seq 回滚、损坏 state 报错不返回空）、G9（真实子进程 halt-before/after-commit，after 的 wire 原样读回）、G10（keyfile 创建/错误口令/参数上界/部分实例/provider 拒绝）、G11（contact/invitation swap、version 回滚、删除重插、安全状态不一致、rekey 继承、索引计划）、G12（initiator/responder、pending、lost-ACK、tombstone、历史 body）、G14（运行中备份 + native-access 子进程）、G15（PRAGMA、schema fail-closed、索引计划、生产事务）、G16（max-one 写者阻塞/释放、强制回滚、维护路径）。
-- 性能回执: `STORE_THROUGHPUT inserts=1000 reads=1000 insert_ms=1576 read_ms=145 total_ms=1721`（一次完整 `./check.sh` 的 `./mill store.test`；临时目录；不是两进程 E2E，不替代 G13）。
+- 性能回执: `STORE_THROUGHPUT inserts=1000 reads=1000 insert_ms=1441 read_ms=119 total_ms=1561`（一次完整 `./check.sh` 的 `./mill store.test`；临时目录；多次运行约 1.5–1.8s；不是两进程 E2E，不替代 G13）。
 - 发现并修复: `keystore.bin` 曾把已含 `YCE1` 的 AEAD 信封再塞进无 magic 的文件格式，导致正确口令也解不开；`identity.bin` 曾重复保存 nonce/信封，长度与 ADR 格式不符；邀请 codec 用 `fixed(32)` 读取带 u32 长度前缀的 ephemeral key，导致正向读取失败。三处都有正向加载测试，不再只测错误路径。
 - 未关闭: G13 的两进程 1,000 条 E2E 待 M3/M5；G10 的 Electron keychain shell 与 G14 的 Electron launcher 在 shell 模块实现；外部密码学评审仍是发布门。
+
+## M2 应用状态机（第一段）
+
+- 对象: `core/src/yochat/core/app`、`core/test/src/yochat/core/app`；父提交 `77df124`。
+- 纯核心: `Application.step(AppState, AppEvent): (AppState, Vector[AppEffect])`；不读时钟、不取随机数、不做 IO。时间、nonce、DH 密钥、Reply/Rekey 结果、持久化完成/失败都由事件注入。
+- 覆盖: 应用锁/空闲锁定/旧代次结果丢弃（`AppLockSpec`）；邀请/应答、账号不符、拒绝静默、过期、安全码门（`RelationshipSpec`）；写前落盘：`PersistOutbound` 成功前不产生 `SendWire`，持久化失败不发（`OutboxSpec`）；单作者顺序、缺口缓冲、连续冲刷、去重（`ConversationSpec`、`InboundSpec`）；无匹配/锁定入站静默；重连有界重放、重试上限（`OutboxSpec`）；Q5 rekey request/accept/confirm/ack、旧 ReadOnly 会话在 cutover 后删除（`RekeyAppSpec`）。
+- 测试: `./mill core.test` 全绿；新增 app 测试 16 个。`AppEffect` 的持久化组由后续执行器按事务/顺序落地；当前 `PersistSession`/`PersistInbound` 是描述，不是已接 store 的 executor。
+- 未关闭: 5 个 Quint 模型与对拍尚未开始；`AppState` 尚未接 `store/`、transport、server/UI；Q5 的 control-frame 路由由执行器传入显式事件；没有真实 E2E/性能回执。下一步是 Quint Q1–Q5 + trace replay，或先把 `AppEffect` 执行器接到 store/transport。

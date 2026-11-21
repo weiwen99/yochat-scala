@@ -101,4 +101,4 @@ Scala 代码必须遵守 `scala-best-practices`。写、改、重构或评审 Sc
 
 ## 10. 当前状态
 
-计划 0001 在 M2/M3 边界：`core/` 加密与状态机、生产 `store/`（doobie + SQLite + 应用层 AEAD、高水位、锁代次、备份、崩溃注入）已实现；ADR-0006/0007 accepted。G8–G12、G15、G16 由生产 store 测试覆盖；G10 的 Electron keychain shell、G14 的 Electron launcher、G13 的两进程 1,000 条 E2E、transport、UI 与 14 条 E2E 回执尚未完成。下一步是 M2 应用状态机/Quint、transport 与 shell；不要把存储测试当 S1 完成。
+计划 0001 在 M2/M3 边界：`core/` 协议核心、M2 纯应用状态机（`yochat.core.app`，锁/邀请/安全门/写前落盘/顺序/重连/rekey 的语义测试）与生产 `store/`（doobie + SQLite + 应用层 AEAD、高水位、锁代次、备份、崩溃注入）已实现；ADR-0006/0007 accepted。G8–G12、G15、G16 由生产 store 测试覆盖；Q1–Q5 的 Scala 语义测试已有，但 Quint 模型/trace replay、`AppEffect` 到 store/transport 的执行器、transport、UI 与 14 条 E2E 尚未完成。G10 keychain shell、G14 Electron launcher、G13 两进程 1,000 条 E2E 仍开放；不要把纯状态机测试当 S1 完成。
