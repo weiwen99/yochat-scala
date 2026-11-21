@@ -21,6 +21,14 @@ for file in q1_relationship.qnt q2_order.qnt q3_resend.qnt q4_reconnect.qnt q5_r
   "${QUINT[@]}" typecheck "$file" >/dev/null
 done
 
+hash_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
 count=$(jq 'length' "$REGISTRY")
 for index in $(seq 0 $((count - 1))); do
   file=$(jq -r ".[$index].file" "$REGISTRY")
@@ -33,14 +41,19 @@ for index in $(seq 0 $((count - 1))); do
   if [[ -n "$temporal" ]]; then
     max_steps=$(jq -r ".[$index].temporalMaxSteps // .[$index].maxSteps" "$REGISTRY")
   fi
-  if command -v sha256sum >/dev/null 2>&1; then
-    actual=$(sha256sum "$file" | cut -d' ' -f1)
-  else
-    actual=$(shasum -a 256 "$file" | cut -d' ' -f1)
-  fi
+  actual=$(hash_file "$file")
   if [[ "$actual" != "$expected" ]]; then
     echo "source hash mismatch: $file" >&2
     exit 1
+  fi
+  trace=$(jq -r ".[$index].trace // empty" "$REGISTRY")
+  if [[ -n "$trace" ]]; then
+    expected_trace=$(jq -r ".[$index].traceSha256" "$REGISTRY")
+    actual_trace=$(hash_file "$trace")
+    if [[ "$actual_trace" != "$expected_trace" ]]; then
+      echo "trace hash mismatch: $trace" >&2
+      exit 1
+    fi
   fi
   args=("$file" "--main=$main" "--backend=$backend" "--max-steps=$max_steps")
   if [[ -n "$invariants" ]]; then

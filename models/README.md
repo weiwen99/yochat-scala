@@ -33,4 +33,8 @@ Q1–Q5 的有限模型，对应 `docs/plans/2026/11/0001-yochat-rewrite/design.
 - `q3` 的发送成功是非确定的，模型只证明“有界 + 耗尽可见”，不证明不公平网络下最终送达。
 - `q4` 的活性明确以“连接最终稳定”为前提；反复断线后耗尽预算是合法失败，不是模型漏项。
 - `q5` 是有限状态 cutover 模型；真实 control-frame 编解码、持久化和 SQLite 删除仍由 `core`/`store` 测试承担。
-- 尚未做 ITF trace → Scala `Application.step` 的逐状态 replay；当前模型与 Scala 语义测试是并列证据，不能互相替代。
+## Trace replay
+
+`traces/q2_order.itf.json` 是 `--seed=0x1` 的 Q2 模拟轨迹（9 个状态，接收顺序 3、2、1，最终应用 1..3）。`core/test/src/yochat/core/app/ReplaySpec.scala` 读取该 ITF，按 `seen` 差分推导 `receive1/2/3`，逐步调用真实 `Application.step`，比较 `seen`、`applied`、`buffered`；trace SHA-256 也固定在测试与 `checks.json` 中。
+
+Q1/Q3/Q4/Q5 的 trace replay 尚未实现；当前其它模型与 Scala 语义测试仍是并列证据，不能互相替代。

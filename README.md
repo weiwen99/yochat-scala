@@ -4,7 +4,7 @@ A serverless, end-to-end-encrypted, friend-to-friend messenger. This repository 
 
 ## Status
 
-Plan 0001 is at the M2/M3 boundary. `core/` contains the protocol core and a pure application kernel (`yochat.core.app`: lock, invitations/safety, write-before-send, ordering, reconnect, rekey); `models/` contains the five finite Q1–Q5 Quint models with Apalache/TLC receipts; and the production `store/` (doobie + SQLite + application-layer AEAD) exists. The ITF trace replay, the `AppEffect` executor into store/transport, transport, UI/shell, the 14 E2E contracts and the two-process 1,000-message receipt are not implemented. The storage gates G8–G12/G15/G16 pass in `store/`; G10 keychain shell, G14 launcher, G13 E2E, and external cryptographic review remain open.
+Plan 0001 is at the M2/M3 boundary. `core/` contains the protocol core and a pure application kernel (`yochat.core.app`: lock, invitations/safety, write-before-send, ordering, reconnect, rekey); `models/` contains the five finite Q1–Q5 Quint models with Apalache/TLC receipts; and the production `store/` (doobie + SQLite + application-layer AEAD) exists. Q2 has an ITF trace replay against the real Scala `Application.step`; Q1/Q3/Q4/Q5 replay, the `AppEffect` executor into store/transport, transport, UI/shell, the 14 E2E contracts and the two-process 1,000-message receipt are not implemented. The storage gates G8–G12/G15/G16 pass in `store/`; G10 keychain shell, G14 launcher, G13 E2E, and external cryptographic review remain open.
 
 ## Read first
 

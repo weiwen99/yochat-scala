@@ -17,7 +17,9 @@
     "invariants": ["safe"],
     "temporal": [],
     "maxSteps": 10,
-    "note": "单作者 1..3 序号；已应用位置保持连续前缀，乱序只缓冲，补洞后在同一动作内冲刷，重复不改变结果。"
+    "trace": "traces/q2_order.itf.json",
+    "traceSha256": "c24dea85199921193863337f9559059f791ad1a995c09fe7d2fa809ad1e6d0a6",
+    "note": "单作者 1..3 序号；已应用位置保持连续前缀，乱序只缓冲，补洞后在同一动作内冲刷，重复不改变结果。traces/q2_order.itf.json 供 core ReplaySpec 逐状态重放。"
   },
   {
     "file": "q2_order.qnt",

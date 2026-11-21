@@ -34,7 +34,8 @@ object core extends CommonModule with ScalafmtModule with ScalafixModule:
   object test extends ScalaTests with TestModule.Munit:
 
     def mvnDeps = Seq(
-      mvn"org.scalameta::munit:1.1.1"
+      mvn"org.scalameta::munit:1.1.1",
+      mvn"com.lihaoyi::ujson:4.4.3"
     )
 
 object store extends CommonModule with ScalafmtModule with ScalafixModule:
