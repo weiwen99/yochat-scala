@@ -14,6 +14,12 @@ class AppEffectExecutorSpec extends FunSuite:
     def sendWire(messageId: Long, wire: yochat.core.WireFrame): IO[Unit] =
       state.update(_ :+ s"wire:$messageId:${wire.bytes.toHex}")
 
+    def sendAck(sessionId: yochat.core.SessionId, frame: yochat.core.WireFrame): IO[Unit] =
+      state.update(_ :+ s"ack:$sessionId:${frame.header.seq}")
+
+    def sendGap(sessionId: yochat.core.SessionId, frame: yochat.core.WireFrame): IO[Unit] =
+      state.update(_ :+ s"gap:$sessionId:${frame.header.seq}")
+
     def sendReply(invitationId: ByteVector, text: String): IO[Unit] =
       state.update(_ :+ s"reply:${invitationId.toHex}:$text")
 
@@ -43,36 +49,66 @@ class AppEffectExecutorSpec extends FunSuite:
       val fixture = ExecutorTestSupport.fixture()
       val app     = ExecutorTestSupport.appState(fixture)
       for
-        _        <- ExecutorTestSupport.initialize(fixture, store)
-        sent     <- IO.pure(
-                      Application.step(
-                        app,
-                        AppEvent.UserSend(1L, fixture.conversationId, ExecutorTestSupport.body("hello"), ExecutorTestSupport.nonce(1), 0L)
-                      )
-                    )
-        ref      <- Ref.of[IO, Vector[String]](Vector.empty)
-        executor  = new AppEffectExecutor(store, fixture.identity, new RecordingTransport(ref))
-        executed <- executor.executeAll(sent._2)
-        _        <- IO.fromEither(executed.left.map(error => new AssertionError(error.code)))
-        message  <-
+        _           <- ExecutorTestSupport.initialize(fixture, store)
+        sent        <- IO.pure(
+                         Application.step(
+                           app,
+                           AppEvent.UserSend(1L, fixture.conversationId, ExecutorTestSupport.body("hello"), ExecutorTestSupport.nonce(1), 0L)
+                         )
+                       )
+        ref         <- Ref.of[IO, Vector[String]](Vector.empty)
+        executor     = new AppEffectExecutor(store, fixture.identity, new RecordingTransport(ref))
+        executed    <- executor.executeAll(sent._2)
+        _           <- IO.fromEither(executed.left.map(error => new AssertionError(error.code)))
+        message     <-
           store.loadMessage(fixture.conversationId, fixture.sessionId, fixture.identity.user.publicKey, fixture.identity.device.publicKey, 1L)
-        record   <- IO.fromEither(message.left.map(error => new AssertionError(error.code)))
-        outgoing  = sent._1.outgoing(1L)
-        now      <- IO.pure(10L)
-        success  <- IO.pure(Application.step(sent._1, AppEvent.PersistOutboundSucceeded(1L, outgoing.generation, now)))
-        sentAll  <- executor.executeAll(success._2)
-        _        <- IO.fromEither(sentAll.left.map(error => new AssertionError(error.code)))
-        acked    <- IO.pure(Application.step(success._1, AppEvent.SendSucceeded(1L, outgoing.generation)))
-        ackedAll <- executor.executeAll(acked._2)
-        _        <- IO.fromEither(ackedAll.left.map(error => new AssertionError(error.code)))
-        sent     <-
+        record      <- IO.fromEither(message.left.map(error => new AssertionError(error.code)))
+        outgoing     = sent._1.outgoing(1L)
+        now         <- IO.pure(10L)
+        success     <- IO.pure(Application.step(sent._1, AppEvent.PersistOutboundSucceeded(1L, outgoing.generation, now)))
+        sentAll     <- executor.executeAll(success._2)
+        _           <- IO.fromEither(sentAll.left.map(error => new AssertionError(error.code)))
+        acked       <- IO.pure(Application.step(success._1, AppEvent.SendSucceeded(1L, outgoing.generation)))
+        ackedAll    <- executor.executeAll(acked._2)
+        _           <- IO.fromEither(ackedAll.left.map(error => new AssertionError(error.code)))
+        sent        <-
           store.loadMessage(fixture.conversationId, fixture.sessionId, fixture.identity.user.publicKey, fixture.identity.device.publicKey, 1L)
-        sentRec  <- IO.fromEither(sent.left.map(error => new AssertionError(error.code)))
-        log      <- ref.get
+        sentRec     <- IO.fromEither(sent.left.map(error => new AssertionError(error.code)))
+        delivered   <- executor.execute(
+                         AppEffect.UpdateMessageState(
+                           fixture.conversationId,
+                           fixture.sessionId,
+                           fixture.identity.user.publicKey,
+                           fixture.identity.device.publicKey,
+                           1L,
+                           MessageTransition.Delivered
+                         )
+                       )
+        _           <- IO.fromEither(delivered.left.map(error => new AssertionError(error.code)))
+        after       <-
+          store.loadMessage(fixture.conversationId, fixture.sessionId, fixture.identity.user.publicKey, fixture.identity.device.publicKey, 1L)
+        afterRec    <- IO.fromEither(after.left.map(error => new AssertionError(error.code)))
+        lateSent    <- executor.execute(
+                         AppEffect.UpdateMessageState(
+                           fixture.conversationId,
+                           fixture.sessionId,
+                           fixture.identity.user.publicKey,
+                           fixture.identity.device.publicKey,
+                           1L,
+                           MessageTransition.Sent
+                         )
+                       )
+        _           <- IO.fromEither(lateSent.left.map(error => new AssertionError(error.code)))
+        terminal    <-
+          store.loadMessage(fixture.conversationId, fixture.sessionId, fixture.identity.user.publicKey, fixture.identity.device.publicKey, 1L)
+        terminalRec <- IO.fromEither(terminal.left.map(error => new AssertionError(error.code)))
+        log         <- ref.get
       yield
         assertEquals(record.body, ExecutorTestSupport.body("hello"))
         assertEquals(record.wire, outgoing.wire.bytes)
         assertEquals(sentRec.state, MessageState.Sent)
+        assertEquals(afterRec.state, MessageState.Delivered)
+        assertEquals(terminalRec.state, MessageState.Delivered)
         assert(log.exists(line => line.startsWith("wire:1:")))
         assert(log.exists(_.startsWith("timer:Delivery:1:")))
     }

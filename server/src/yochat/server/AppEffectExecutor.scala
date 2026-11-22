@@ -26,6 +26,10 @@ trait AppTransport:
 
   def sendWire(messageId: Long, wire: WireFrame): IO[Unit]
 
+  def sendAck(sessionId: yochat.core.SessionId, frame: WireFrame): IO[Unit]
+
+  def sendGap(sessionId: yochat.core.SessionId, frame: WireFrame): IO[Unit]
+
   def sendReply(invitationId: ByteVector, text: String): IO[Unit]
 
   def sendRekeyRequest(sessionId: yochat.core.SessionId, request: RekeyRequest): IO[Unit]
@@ -94,6 +98,10 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
         updateMessageState(conversationId, sessionId, authorPub, devicePub, seq, transition)
       case AppEffect.SendWire(messageId, wire)                                                            =>
         transportOnly(transport.sendWire(messageId, wire))
+      case AppEffect.SendAck(sessionId, frame)                                                            =>
+        transportOnly(transport.sendAck(sessionId, frame))
+      case AppEffect.SendGap(sessionId, frame)                                                            =>
+        transportOnly(transport.sendGap(sessionId, frame))
       case AppEffect.SendReply(invitationId, text)                                                        =>
         transportOnly(transport.sendReply(invitationId, text))
       case AppEffect.SendRekeyRequest(sessionId, request)                                                 =>
@@ -272,11 +280,24 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
   ): IO[Either[AppExecutionError, Unit]] =
     for
       lock   <- lockGeneration
-      target  = transition match
-                  case MessageTransition.Sent   => MessageState.Sent
-                  case MessageTransition.Failed => MessageState.Failed
-      result <-
-        store.setMessageStateByKey(conversationId, sessionId, authorPub, devicePub, seq, MessageState.Pending, target, lock).map(mapStore)
+      loaded <- store.loadMessage(conversationId, sessionId, authorPub, devicePub, seq)
+      result <- loaded match
+                  case Left(error)   => IO.pure(Left(AppExecutionError.StoreFailed(error)))
+                  case Right(record) =>
+                    val target = transition match
+                      case MessageTransition.Sent      => MessageState.Sent
+                      case MessageTransition.Delivered => MessageState.Delivered
+                      case MessageTransition.Failed    => MessageState.Failed
+                    val next   =
+                      (record.state, target) match
+                        case (MessageState.Delivered, _)              => MessageState.Delivered
+                        case (MessageState.Failed, MessageState.Sent) => MessageState.Failed
+                        case _                                        => target
+                    if next == record.state then IO.pure(Right(()))
+                    else
+                      store
+                        .setMessageStateByKey(conversationId, sessionId, authorPub, devicePub, seq, record.state, next, lock)
+                        .map(mapStore)
     yield result
 
   private def ensureConversation(

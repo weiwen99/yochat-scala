@@ -61,7 +61,7 @@ final case class AppSession(
   override def toString: String = s"AppSession(conversation=$conversationId, nextSeq=$nextSeq, phase=${state.phase})"
 
 enum OutgoingState:
-  case Persisting, Queued, Sent, Failed
+  case Persisting, Queued, InFlight, Sent, Failed
 
 final case class OutgoingMessage(
   id: Long,
@@ -88,13 +88,13 @@ enum TimerKind:
 final case class TimerId(kind: TimerKind, messageId: Long)
 
 enum Notification:
-  case Waiting, MessageFailed, RekeyRequired, RekeyFailed
+  case Waiting, MessageFailed, QueueFull, InboundOverflow, RekeyRequired, RekeyFailed
 
 enum SessionRetirement:
   case InitiatorAck, ResponderFirstData
 
 enum MessageTransition:
-  case Sent, Failed
+  case Sent, Delivered, Failed
 
 final case class MessageKey(authorPub: Ed25519Public, devicePub: Ed25519Public, seq: Long)
 
@@ -122,6 +122,13 @@ final case class AppliedMessage(
 enum InboundDisposition:
   case Applied, Buffered, Duplicate, Overflow
 
+final case class InboundResult(
+  conversation: Conversation,
+  disposition: InboundDisposition,
+  applied: Vector[AppliedMessage],
+  gap: Option[Long]
+)
+
 final case class Conversation(
   id: ByteVector,
   peerUserPub: Ed25519Public,
@@ -129,28 +136,45 @@ final case class Conversation(
   nextSeq: Map[Ed25519Public, Long],
   seen: Set[MessageKey],
   buffered: Map[MessageKey, BufferedMessage],
-  applied: Vector[AppliedMessage]
+  gapRequested: Option[Long] = None
 ):
 
-  def accept(message: BufferedMessage): (Conversation, InboundDisposition, Vector[AppliedMessage]) =
-    val key = MessageKey(message.authorPub, message.devicePub, message.seq)
-    if seen.contains(key) then (this, InboundDisposition.Duplicate, Vector.empty)
+  def accept(message: BufferedMessage): InboundResult =
+    val key      = MessageKey(message.authorPub, message.devicePub, message.seq)
+    val expected = nextSeq.getOrElse(message.authorPub, 1L)
+    if message.seq < expected then InboundResult(this, InboundDisposition.Duplicate, Vector.empty, None)
+    else if seen.contains(key) then InboundResult(this, InboundDisposition.Duplicate, Vector.empty, None)
+    else if message.seq == expected then
+      val initial             = copy(nextSeq = nextSeq.updated(message.authorPub, expected + 1L), seen = seen - key)
+      val (flushed, appended) = initial.flush(message.authorPub, Vector(message.toApplied))
+      val gap                 = flushed.pendingGap
+      InboundResult(
+        flushed.copy(gapRequested = gap),
+        InboundDisposition.Applied,
+        appended,
+        gap.filterNot(value => gapRequested.contains(value))
+      )
+    else if buffered.size >= AppLimits.MaxBuffered then
+      val gap = Some(expected)
+      InboundResult(copy(gapRequested = gap), InboundDisposition.Overflow, Vector.empty, gap.filterNot(value => gapRequested.contains(value)))
     else
-      val expected = nextSeq.getOrElse(message.authorPub, 1L)
-      if message.seq == expected then
-        val initial             = copy(
-          nextSeq = nextSeq.updated(message.authorPub, expected + 1L),
-          seen = seen + key,
-          applied = applied :+ message.toApplied
-        )
-        val (flushed, appended) = initial.flush(message.authorPub, Vector(message.toApplied))
-        (flushed, InboundDisposition.Applied, appended)
-      else if message.seq > expected then
-        if buffered.size >= AppLimits.MaxBuffered then (this, InboundDisposition.Overflow, Vector.empty)
-        else (copy(seen = seen + key, buffered = buffered + (key -> message)), InboundDisposition.Buffered, Vector.empty)
-      else (copy(seen = seen + key), InboundDisposition.Duplicate, Vector.empty)
+      val added = copy(seen = seen + key, buffered = buffered + (key -> message))
+      val gap   = added.pendingGap
+      InboundResult(
+        added.copy(gapRequested = gap),
+        InboundDisposition.Buffered,
+        Vector.empty,
+        gap.filterNot(value => gapRequested.contains(value))
+      )
 
-  override def toString: String = s"Conversation(applied=${applied.size}, buffered=${buffered.size})"
+  override def toString: String =
+    s"Conversation(authors=${nextSeq.size}, buffered=${buffered.size}, gap=$gapRequested)"
+
+  private def pendingGap: Option[Long] =
+    buffered.keys.toVector
+      .sortBy(key => (key.authorPub.bytes.toHex, key.seq))
+      .headOption
+      .map(key => nextSeq.getOrElse(key.authorPub, 1L))
 
   private def flush(author: Ed25519Public, appended: Vector[AppliedMessage]): (Conversation, Vector[AppliedMessage]) =
     val expected = nextSeq.getOrElse(author, 1L)
@@ -160,8 +184,8 @@ final case class Conversation(
         val message = buffered(key)
         val next    = copy(
           nextSeq = nextSeq.updated(author, expected + 1L),
-          buffered = buffered - key,
-          applied = applied :+ message.toApplied
+          seen = seen - key,
+          buffered = buffered - key
         )
         next.flush(author, appended :+ message.toApplied)
 
@@ -176,6 +200,9 @@ object AppLimits:
   val RetryBackoffMs: Long    = 2_000L
   val MaxSendAttempts: Int    = 3
   val MaxBuffered: Int        = 256
+  val MaxInFlight: Int        = 32
+  val MaxOutgoing: Int        = 1_024
+  val MaxFailedRetained: Int  = 64
 
 final case class AppState(
   identity: Option[LocalIdentity] = None,

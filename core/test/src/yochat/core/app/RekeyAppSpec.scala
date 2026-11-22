@@ -66,7 +66,7 @@ class RekeyAppSpec extends FunSuite:
     assert(direct.isRight, direct.toString)
     val (bobAfterData, dataEffects) = Application.step(
       bobConfirmed,
-      AppEvent.InboundFrame(1L, newSessionId, frame, Some(AppTestSupport.xpair(10)), 0L)
+      AppEvent.InboundFrame(1L, newSessionId, frame, Some(AppTestSupport.xpair(10)), TestKeys.nonce(10), 0L)
     )
     assertEquals(bobConfirmed.sessions(newSessionId).retireOldOnFirstData, true)
     assertEquals(bobConfirmed.sessions(oldSessionId).state.phase, yochat.core.SessionPhase.ReadOnly)

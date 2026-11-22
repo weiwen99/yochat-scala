@@ -82,8 +82,7 @@ object AppTestSupport:
       peerDevicePub = peerDevice,
       nextSeq = Map.empty,
       seen = Set.empty,
-      buffered = Map.empty,
-      applied = Vector.empty
+      buffered = Map.empty
     )
 
   def xpair(seed: Int): X25519KeyPair =

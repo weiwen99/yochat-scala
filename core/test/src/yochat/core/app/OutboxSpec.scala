@@ -11,13 +11,15 @@ class OutboxSpec extends FunSuite:
     val conversation              = peers.aliceState.sessions.values.head.conversationId
     val (persisting, _)           = Application.step(peers.aliceState, AppEvent.UserSend(1L, conversation, Crypto.text("body"), TestKeys.nonce(1), 0L))
     val generation                = persisting.outgoing(1L).generation
-    val (queued, _)               = Application.step(persisting, AppEvent.PersistOutboundSucceeded(1L, generation, 1L))
-    val (offline, offlineEffects) = Application.step(queued, AppEvent.ConnectionChanged(online = false, nowMs = 2L))
+    val (sent, _)                 = Application.step(persisting, AppEvent.PersistOutboundSucceeded(1L, generation, 1L))
+    assertEquals(sent.outgoing(1L).state, OutgoingState.InFlight)
+    val (offline, offlineEffects) = Application.step(sent, AppEvent.ConnectionChanged(online = false, nowMs = 2L))
     assert(offlineEffects.exists { case AppEffect.CancelTimer(_) => true; case _ => false })
     assertEquals(offline.timers, Map.empty)
+    assertEquals(offline.outgoing(1L).state, OutgoingState.Queued)
     val (online, onlineEffects)   = Application.step(offline, AppEvent.ConnectionChanged(online = true, nowMs = 3L))
     assert(onlineEffects.exists { case AppEffect.SendWire(1L, _) => true; case _ => false })
-    assertEquals(online.outgoing(1L).attempts, 1)
+    assertEquals(online.outgoing(1L).attempts, 2)
   }
 
   test("Q3: retry is bounded and the final failure is notified") {

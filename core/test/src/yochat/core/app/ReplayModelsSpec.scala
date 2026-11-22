@@ -13,41 +13,46 @@ import yochat.core.{ControlExtension, Crypto, Ratchet, TestKeys}
 class ReplayModelsSpec extends FunSuite:
 
   test("ITF replay: Q1 relationship trace feeds reply, safety, and content gate") {
-    val states = readStates("models/traces/q1_relationship.itf.json", "947600b5068052871d45fdea828c141fd956bc74e73ba4f9b270bcc2370a2250")
-    val peers  = AppTestSupport.connected
-    val id     = peers.invitation.fields.ephPub.bytes
-    val conv   = peers.aliceReply.state.sessionId.bytes
-    val alice0 = Application
+    val states      = readStates("models/traces/q1_relationship.itf.json", "947600b5068052871d45fdea828c141fd956bc74e73ba4f9b270bcc2370a2250")
+    val peers       = AppTestSupport.connected
+    val id          = peers.invitation.fields.ephPub.bytes
+    val conv        = peers.aliceReply.state.sessionId.bytes
+    val alice0      = Application
       .step(
         AppState.empty.copy(identity = Some(peers.alice), lock = LockState.Unlocked(0L)),
         AppEvent.InvitationCreated(peers.invitation, peers.aliceEphemeral.privateKey, Some("@bob"), 0L)
       )
       ._1
-    val bob0   = Application
+    val bob0        = Application
       .step(
         AppState.empty.copy(identity = Some(peers.bob), lock = LockState.Unlocked(0L)),
         AppEvent.InvitationReceived(peers.invitation, Some("@alice"), 0L)
       )
       ._1
-    val initial = (alice0, bob0, Vector.empty[AppEffect])
-    val transitions = states.sliding(2).flatMap {
-      case Seq(previous, next) => Some((previous, next))
-      case _                   => None
-    }.toVector
+    val initial     = (alice0, bob0, Vector.empty[AppEffect])
+    val transitions = states
+      .sliding(2)
+      .flatMap {
+        case Seq(previous, next) => Some((previous, next))
+        case _                   => None
+      }
+      .toVector
     transitions.foldLeft(initial) { case ((alice, bob, effectsSeen), (_, next)) =>
-      val before = q1Observed(alice, bob, id, peers.alice.user.publicKey, peers.bob.user.publicKey)
-      val target = q1State(next)
-      val (aliceAfterReply, bobAfterReply) =
+      val before                              = q1Observed(alice, bob, id, peers.alice.user.publicKey, peers.bob.user.publicKey)
+      val target                              = q1State(next)
+      val (aliceAfterReply, bobAfterReply)    =
         if target.replied && !before.replied then
-          val bobEvents = Application.step(bob, AppEvent.ReplyCreated(id, conv, peers.bobReply, 1_000L))
-          val expected  = if target.mismatch then Some("@wrong") else Some("@bob")
+          val bobEvents   = Application.step(bob, AppEvent.ReplyCreated(id, conv, peers.bobReply, 1_000L))
+          val expected    = if target.mismatch then Some("@wrong") else Some("@bob")
           val aliceEvents = Application.step(alice, AppEvent.ReplyReceived(id, conv, peers.aliceReply, expected, 1_000L))
           (aliceEvents._1, bobEvents._1)
         else (alice, bob)
-      val (aliceAfterSafety, bobAfterSafety) =
+      val (aliceAfterSafety, bobAfterSafety)  =
         if target.safetyVerified && !before.safetyVerified then
-          (Application.step(aliceAfterReply, AppEvent.SafetyVerified(peers.bob.user.publicKey, 1_001L))._1,
-           Application.step(bobAfterReply, AppEvent.SafetyVerified(peers.alice.user.publicKey, 1_001L))._1)
+          (
+            Application.step(aliceAfterReply, AppEvent.SafetyVerified(peers.bob.user.publicKey, 1_001L))._1,
+            Application.step(bobAfterReply, AppEvent.SafetyVerified(peers.alice.user.publicKey, 1_001L))._1
+          )
         else (aliceAfterReply, bobAfterReply)
       val (aliceAfterContent, contentEffects) =
         if target.contentSent && !before.contentSent then
@@ -56,49 +61,59 @@ class ReplayModelsSpec extends FunSuite:
             AppEvent.UserSend(1L, conv, Crypto.text("trace-content"), TestKeys.nonce(1), 1_002L)
           )
         else (aliceAfterSafety, Vector.empty[AppEffect])
-      val (aliceAfterExpiry, expiryEffects) =
+      val (aliceAfterExpiry, expiryEffects)   =
         if target.expired && !before.expired then
           Application.step(
             aliceAfterContent,
             AppEvent.ReplyReceived(id, conv, peers.aliceReply, Some("@bob"), peers.invitation.fields.expiresAt + 1L)
           )
         else (aliceAfterContent, Vector.empty[AppEffect])
-      val (aliceAfterReject, rejectEffects) =
+      val (aliceAfterReject, rejectEffects)   =
         if target.rejected && !before.rejected then Application.step(aliceAfterExpiry, AppEvent.RejectInvitation(id))
         else (aliceAfterExpiry, Vector.empty[AppEffect])
-      val actual = q1Observed(aliceAfterReject, bobAfterSafety, id, peers.alice.user.publicKey, peers.bob.user.publicKey)
+      val actual                              = q1Observed(aliceAfterReject, bobAfterSafety, id, peers.alice.user.publicKey, peers.bob.user.publicKey)
       assertEquals(actual, target, s"Q1 state mismatch after ${before} -> ${target}")
       (aliceAfterReject, bobAfterSafety, effectsSeen ++ contentEffects ++ expiryEffects ++ rejectEffects)
     }
   }
 
   test("ITF replay: Q3 resend trace feeds bounded attempts and exhaustion notification") {
-    val states      = readStates("models/traces/q3_resend.itf.json", "0bfe51b88d60a9a9780c99c96fdea88320ce7a4fd3bdb433d1407ecd26d44116")
-    val peers       = AppTestSupport.connected
-    val conv        = peers.aliceState.sessions.values.head.conversationId
-    val (sent, _)   = Application.step(peers.aliceState, AppEvent.UserSend(1L, conv, Crypto.text("trace"), TestKeys.nonce(1), 0L))
-    val generation  = sent.outgoing(1L).generation
-    val initial     = Application.step(sent, AppEvent.PersistOutboundSucceeded(1L, generation, 1L))._1
-    val transitions = states.sliding(2).flatMap {
-      case Seq(previous, next) => Some((previous, next))
-      case _                   => None
-    }.toVector
-    val (finalState, finalNotified) = transitions.foldLeft((initial, false)) { case ((state, notified), (previous, next)) =>
-      val before = q3State(previous)
-      val after  = q3State(next)
-      val currentAttempts = state.outgoing.get(1L).fold(0)(_.attempts)
+    val states                      = readStates("models/traces/q3_resend.itf.json", "0bfe51b88d60a9a9780c99c96fdea88320ce7a4fd3bdb433d1407ecd26d44116")
+    val peers                       = AppTestSupport.connected
+    val conv                        = peers.aliceState.sessions.values.head.conversationId
+    val (sent, _)                   = Application.step(peers.aliceState, AppEvent.UserSend(1L, conv, Crypto.text("trace"), TestKeys.nonce(1), 0L))
+    val generation                  = sent.outgoing(1L).generation
+    val transitions                 = states
+      .sliding(2)
+      .flatMap {
+        case Seq(previous, next) => Some((previous, next))
+        case _                   => None
+      }
+      .toVector
+    val (finalState, finalNotified) = transitions.foldLeft((sent, false)) { case ((state, notified), (previous, next)) =>
+      val before                         = q3State(previous)
+      val after                          = q3State(next)
+      val current                        = state.outgoing.get(1L)
+      val currentAttempts                = current.fold(0)(_.attempts)
       val (attemptState, attemptEffects) =
         if after.attempts == currentAttempts + 1 then
-          if currentAttempts == 0 then Application.step(state, AppEvent.SendFailed(1L, generation, 2L))
-          else if currentAttempts == 1 then
-            Application.step(state, AppEvent.TimerFired(TimerId(TimerKind.Retry, 1L), generation, 3L))
-          else Application.step(state, AppEvent.SendFailed(1L, generation, 4L))
+          current.map(_.state) match
+            case Some(OutgoingState.Persisting)                                                    => Application.step(state, AppEvent.PersistOutboundSucceeded(1L, generation, 1L))
+            case Some(OutgoingState.InFlight)                                                      => Application.step(state, AppEvent.SendFailed(1L, generation, 2L))
+            case Some(OutgoingState.Queued) if state.timers.keys.exists(_.kind == TimerKind.Retry) =>
+              Application.step(state, AppEvent.TimerFired(TimerId(TimerKind.Retry, 1L), generation, 3L))
+            case Some(OutgoingState.Queued)                                                        => Application.step(state, AppEvent.ConnectionChanged(online = true, nowMs = 3L))
+            case _                                                                                 => (state, Vector.empty[AppEffect])
         else (state, Vector.empty[AppEffect])
-      val onlineState =
-        if after.online != before.online then
-          Application.step(attemptState, AppEvent.ConnectionChanged(after.online, 5L))._1
-        else attemptState
-      val notifiedNow = notified || attemptEffects.exists { case AppEffect.Notify(Notification.MessageFailed) => true; case _ => false }
+      val (notifiedState, notifyEffects) =
+        if after.notified && !notified then Application.step(attemptState, AppEvent.SendFailed(1L, generation, 4L))
+        else (attemptState, Vector.empty[AppEffect])
+      val onlineState                    =
+        if after.online != before.online then Application.step(notifiedState, AppEvent.ConnectionChanged(after.online, 5L))._1
+        else notifiedState
+      val notifiedNow                    =
+        notified || attemptEffects.exists { case AppEffect.Notify(Notification.MessageFailed) => true; case _ => false } ||
+          notifyEffects.exists { case AppEffect.Notify(Notification.MessageFailed) => true; case _ => false }
       assertEquals(onlineState.outgoing.get(1L).fold(0)(_.attempts), after.attempts)
       assertEquals(onlineState.connection == ConnectionState.Online, after.online)
       assertEquals(onlineState.outgoing.contains(1L), after.pending)
@@ -118,21 +133,23 @@ class ReplayModelsSpec extends FunSuite:
     val (sent, _)   = Application.step(offline, AppEvent.UserSend(1L, conv, Crypto.text("trace"), TestKeys.nonce(1), 0L))
     val generation  = sent.outgoing(1L).generation
     val initial     = Application.step(sent, AppEvent.PersistOutboundSucceeded(1L, generation, 1L))._1
-    val transitions = states.sliding(2).flatMap {
-      case Seq(previous, next) => Some((previous, next))
-      case _                   => None
-    }.toVector
-    val finalState = transitions.foldLeft(initial) { case (state, (previous, next)) =>
-      val before = q4State(previous)
-      val after  = q4State(next)
+    val transitions = states
+      .sliding(2)
+      .flatMap {
+        case Seq(previous, next) => Some((previous, next))
+        case _                   => None
+      }
+      .toVector
+    val finalState  = transitions.foldLeft(initial) { case (state, (previous, next)) =>
+      val before             = q4State(previous)
+      val after              = q4State(next)
       val (changed, effects) =
         if after.connected != before.connected then Application.step(state, AppEvent.ConnectionChanged(after.connected, 2L))
         else (state, Vector.empty[AppEffect])
       assertEquals(changed.connection == ConnectionState.Online, after.connected)
       assertEquals(changed.outgoing.get(1L).fold(0)(_.attempts), after.attempts)
       assertEquals(changed.outgoing.contains(1L), after.pending)
-      if after.connected && !before.connected then
-        assert(effects.exists { case AppEffect.SendWire(_, _) => true; case _ => false })
+      if after.connected && !before.connected then assert(effects.exists { case AppEffect.SendWire(_, _) => true; case _ => false })
       changed
     }
     assert(finalState.outgoing(1L).attempts <= 3)
@@ -140,34 +157,34 @@ class ReplayModelsSpec extends FunSuite:
   }
 
   test("ITF replay: Q5 rekey trace covers cutover and the safety invariants") {
-    val states      = readStates("models/traces/q5_rekey.itf.json", "71b4efdc5186e7578be741fbf3df7a1525bcc3d0f8e8fd502e7e90188c0c6526")
-    val peers       = AppTestSupport.connected
-    val oldSession  = peers.aliceState.sessions.keys.head
-    val r1          = AppTestSupport.xpair(61)
-    val r2          = AppTestSupport.xpair(62)
-    val r2Next      = AppTestSupport.xpair(63)
-    val rekeyId     = TestKeys.rekeyId(1)
-    val (alice0, startEffects) = Application.step(
+    val states                    = readStates("models/traces/q5_rekey.itf.json", "71b4efdc5186e7578be741fbf3df7a1525bcc3d0f8e8fd502e7e90188c0c6526")
+    val peers                     = AppTestSupport.connected
+    val oldSession                = peers.aliceState.sessions.keys.head
+    val r1                        = AppTestSupport.xpair(61)
+    val r2                        = AppTestSupport.xpair(62)
+    val r2Next                    = AppTestSupport.xpair(63)
+    val rekeyId                   = TestKeys.rekeyId(1)
+    val (alice0, startEffects)    = Application.step(
       peers.aliceState,
       AppEvent.StartRekey(oldSession, r1, rekeyId, TestKeys.nonce(10), 0L)
     )
-    val request = startEffects.collectFirst { case AppEffect.SendRekeyRequest(_, value) => value }.getOrElse(fail("missing request"))
-    val (bob0, bobEffects) = Application.step(
+    val request                   = startEffects.collectFirst { case AppEffect.SendRekeyRequest(_, value) => value }.getOrElse(fail("missing request"))
+    val (bob0, bobEffects)        = Application.step(
       peers.bobState,
       AppEvent.RekeyRequestReceived(oldSession, request, r2, r2Next, TestKeys.nonce(11))
     )
-    val accept = bobEffects.collectFirst { case AppEffect.SendRekeyAccept(_, value) => value }.getOrElse(fail("missing accept"))
-    val (alice1, aliceEffects) = Application.step(alice0, AppEvent.RekeyAcceptReceived(oldSession, accept, TestKeys.nonce(12)))
-    val confirm = aliceEffects.collectFirst { case AppEffect.SendRekeyConfirm(_, value) => value }.getOrElse(fail("missing confirm"))
-    val newSession = alice1.sessions.keys.find(_ != oldSession).getOrElse(fail("missing new session"))
-    val expected = ControlExtension(request.epoch, request.id)
+    val accept                    = bobEffects.collectFirst { case AppEffect.SendRekeyAccept(_, value) => value }.getOrElse(fail("missing accept"))
+    val (alice1, aliceEffects)    = Application.step(alice0, AppEvent.RekeyAcceptReceived(oldSession, accept, TestKeys.nonce(12)))
+    val confirm                   = aliceEffects.collectFirst { case AppEffect.SendRekeyConfirm(_, value) => value }.getOrElse(fail("missing confirm"))
+    val newSession                = alice1.sessions.keys.find(_ != oldSession).getOrElse(fail("missing new session"))
+    val expected                  = ControlExtension(request.epoch, request.id)
     val (bob1, bobConfirmEffects) = Application.step(
       bob0,
       AppEvent.RekeyConfirmReceived(newSession, confirm, expected, TestKeys.nonce(13), None)
     )
-    val ack = bobConfirmEffects.collectFirst { case AppEffect.SendRekeyConfirmAck(_, value) => value }.getOrElse(fail("missing ack"))
-    val alice2 = Application.step(alice1, AppEvent.RekeyAckReceived(newSession, ack, expected, AppTestSupport.xpair(64)))._1
-    val (_, frame) = Ratchet
+    val ack                       = bobConfirmEffects.collectFirst { case AppEffect.SendRekeyConfirmAck(_, value) => value }.getOrElse(fail("missing ack"))
+    val alice2                    = Application.step(alice1, AppEvent.RekeyAckReceived(newSession, ack, expected, AppTestSupport.xpair(64)))._1
+    val (_, frame)                = Ratchet
       .encryptUser(
         alice2.sessions(newSession).state,
         peers.alice.device.publicKey,
@@ -177,9 +194,9 @@ class ReplayModelsSpec extends FunSuite:
         Crypto.text("new-session-data")
       )
       .fold(error => fail(error.toString), identity)
-    val (bob2, dataEffects) = Application.step(
+    val (bob2, dataEffects)       = Application.step(
       bob1,
-      AppEvent.InboundFrame(1L, newSession, frame, Some(AppTestSupport.xpair(65)), 6L)
+      AppEvent.InboundFrame(1L, newSession, frame, Some(AppTestSupport.xpair(65)), TestKeys.nonce(6), 6L)
     )
     assert(dataEffects.exists { case AppEffect.DeleteSession(`oldSession`, SessionRetirement.ResponderFirstData) => true; case _ => false })
     assert(!bob2.sessions.contains(oldSession))
@@ -199,7 +216,7 @@ class ReplayModelsSpec extends FunSuite:
     }
   }
 
-  private final case class Q1Observed(
+  final private case class Q1Observed(
     replied: Boolean,
     responderConfirmed: Boolean,
     inviterConfirmed: Boolean,
@@ -223,7 +240,13 @@ class ReplayModelsSpec extends FunSuite:
       boolOf(s("expired"))
     )
 
-  private def q1Observed(alice: AppState, bob: AppState, invitationId: ByteVector, aliceUser: yochat.core.Ed25519Public, bobUser: yochat.core.Ed25519Public): Q1Observed =
+  private def q1Observed(
+    alice: AppState,
+    bob: AppState,
+    invitationId: ByteVector,
+    aliceUser: yochat.core.Ed25519Public,
+    bobUser: yochat.core.Ed25519Public
+  ): Q1Observed =
     val aliceContact = alice.contacts.get(bobUser)
     val bobContact   = bob.contacts.get(aliceUser)
     val invitation   = alice.invitations.get(invitationId)
@@ -238,19 +261,19 @@ class ReplayModelsSpec extends FunSuite:
       expired = invitation.exists(_.lifecycle == InvitationLifecycle.Expired)
     )
 
-  private final case class Q3State(attempts: Int, delivered: Boolean, online: Boolean, pending: Boolean, notified: Boolean)
+  final private case class Q3State(attempts: Int, delivered: Boolean, online: Boolean, pending: Boolean, notified: Boolean)
 
   private def q3State(value: Value): Q3State =
     val s = value("s")
     Q3State(intOf(s("attempts")), boolOf(s("delivered")), boolOf(s("online")), boolOf(s("pending")), boolOf(s("notified")))
 
-  private final case class Q4State(attempts: Int, connected: Boolean, delivered: Boolean, pending: Boolean)
+  final private case class Q4State(attempts: Int, connected: Boolean, delivered: Boolean, pending: Boolean)
 
   private def q4State(value: Value): Q4State =
     val s = value("s")
     Q4State(intOf(s("attempts")), boolOf(s("connected")), boolOf(s("delivered")), boolOf(s("pending")))
 
-  private final case class Q5State(
+  final private case class Q5State(
     oldActive: Boolean,
     oldReadOnly: Boolean,
     newPending: Boolean,

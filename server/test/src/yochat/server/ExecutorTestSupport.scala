@@ -81,8 +81,7 @@ object ExecutorTestSupport:
           fixture.peerDevice,
           Map.empty,
           Set.empty,
-          Map.empty,
-          Vector.empty
+          Map.empty
         )
       ),
       connection = ConnectionState.Online

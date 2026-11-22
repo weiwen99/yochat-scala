@@ -107,5 +107,17 @@
     "maxSteps": 10,
     "temporalMaxSteps": 10,
     "note": "start 与 confirm 都弱公平时新会话最终 active；这是有限模型，不证明真实网络。"
+  },
+  {
+    "file": "q6_delivery.qnt",
+    "main": "q6Delivery",
+    "backend": "apalache",
+    "sourceSha256": "51924be7bf08da95555f8c79ff260fa05953d09f60a55e50c9394d6310b311fc",
+    "invariants": [
+      "safe"
+    ],
+    "temporal": [],
+    "maxSteps": 10,
+    "note": "ACK 终止重试；Gap 在有界尝试内触发重发；transport 接受不等于送达；失败必须可见。"
   }
 ]

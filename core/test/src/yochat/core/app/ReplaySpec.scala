@@ -7,6 +7,8 @@ import java.security.MessageDigest
 import munit.FunSuite
 import ujson.Value
 
+import yochat.core.TestKeys
+
 class ReplaySpec extends FunSuite:
 
   final private case class Observed(seen: Set[Int], applied: Set[Int], buffered: Set[Int])
@@ -42,7 +44,7 @@ class ReplaySpec extends FunSuite:
         case Some(sequence) =>
           Application.step(
             current,
-            AppEvent.InboundFrame(sequence.toLong, sessionId, frames(sequence - 1), None, 0L)
+            AppEvent.InboundFrame(sequence.toLong, sessionId, frames(sequence - 1), None, TestKeys.nonce(sequence), 0L)
           )
       assertEquals(observable(nextState), after, s"state mismatch after ${action.fold("idle")(value => s"receive$value")}")
       action.foreach { sequence =>
@@ -66,10 +68,12 @@ class ReplaySpec extends FunSuite:
 
   private def observable(state: AppState): Observed =
     val conversation = state.conversations.values.head
+    val applied      = (1L until conversation.nextSeq.getOrElse(conversation.peerUserPub, 1L)).map(_.toInt).toSet
+    val buffered     = conversation.buffered.keys.map(_.seq.toInt).toSet
     Observed(
-      seen = conversation.seen.map(_.seq.toInt),
-      applied = conversation.applied.map(_.seq.toInt).toSet,
-      buffered = conversation.buffered.keys.map(_.seq.toInt).toSet
+      seen = applied ++ buffered,
+      applied = applied,
+      buffered = buffered
     )
 
   private def repositoryPath(relative: String): Path =

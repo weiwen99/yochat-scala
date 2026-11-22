@@ -1,6 +1,6 @@
 # S1 Quint 模型
 
-Q1–Q5 的有限模型，对应 `docs/plans/2026/11/0001-yochat-rewrite/design.md` 的协议面。模型只看应用层状态，不建模签名、AEAD、真实网络或 SQLite；这些由 Scala 测试与 E2E 分层承担。模型不是 S1 完成证明。
+Q1–Q6 的有限模型，对应 `docs/plans/2026/11/0001-yochat-rewrite/design.md` 的协议面。模型只看应用层状态，不建模签名、AEAD、真实网络或 SQLite；这些由 Scala 测试与 E2E 分层承担。模型不是 S1 完成证明。
 
 | 模型 | 覆盖 |
 | --- | --- |
@@ -9,6 +9,7 @@ Q1–Q5 的有限模型，对应 `docs/plans/2026/11/0001-yochat-rewrite/design.
 | `q3_resend.qnt` | 三次尝试上限、耗尽通知、送达先尝试 |
 | `q4_reconnect.qnt` | 离线队列不丢、重连重放有界、稳定连接下送达 |
 | `q5_rekey.qnt` | 旧会话 ReadOnly、新会话 confirm/ack、零 pending 才删除、安全码保留 |
+| `q6_delivery.qnt` | ACK 终止重试、Gap 有界重发、transport 接受不等于送达、失败可见 |
 
 ## 命令
 
@@ -18,7 +19,7 @@ Q1–Q5 的有限模型，对应 `docs/plans/2026/11/0001-yochat-rewrite/design.
 ./models/check.sh
 ```
 
-脚本先 `typecheck` 五个文件，再按 `checks.json` 逐个执行：
+脚本先 `typecheck` 六个文件，再按 `checks.json` 逐个执行：
 
 - Apalache `0.62.4` 检查 `safe` 不变量；
 - TLC 检查带公平性前提的 temporal：
@@ -30,9 +31,11 @@ Q1–Q5 的有限模型，对应 `docs/plans/2026/11/0001-yochat-rewrite/design.
 
 ## 口径
 
-- `q3` 的发送成功是非确定的，模型只证明“有界 + 耗尽可见”，不证明不公平网络下最终送达。
+- `q3` 只证明尝试预算与耗尽可见；发送成功仍是抽象的 transport 结果，不证明对端送达。ACK/缺口语义由 `q6` 和 `DeliverySpec` 承担。
 - `q4` 的活性明确以“连接最终稳定”为前提；反复断线后耗尽预算是合法失败，不是模型漏项。
 - `q5` 是有限状态 cutover 模型；真实 control-frame 编解码、持久化和 SQLite 删除仍由 `core`/`store` 测试承担。
+- `q6` 是 ACK/缺口模型，没有固定 trace；真实帧编解码和发送窗口由 `DeliverySpec`、`TenKReplaySpec` 覆盖。
+
 ## Trace replay
 
 `--seed=0x1` 生成的固定轨迹放在 `traces/`；`checks.json` 同时固定源码与 trace 的 SHA-256。

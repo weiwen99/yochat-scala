@@ -5,16 +5,17 @@ import scodec.bits.ByteVector
 import yochat.core.{Ed25519Public, RatchetState, SessionId}
 
 enum MessageState:
-  case Pending, Sent, Received, Failed
+  case Pending, Sent, Received, Failed, Delivered
 
 object MessageState:
 
   def code(value: MessageState): Int =
     value match
-      case MessageState.Pending  => 1
-      case MessageState.Sent     => 2
-      case MessageState.Received => 3
-      case MessageState.Failed   => 4
+      case MessageState.Pending   => 1
+      case MessageState.Sent      => 2
+      case MessageState.Received  => 3
+      case MessageState.Failed    => 4
+      case MessageState.Delivered => 5
 
   def fromCode(value: Int): Either[StorageError, MessageState] =
     value match
@@ -22,6 +23,7 @@ object MessageState:
       case 2 => Right(MessageState.Sent)
       case 3 => Right(MessageState.Received)
       case 4 => Right(MessageState.Failed)
+      case 5 => Right(MessageState.Delivered)
       case _ => Left(StorageError.InvalidEnvelope)
 
 final case class SessionRecord(

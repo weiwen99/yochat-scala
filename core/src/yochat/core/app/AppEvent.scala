@@ -34,6 +34,7 @@ enum AppEvent:
     sessionId: SessionId,
     frame: WireFrame,
     newDh: Option[X25519KeyPair],
+    responseNonce: Nonce,
     nowMs: Long
   )
   case SafetyVerified(userPub: Ed25519Public, nowMs: Long)
@@ -87,6 +88,8 @@ enum AppEffect:
     transition: MessageTransition
   )
   case SendWire(messageId: Long, wire: WireFrame)
+  case SendAck(sessionId: SessionId, frame: WireFrame)
+  case SendGap(sessionId: SessionId, frame: WireFrame)
   case SendReply(invitationId: ByteVector, text: String)
   case SendRekeyRequest(sessionId: SessionId, request: RekeyRequest)
   case SendRekeyAccept(sessionId: SessionId, accept: RekeyAccept)

@@ -35,7 +35,7 @@ class AppLockSpec extends FunSuite:
     )
     assert(successEffects.exists { case AppEffect.SendWire(7L, _: WireFrame) => true; case _ => false })
     assert(successEffects.exists { case AppEffect.StartTimer(TimerId(TimerKind.Delivery, 7L), _) => true; case _ => false })
-    assertEquals(queued.outgoing(7L).state, OutgoingState.Queued)
+    assertEquals(queued.outgoing(7L).state, OutgoingState.InFlight)
   }
 
   test("lock increments generation and stale persistence results do not publish") {

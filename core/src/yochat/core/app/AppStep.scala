@@ -11,7 +11,15 @@ object Application:
     event match
       case AppEvent.Unlock(identity, nowMs, idleTimeoutMs)                                      =>
         val deadline = saturatingAdd(nowMs, math.max(0L, idleTimeoutMs))
-        (state.copy(identity = Some(identity), lock = LockState.Unlocked(state.lock.value), idleDeadline = Some(deadline)), Vector.empty)
+        val current  = state.lock.value
+        val outgoing = state.outgoing.map { case (id, value) => id -> value.copy(generation = current) }
+        val next     = state.copy(
+          identity = Some(identity),
+          lock = LockState.Unlocked(current),
+          idleDeadline = Some(deadline),
+          outgoing = outgoing
+        )
+        pump(next, nowMs)
       case AppEvent.Lock                                                                        =>
         lock(state)
       case AppEvent.IdleTimeout(nowMs)                                                          =>
@@ -19,58 +27,52 @@ object Application:
           case Some(deadline) if nowMs >= deadline => lock(state)
           case _                                   => (state, Vector.empty)
       case AppEvent.UserSend(messageId, conversationId, body, nonce, nowMs)                     =>
-        (for
-          identity   <- state.identity
-          generation <- unlockedGeneration(state)
-          session    <- activeSession(state, conversationId)
-          contact    <- state.contacts.get(session.state.peerUserPub)
-          if contact.safetyVerified
-          encrypted  <-
-            Ratchet.encryptUser(session.state, identity.device.publicKey, identity.device.privateKey, session.nextSeq, nonce, body).toOption
-        yield
-          val (nextRatchet, wire) = encrypted
-          val outgoing            = OutgoingMessage(
-            id = messageId,
-            conversationId = conversationId,
-            sessionId = session.state.sessionId,
-            authorPub = identity.user.publicKey,
-            devicePub = identity.device.publicKey,
-            seq = session.nextSeq,
-            body = body,
-            wire = wire,
-            generation = generation,
-            state = OutgoingState.Persisting,
-            attempts = 0
-          )
-          val nextSession         = session.copy(state = nextRatchet, nextSeq = session.nextSeq + 1L)
-          val nextState           = state.copy(
-            sessions = state.sessions.updated(nextSession.state.sessionId, nextSession),
-            outgoing = state.outgoing.updated(messageId, outgoing)
-          )
-          (nextState, Vector(AppEffect.PersistOutbound(outgoing, nextSession)))
-        ).getOrElse((state, Vector.empty))
+        if state.outgoing.size >= AppLimits.MaxOutgoing then (state, Vector(AppEffect.Notify(Notification.QueueFull)))
+        else
+          (for
+            identity   <- state.identity
+            generation <- unlockedGeneration(state)
+            session    <- activeSession(state, conversationId)
+            contact    <- state.contacts.get(session.state.peerUserPub)
+            if contact.safetyVerified
+            encrypted  <-
+              Ratchet.encryptUser(session.state, identity.device.publicKey, identity.device.privateKey, session.nextSeq, nonce, body).toOption
+          yield
+            val (nextRatchet, wire) = encrypted
+            val outgoing            = OutgoingMessage(
+              id = messageId,
+              conversationId = conversationId,
+              sessionId = session.state.sessionId,
+              authorPub = identity.user.publicKey,
+              devicePub = identity.device.publicKey,
+              seq = session.nextSeq,
+              body = body,
+              wire = wire,
+              generation = generation,
+              state = OutgoingState.Persisting,
+              attempts = 0
+            )
+            val nextSession         = session.copy(state = nextRatchet, nextSeq = session.nextSeq + 1L)
+            val nextState           = state.copy(
+              sessions = state.sessions.updated(nextSession.state.sessionId, nextSession),
+              outgoing = state.outgoing.updated(messageId, outgoing)
+            )
+            (nextState, Vector(AppEffect.PersistOutbound(outgoing, nextSession)))
+          ).getOrElse((state, Vector.empty))
       case AppEvent.PersistOutboundSucceeded(messageId, generation, nowMs)                      =>
         matchOutgoing(state, messageId, generation, Set(OutgoingState.Persisting)) match
           case None        => (state, Vector.empty)
           case Some(value) =>
-            val timer    = TimerId(TimerKind.Delivery, messageId)
-            val deadline = saturatingAdd(nowMs, AppLimits.DeliveryTimeoutMs)
-            val queued   = value.copy(state = OutgoingState.Queued)
-            if state.connection == ConnectionState.Online then
-              val next = state.copy(
-                outgoing = state.outgoing.updated(messageId, queued),
-                timers = state.timers.updated(timer, deadline)
-              )
-              (next, Vector(AppEffect.SendWire(messageId, queued.wire), AppEffect.StartTimer(timer, deadline)))
-            else (state.copy(outgoing = state.outgoing.updated(messageId, queued)), Vector.empty)
+            val queued = value.copy(state = OutgoingState.Queued)
+            pump(state.copy(outgoing = state.outgoing.updated(messageId, queued)), nowMs)
       case AppEvent.PersistOutboundFailed(messageId, generation, _)                             =>
         matchOutgoing(state, messageId, generation, Set(OutgoingState.Persisting)) match
           case None        => (state, Vector.empty)
           case Some(value) =>
             val failed = value.copy(state = OutgoingState.Failed)
-            (state.copy(outgoing = state.outgoing.updated(messageId, failed)), Vector(AppEffect.Notify(Notification.MessageFailed)))
+            (trimFailed(state.copy(outgoing = state.outgoing.updated(messageId, failed))), Vector(AppEffect.Notify(Notification.MessageFailed)))
       case AppEvent.SendSucceeded(messageId, generation)                                        =>
-        matchOutgoing(state, messageId, generation, Set(OutgoingState.Queued, OutgoingState.Sent)) match
+        matchOutgoing(state, messageId, generation, Set(OutgoingState.InFlight, OutgoingState.Queued, OutgoingState.Sent)) match
           case None        => (state, Vector.empty)
           case Some(value) =>
             (
@@ -87,25 +89,34 @@ object Application:
               )
             )
       case AppEvent.SendFailed(messageId, generation, nowMs)                                    =>
-        matchOutgoing(state, messageId, generation, Set(OutgoingState.Queued, OutgoingState.Sent)) match
+        matchOutgoing(state, messageId, generation, Set(OutgoingState.InFlight, OutgoingState.Queued, OutgoingState.Sent)) match
           case None        => (state, Vector.empty)
-          case Some(value) => retryOrFail(state, value, nowMs)
+          case Some(value) =>
+            val (next, effects) = retryOrFail(state, value, nowMs)
+            val (pumped, more)  = pump(next, nowMs)
+            (pumped, effects ++ more)
       case AppEvent.TimerFired(timer, generation, nowMs)                                        =>
-        matchOutgoing(state, timer.messageId, generation, Set(OutgoingState.Queued, OutgoingState.Sent)) match
+        matchOutgoing(state, timer.messageId, generation, Set(OutgoingState.InFlight, OutgoingState.Queued, OutgoingState.Sent)) match
           case None        => (state.copy(timers = state.timers - timer), Vector.empty)
           case Some(value) =>
-            val withoutTimer = state.copy(timers = state.timers - timer)
-            if state.connection == ConnectionState.Online then sendNow(withoutTimer, value, nowMs)
-            else (withoutTimer, Vector.empty)
+            val withoutTimer    = state.copy(timers = state.timers - timer)
+            val (next, effects) = sendNow(withoutTimer, value, nowMs)
+            val (pumped, more)  = pump(next, nowMs)
+            (pumped, effects ++ more)
       case AppEvent.ConnectionChanged(online, nowMs)                                            =>
         if !online then
           val cancelled = state.timers.keys.toVector.map(AppEffect.CancelTimer.apply)
-          (state.copy(connection = ConnectionState.Offline, timers = Map.empty), cancelled)
+          val queued    = state.outgoing.map { case (id, value) =>
+            val nextState =
+              value.state match
+                case OutgoingState.InFlight | OutgoingState.Sent => OutgoingState.Queued
+                case other                                       => other
+            id -> value.copy(state = nextState)
+          }
+          (state.copy(connection = ConnectionState.Offline, timers = Map.empty, outgoing = queued), cancelled)
         else if state.connection == ConnectionState.Online then (state, Vector.empty)
-        else
-          val next = state.copy(connection = ConnectionState.Online)
-          replay(next, nowMs)
-      case AppEvent.InboundFrame(messageId, sessionId, frame, newDh, _)                         =>
+        else pump(state.copy(connection = ConnectionState.Online), nowMs)
+      case AppEvent.InboundFrame(messageId, sessionId, frame, newDh, responseNonce, nowMs)      =>
         if !state.lock.isUnlocked then (state, Vector.empty)
         else
           state.sessions.get(sessionId) match
@@ -114,11 +125,21 @@ object Application:
               state.conversations.get(value.conversationId) match
                 case None               => (state, Vector.empty)
                 case Some(conversation) =>
-                  val key     = MessageKey(value.state.peerUserPub, frame.header.devicePub, frame.header.seq)
-                  val seqSeen = conversation.seen.contains(key)
+                  val key      = MessageKey(value.state.peerUserPub, frame.header.devicePub, frame.header.seq)
+                  val expected = conversation.nextSeq.getOrElse(value.state.peerUserPub, 1L)
+                  val seqSeen  =
+                    frame.header.kind == MessageKind.Data &&
+                      (frame.header.seq < expected || conversation.seen.contains(key))
                   Ratchet.decrypt(value.state, frame, seqSeen, newDh) match
-                    case Left(error)   => receiveFailure(state, sessionId, value, error)
-                    case Right(result) => receiveSuccess(state, messageId, sessionId, value, conversation, frame, result)
+                    case Left(error) if error.error == CoreError.DuplicateSeq && frame.header.kind == MessageKind.Data =>
+                      val duplicate                  = value.copy(state = error.state)
+                      val (finalSession, ackEffects) =
+                        controlResponse(state, sessionId, duplicate, conversation, None, responseNonce)
+                      val persist                    = if finalSession != value then Vector(AppEffect.PersistSession(finalSession)) else Vector.empty
+                      (state.copy(sessions = state.sessions.updated(sessionId, finalSession)), persist ++ ackEffects)
+                    case Left(error)                                                                                   => receiveFailure(state, sessionId, value, error)
+                    case Right(result)                                                                                 =>
+                      receiveSuccess(state, messageId, sessionId, value, conversation, frame, result, responseNonce, nowMs)
       case AppEvent.SafetyVerified(userPub, _)                                                  =>
         state.contacts.get(userPub) match
           case None          => (state, Vector.empty)
@@ -316,11 +337,17 @@ object Application:
   private def lock(state: AppState): (AppState, Vector[AppEffect]) =
     val cancelled  = state.timers.keys.toVector.map(AppEffect.CancelTimer.apply)
     val generation = if state.lock.value == Long.MaxValue then Long.MaxValue else state.lock.value + 1L
+    val outgoing   = state.outgoing.flatMap { case (id, value) =>
+      value.state match
+        case OutgoingState.Persisting                    => None
+        case OutgoingState.InFlight | OutgoingState.Sent => Some(id -> value.copy(state = OutgoingState.Queued))
+        case _                                           => Some(id -> value)
+    }
     val next       = state.copy(
       lock = LockState.Locked(generation),
       idleDeadline = None,
       timers = Map.empty,
-      outgoing = state.outgoing.filterNot { case (_, value) => value.state == OutgoingState.Persisting }
+      outgoing = outgoing
     )
     (next, cancelled)
 
@@ -345,64 +372,145 @@ object Application:
     state.outgoing.get(messageId).filter(value => value.generation == generation && allowed.contains(value.state))
 
   private def retryOrFail(state: AppState, value: OutgoingMessage, nowMs: Long): (AppState, Vector[AppEffect]) =
-    val attempts = value.attempts + 1
-    if attempts >= AppLimits.MaxSendAttempts then
-      val failed = value.copy(state = OutgoingState.Failed, attempts = attempts)
-      val timer  = TimerId(TimerKind.Delivery, value.id)
-      val next   = state.copy(outgoing = state.outgoing.updated(value.id, failed), timers = state.timers - timer)
-      (
-        next,
-        Vector(
-          AppEffect.Notify(Notification.MessageFailed),
-          AppEffect.UpdateMessageState(
-            value.conversationId,
-            value.sessionId,
-            value.authorPub,
-            value.devicePub,
-            value.seq,
-            MessageTransition.Failed
-          )
-        )
-      )
+    val attempts = math.min(value.attempts + 1, AppLimits.MaxSendAttempts)
+    if attempts >= AppLimits.MaxSendAttempts then markFailed(state, value, attempts)
     else
-      val timer    = TimerId(TimerKind.Retry, value.id)
+      val delivery = TimerId(TimerKind.Delivery, value.id)
+      val retry    = TimerId(TimerKind.Retry, value.id)
       val deadline = saturatingAdd(nowMs, AppLimits.RetryBackoffMs)
       val queued   = value.copy(state = OutgoingState.Queued, attempts = attempts)
-      val next     = state.copy(outgoing = state.outgoing.updated(value.id, queued), timers = state.timers.updated(timer, deadline))
-      (next, Vector(AppEffect.StartTimer(timer, deadline)))
+      val hadTimer = state.timers.contains(delivery)
+      val next     = state.copy(
+        outgoing = state.outgoing.updated(value.id, queued),
+        timers = (state.timers - delivery).updated(retry, deadline)
+      )
+      (
+        next,
+        (if hadTimer then Vector(AppEffect.CancelTimer(delivery)) else Vector.empty[AppEffect]) :+ AppEffect.StartTimer(retry, deadline)
+      )
 
   private def sendNow(state: AppState, value: OutgoingMessage, nowMs: Long): (AppState, Vector[AppEffect]) =
-    if value.attempts >= AppLimits.MaxSendAttempts then
-      val failed = value.copy(state = OutgoingState.Failed)
-      (
-        state.copy(outgoing = state.outgoing.updated(value.id, failed)),
-        Vector(
-          AppEffect.Notify(Notification.MessageFailed),
-          AppEffect.UpdateMessageState(
-            value.conversationId,
-            value.sessionId,
-            value.authorPub,
-            value.devicePub,
-            value.seq,
-            MessageTransition.Failed
-          )
+    if state.connection != ConnectionState.Online then
+      (state.copy(outgoing = state.outgoing.updated(value.id, value.copy(state = OutgoingState.Queued))), Vector.empty)
+    else if value.attempts >= AppLimits.MaxSendAttempts then markFailed(state, value, value.attempts)
+    else
+      val delivery = TimerId(TimerKind.Delivery, value.id)
+      val retry    = TimerId(TimerKind.Retry, value.id)
+      val deadline = saturatingAdd(nowMs, AppLimits.DeliveryTimeoutMs)
+      val inFlight = value.copy(state = OutgoingState.InFlight, attempts = value.attempts + 1)
+      val hadRetry = state.timers.contains(retry)
+      val next     = state.copy(
+        outgoing = state.outgoing.updated(value.id, inFlight),
+        timers = (state.timers - retry).updated(delivery, deadline)
+      )
+      val effects  =
+        (if hadRetry then Vector(AppEffect.CancelTimer(retry)) else Vector.empty[AppEffect]) ++
+          Vector(AppEffect.SendWire(value.id, value.wire), AppEffect.StartTimer(delivery, deadline))
+      (next, effects)
+
+  private def markFailed(state: AppState, value: OutgoingMessage, attempts: Int): (AppState, Vector[AppEffect]) =
+    val delivery = TimerId(TimerKind.Delivery, value.id)
+    val retry    = TimerId(TimerKind.Retry, value.id)
+    val failed   = value.copy(state = OutgoingState.Failed, attempts = attempts)
+    val next     = trimFailed(
+      state.copy(
+        outgoing = state.outgoing.updated(value.id, failed),
+        timers = state.timers - delivery - retry
+      )
+    )
+    (
+      next,
+      Vector(
+        AppEffect.Notify(Notification.MessageFailed),
+        AppEffect.UpdateMessageState(
+          value.conversationId,
+          value.sessionId,
+          value.authorPub,
+          value.devicePub,
+          value.seq,
+          MessageTransition.Failed
         )
       )
-    else
-      val timer    = TimerId(TimerKind.Delivery, value.id)
-      val deadline = saturatingAdd(nowMs, AppLimits.DeliveryTimeoutMs)
-      val queued   = value.copy(state = OutgoingState.Queued, attempts = value.attempts + 1)
-      val next     = state.copy(outgoing = state.outgoing.updated(value.id, queued), timers = state.timers.updated(timer, deadline))
-      (next, Vector(AppEffect.SendWire(value.id, value.wire), AppEffect.StartTimer(timer, deadline)))
+    )
 
-  private def replay(state: AppState, nowMs: Long): (AppState, Vector[AppEffect]) =
-    state.outgoing.toVector
-      .filter { case (_, value) => value.state == OutgoingState.Queued || value.state == OutgoingState.Sent }
-      .sortBy(_._1)
-      .foldLeft((state, Vector.empty[AppEffect])) { case ((current, effects), (_, value)) =>
+  private def trimFailed(state: AppState): AppState =
+    val failed = state.outgoing.values.filter(_.state == OutgoingState.Failed).toVector.sortBy(_.id)
+    val drop   = math.max(0, failed.size - AppLimits.MaxFailedRetained)
+    failed.take(drop).foldLeft(state)((current, value) => current.copy(outgoing = current.outgoing - value.id))
+
+  private def pump(state: AppState, nowMs: Long): (AppState, Vector[AppEffect]) =
+    if state.connection != ConnectionState.Online then (state, Vector.empty)
+    else
+      val slots = math.max(0, AppLimits.MaxInFlight - inFlightCount(state))
+      val ready = state.outgoing.values
+        .filter(value => value.state == OutgoingState.Queued && !state.timers.contains(TimerId(TimerKind.Retry, value.id)))
+        .toVector
+        .sortBy(value => (value.seq, value.id))
+        .take(slots)
+      ready.foldLeft((state, Vector.empty[AppEffect])) { case ((current, effects), value) =>
         val (next, added) = sendNow(current, value, nowMs)
         (next, effects ++ added)
       }
+
+  private def inFlightCount(state: AppState): Int =
+    state.outgoing.values.count(value => value.state == OutgoingState.InFlight || value.state == OutgoingState.Sent)
+
+  private def acknowledge(state: AppState, sessionId: SessionId, ackedSeq: Long, nowMs: Long): (AppState, Vector[AppEffect]) =
+    val delivered      = state.outgoing.values
+      .filter(value =>
+        value.sessionId == sessionId &&
+          value.seq <= ackedSeq &&
+          (value.state == OutgoingState.Queued || value.state == OutgoingState.InFlight || value.state == OutgoingState.Sent ||
+            value.state == OutgoingState.Failed)
+      )
+      .toVector
+      .sortBy(_.id)
+    val timers         = delivered.flatMap(value => Vector(TimerId(TimerKind.Delivery, value.id), TimerId(TimerKind.Retry, value.id))).toSet
+    val next           = state.copy(
+      outgoing = delivered.foldLeft(state.outgoing)((current, value) => current - value.id),
+      timers = timers.foldLeft(state.timers)((current, timer) => current - timer)
+    )
+    val effects        = delivered.flatMap { value =>
+      Vector(
+        AppEffect.CancelTimer(TimerId(TimerKind.Delivery, value.id)),
+        AppEffect.CancelTimer(TimerId(TimerKind.Retry, value.id)),
+        AppEffect.UpdateMessageState(
+          value.conversationId,
+          value.sessionId,
+          value.authorPub,
+          value.devicePub,
+          value.seq,
+          MessageTransition.Delivered
+        )
+      )
+    }
+    val (pumped, more) = pump(next, nowMs)
+    (pumped, effects ++ more)
+
+  private def requestResend(state: AppState, sessionId: SessionId, expectedSeq: Long, nowMs: Long): (AppState, Vector[AppEffect]) =
+    val candidates      = state.outgoing.values
+      .filter(value =>
+        value.sessionId == sessionId &&
+          value.seq >= expectedSeq &&
+          (value.state == OutgoingState.Queued || value.state == OutgoingState.InFlight || value.state == OutgoingState.Sent)
+      )
+      .toVector
+      .sortBy(value => (value.seq, value.id))
+      .take(AppLimits.MaxInFlight)
+    val reset           = candidates.foldLeft(state) { (current, value) =>
+      current.copy(
+        outgoing = current.outgoing.updated(value.id, value.copy(state = OutgoingState.Queued)),
+        timers = current.timers - TimerId(TimerKind.Delivery, value.id) - TimerId(TimerKind.Retry, value.id)
+      )
+    }
+    val cancels         = candidates.flatMap(value =>
+      Vector(
+        AppEffect.CancelTimer(TimerId(TimerKind.Delivery, value.id)),
+        AppEffect.CancelTimer(TimerId(TimerKind.Retry, value.id))
+      )
+    )
+    val (pumped, sends) = pump(reset, nowMs)
+    (pumped, cancels ++ sends)
 
   private def receiveSuccess(
     state: AppState,
@@ -411,29 +519,81 @@ object Application:
     session: AppSession,
     conversation: Conversation,
     frame: WireFrame,
-    result: ReceiveResult
+    result: ReceiveResult,
+    responseNonce: Nonce,
+    nowMs: Long
   ): (AppState, Vector[AppEffect]) =
-    val nextSession   = session.copy(state = result.state)
-    val firstData     = frame.header.kind == MessageKind.Data && session.retireOldOnFirstData
-    val active        = if firstData then nextSession.copy(retireOldOnFirstData = false) else nextSession
-    val sessionEffect = if active == session then Vector.empty else Vector(AppEffect.PersistSession(active))
-    if frame.header.kind == MessageKind.Data then
-      val message                            = BufferedMessage(messageId, session.state.peerUserPub, frame.header.devicePub, frame.header.seq, result.plaintext, frame)
-      val (nextConversation, disposition, _) = conversation.accept(message)
-      val withSession                        = state.copy(
-        sessions = state.sessions.updated(sessionId, active),
-        conversations = state.conversations.updated(nextConversation.id, nextConversation)
-      )
-      val (next, retiredEffects)             =
-        if firstData then retireOld(withSession, active, SessionRetirement.ResponderFirstData) else (withSession, Vector.empty)
-      disposition match
-        case InboundDisposition.Applied                                 =>
-          (next, Vector(AppEffect.PersistInbound(message, active)) ++ retiredEffects)
-        case InboundDisposition.Buffered                                =>
-          (next, Vector(AppEffect.PersistInbound(message, active), AppEffect.Notify(Notification.Waiting)) ++ retiredEffects)
-        case InboundDisposition.Duplicate | InboundDisposition.Overflow =>
-          (next, sessionEffect ++ retiredEffects)
-    else (state.copy(sessions = state.sessions.updated(sessionId, active)), sessionEffect)
+    val nextSession = session.copy(state = result.state)
+    val firstData   = frame.header.kind == MessageKind.Data && session.retireOldOnFirstData
+    val active      = if firstData then nextSession.copy(retireOldOnFirstData = false) else nextSession
+    frame.header.kind match
+      case MessageKind.Data                                       =>
+        val message                        = BufferedMessage(messageId, session.state.peerUserPub, frame.header.devicePub, frame.header.seq, result.plaintext, frame)
+        val inbound                        = conversation.accept(message)
+        val (finalSession, controlEffects) =
+          controlResponse(state, sessionId, active, inbound.conversation, inbound.gap, responseNonce)
+        val withSession                    = state.copy(
+          sessions = state.sessions.updated(sessionId, finalSession),
+          conversations = state.conversations.updated(inbound.conversation.id, inbound.conversation)
+        )
+        val (next, retiredEffects)         =
+          if firstData then retireOld(withSession, finalSession, SessionRetirement.ResponderFirstData) else (withSession, Vector.empty)
+        val inboundEffects                 =
+          inbound.disposition match
+            case InboundDisposition.Applied   => Vector(AppEffect.PersistInbound(message, finalSession))
+            case InboundDisposition.Buffered  => Vector(AppEffect.PersistInbound(message, finalSession), AppEffect.Notify(Notification.Waiting))
+            case InboundDisposition.Duplicate => Vector.empty
+            case InboundDisposition.Overflow  => Vector(AppEffect.Notify(Notification.InboundOverflow))
+        val sessionEffect                  =
+          inbound.disposition match
+            case InboundDisposition.Duplicate | InboundDisposition.Overflow =>
+              if finalSession != session then Vector(AppEffect.PersistSession(finalSession)) else Vector.empty
+            case _                                                          => Vector.empty
+        (next, inboundEffects ++ sessionEffect ++ controlEffects ++ retiredEffects)
+      case MessageKind.DataAck                                    =>
+        val withSession     = state.copy(sessions = state.sessions.updated(sessionId, active))
+        val (next, effects) = acknowledge(withSession, sessionId, frame.header.seq, nowMs)
+        val persist         = if active != session then Vector(AppEffect.PersistSession(active)) else Vector.empty
+        (next, persist ++ effects)
+      case MessageKind.Gap                                        =>
+        val withSession     = state.copy(sessions = state.sessions.updated(sessionId, active))
+        val (next, effects) = requestResend(withSession, sessionId, frame.header.seq, nowMs)
+        val persist         = if active != session then Vector(AppEffect.PersistSession(active)) else Vector.empty
+        (next, persist ++ effects)
+      case MessageKind.RekeyConfirm | MessageKind.RekeyConfirmAck =>
+        (
+          state.copy(sessions = state.sessions.updated(sessionId, active)),
+          if active != session then Vector(AppEffect.PersistSession(active)) else Vector.empty
+        )
+
+  private def controlResponse(
+    state: AppState,
+    sessionId: SessionId,
+    session: AppSession,
+    conversation: Conversation,
+    gap: Option[Long],
+    nonce: Nonce
+  ): (AppSession, Vector[AppEffect]) =
+    state.identity match
+      case None           => (session, Vector.empty)
+      case Some(identity) =>
+        val highest = conversation.nextSeq.getOrElse(session.state.peerUserPub, 1L) - 1L
+        gap match
+          case Some(expected)       =>
+            Ratchet
+              .encryptGap(session.state, identity.device.publicKey, identity.device.privateKey, expected, nonce)
+              .toOption
+              .fold((session, Vector.empty[AppEffect])) { case (next, frame) =>
+                (session.copy(state = next), Vector(AppEffect.SendGap(sessionId, frame)))
+              }
+          case None if highest > 0L =>
+            Ratchet
+              .encryptDataAck(session.state, identity.device.publicKey, identity.device.privateKey, highest, nonce)
+              .toOption
+              .fold((session, Vector.empty[AppEffect])) { case (next, frame) =>
+                (session.copy(state = next), Vector(AppEffect.SendAck(sessionId, frame)))
+              }
+          case None                 => (session, Vector.empty)
 
   private def receiveFailure(
     state: AppState,

@@ -54,15 +54,18 @@ object MessageHeader:
     yield (MessageHeader(version, kind, sessionId, devicePub, dhPub, pn, n, seq, nonce, control), r10)
 
   private def readControl(kind: MessageKind, reader: CanonicalReader): Either[CoreError, (Option[ControlExtension], CanonicalReader)] =
-    if kind == MessageKind.Data then Right((None, reader))
-    else
-      for
-        (epoch, r1) <- reader.u64
-        (idRaw, r2) <- r1.fixed(RekeyId.Length)
-        id          <- RekeyId.from(idRaw)
-      yield (Some(ControlExtension(epoch, id)), r2)
+    kind match
+      case MessageKind.Data | MessageKind.DataAck | MessageKind.Gap => Right((None, reader))
+      case MessageKind.RekeyConfirm | MessageKind.RekeyConfirmAck   =>
+        for
+          (epoch, r1) <- reader.u64
+          (idRaw, r2) <- r1.fixed(RekeyId.Length)
+          id          <- RekeyId.from(idRaw)
+        yield (Some(ControlExtension(epoch, id)), r2)
 
   private def validateSeq(kind: MessageKind, seq: Long): Either[CoreError, Unit] =
-    if kind == MessageKind.Data && seq > 0L then Right(())
-    else if kind != MessageKind.Data && seq == 0L then Right(())
-    else Left(CoreError.InvalidState)
+    kind match
+      case MessageKind.Data | MessageKind.DataAck | MessageKind.Gap =>
+        if seq > 0L then Right(()) else Left(CoreError.InvalidState)
+      case MessageKind.RekeyConfirm | MessageKind.RekeyConfirmAck   =>
+        if seq == 0L then Right(()) else Left(CoreError.InvalidState)

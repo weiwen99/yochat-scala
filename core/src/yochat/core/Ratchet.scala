@@ -62,8 +62,47 @@ object Ratchet:
     control: ControlExtension,
     nonce: Nonce
   ): Either[CoreError, (RatchetState, WireFrame)] =
-    if kind == MessageKind.Data || state.phase == SessionPhase.ReadOnly then Left(CoreError.InvalidState)
-    else if control.rekeyEpoch < 0L then Left(CoreError.InvalidState)
+    encryptControlFrame(state, localDevicePub, devicePrivate, kind, 0L, Some(control), nonce)
+
+  def encryptDataAck(
+    state: RatchetState,
+    localDevicePub: Ed25519Public,
+    devicePrivate: Ed25519Private,
+    ackedSeq: Long,
+    nonce: Nonce
+  ): Either[CoreError, (RatchetState, WireFrame)] =
+    encryptControlFrame(state, localDevicePub, devicePrivate, MessageKind.DataAck, ackedSeq, None, nonce)
+
+  def encryptGap(
+    state: RatchetState,
+    localDevicePub: Ed25519Public,
+    devicePrivate: Ed25519Private,
+    expectedSeq: Long,
+    nonce: Nonce
+  ): Either[CoreError, (RatchetState, WireFrame)] =
+    encryptControlFrame(state, localDevicePub, devicePrivate, MessageKind.Gap, expectedSeq, None, nonce)
+
+  private def encryptControlFrame(
+    state: RatchetState,
+    localDevicePub: Ed25519Public,
+    devicePrivate: Ed25519Private,
+    kind: MessageKind,
+    seq: Long,
+    control: Option[ControlExtension],
+    nonce: Nonce
+  ): Either[CoreError, (RatchetState, WireFrame)] =
+    val validShape =
+      kind match
+        case MessageKind.DataAck | MessageKind.Gap                  => seq > 0L && control.isEmpty
+        case MessageKind.RekeyConfirm | MessageKind.RekeyConfirmAck =>
+          seq == 0L && control.exists(_.rekeyEpoch >= 0L)
+        case MessageKind.Data                                       => false
+    val validPhase =
+      kind match
+        case MessageKind.DataAck | MessageKind.Gap                  => state.phase == SessionPhase.Active
+        case MessageKind.RekeyConfirm | MessageKind.RekeyConfirmAck => state.phase != SessionPhase.ReadOnly
+        case MessageKind.Data                                       => false
+    if !validShape || !validPhase then Left(CoreError.InvalidState)
     else if state.ns == Long.MaxValue then Left(CoreError.InvalidState)
     else
       state.ckSend match
@@ -78,9 +117,9 @@ object Ratchet:
             state.dhSelf.publicKey,
             state.pn,
             state.ns,
-            0L,
+            seq,
             nonce,
-            Some(control)
+            control
           )
           for
             ciphertext <- Crypto.aeadSeal(messageKey, nonce, header.canonical, ByteVector.empty)
@@ -204,8 +243,8 @@ object Ratchet:
 
   private def validHeaderShape(header: MessageHeader): Boolean =
     header.kind match
-      case MessageKind.Data => header.seq > 0L && header.control.isEmpty
-      case _                => header.seq == 0L && header.control.nonEmpty
+      case MessageKind.Data | MessageKind.DataAck | MessageKind.Gap => header.seq > 0L && header.control.isEmpty
+      case MessageKind.RekeyConfirm | MessageKind.RekeyConfirmAck   => header.seq == 0L && header.control.nonEmpty
 
   private def validateControlPayload(header: MessageHeader, plaintext: ByteVector): Either[CoreError, Unit] =
     if header.kind == MessageKind.Data || plaintext.isEmpty then Right(()) else Left(CoreError.InvalidEncoding)
