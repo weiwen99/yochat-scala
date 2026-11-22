@@ -101,6 +101,7 @@ class ContactInvitationSpec extends FunSuite:
               sql"UPDATE invitations SET sealed = ${invitationV2._1}, version = ${invitationV2._2} WHERE id = ${invitation.toArray}".update.run
             )
           _                     <- store.deleteInvitation(invitation, 2L, 0L)
+          reinserted            <- store.insertInvitation(invitation, invitationData(), 0L)
           _                     <- store.transact(
                                      sql"""INSERT INTO invitations(id, sealed, version, created_at)
                                |VALUES (${invitation.toArray}, ${invitationV2._1}, ${invitationV2._2}, ${invitationV2._3})""".stripMargin.update.run
@@ -112,6 +113,7 @@ class ContactInvitationSpec extends FunSuite:
           assertEquals(StoreTestSupport.left(rolled), StorageError.StaleGeneration)
           assertEquals(StoreTestSupport.left(resurrected), StorageError.StaleGeneration)
           assertEquals(StoreTestSupport.left(invitationRolled), StorageError.StaleGeneration)
+          assertEquals(StoreTestSupport.left(reinserted), StorageError.WriteConflict)
           assertEquals(StoreTestSupport.left(invitationResurrected), StorageError.StaleGeneration)
       }
     finally StoreTestSupport.deleteTree(directory)

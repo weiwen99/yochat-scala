@@ -21,6 +21,10 @@ private[store] object InvitationRepository:
         for
           _           <- checkId(id)
           _           <- Sql.checkLock(expectedLockGeneration)
+          tombstone   <- Sql.meta(Sql.invitationVersionKey(id))
+          _           <- tombstone match
+                           case Some(_) => Sql.abort(StorageError.WriteConflict)
+                           case None    => FC.unit
           encoded     <- fromEither(StoreDataCodec.encodeInvitation(data))
           nonce       <- FC.delay(StoreCrypto.randomNonceUnsafe())
           sealedValue <- fromEither(StoreCrypto.seal(runtime.keys.invitationKey, nonce, StoreCrypto.invitationAad(id, 1L), encoded))

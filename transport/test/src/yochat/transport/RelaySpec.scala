@@ -57,6 +57,12 @@ class RelaySpec extends FunSuite:
     assert(RelayPayload.decode(oversized).isLeft)
   }
 
+  test("relay accepts the maximum core wire frame and rejects one byte beyond") {
+    val maximum = ByteVector.fill(1_048_774)(0)
+    assert(RelayPayload.encode(RelayPayload.Wire(maximum)).isRight)
+    assert(RelayPayload.encode(RelayPayload.Wire(maximum ++ ByteVector(0))).isLeft)
+  }
+
   test("relay frame body is bounded") {
     val body = ByteVector.fill(RelayWire.MaxBody + 1)(0)
     assert(RelayWire.dataBody(deviceB, RelayPayload.Wire(ByteVector.empty)).isRight)

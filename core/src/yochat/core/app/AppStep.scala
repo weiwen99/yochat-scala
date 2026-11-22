@@ -73,29 +73,33 @@ object Application:
             val failed = value.copy(state = OutgoingState.Failed)
             (trimFailed(state.copy(outgoing = state.outgoing.updated(messageId, failed))), Vector(AppEffect.Notify(Notification.MessageFailed)))
       case AppEvent.SendSucceeded(messageId, generation)                                                =>
-        matchOutgoing(state, messageId, generation, Set(OutgoingState.InFlight, OutgoingState.Queued, OutgoingState.Sent)) match
-          case None        => (state, Vector.empty)
-          case Some(value) =>
-            (
-              state.copy(outgoing = state.outgoing.updated(messageId, value.copy(state = OutgoingState.Sent))),
-              Vector(
-                AppEffect.UpdateMessageState(
-                  value.conversationId,
-                  value.sessionId,
-                  value.authorPub,
-                  value.devicePub,
-                  value.seq,
-                  MessageTransition.Sent
+        if state.connection != ConnectionState.Online || !state.lock.isUnlocked then (state, Vector.empty)
+        else
+          matchOutgoing(state, messageId, generation, Set(OutgoingState.InFlight, OutgoingState.Queued, OutgoingState.Sent)) match
+            case None        => (state, Vector.empty)
+            case Some(value) =>
+              (
+                state.copy(outgoing = state.outgoing.updated(messageId, value.copy(state = OutgoingState.Sent))),
+                Vector(
+                  AppEffect.UpdateMessageState(
+                    value.conversationId,
+                    value.sessionId,
+                    value.authorPub,
+                    value.devicePub,
+                    value.seq,
+                    MessageTransition.Sent
+                  )
                 )
               )
-            )
       case AppEvent.SendFailed(messageId, generation, nowMs)                                            =>
-        matchOutgoing(state, messageId, generation, Set(OutgoingState.InFlight, OutgoingState.Queued, OutgoingState.Sent)) match
-          case None        => (state, Vector.empty)
-          case Some(value) =>
-            val (next, effects) = retryOrFail(state, value, nowMs)
-            val (pumped, more)  = pump(next, nowMs)
-            (pumped, effects ++ more)
+        if state.connection != ConnectionState.Online || !state.lock.isUnlocked then (state, Vector.empty)
+        else
+          matchOutgoing(state, messageId, generation, Set(OutgoingState.InFlight, OutgoingState.Queued, OutgoingState.Sent)) match
+            case None        => (state, Vector.empty)
+            case Some(value) =>
+              val (next, effects) = retryOrFail(state, value, nowMs)
+              val (pumped, more)  = pump(next, nowMs)
+              (pumped, effects ++ more)
       case AppEvent.TimerFired(timer, generation, nowMs)                                                =>
         matchOutgoing(state, timer.messageId, generation, Set(OutgoingState.InFlight, OutgoingState.Queued, OutgoingState.Sent)) match
           case None        => (state.copy(timers = state.timers - timer), Vector.empty)
@@ -216,34 +220,36 @@ object Application:
               )
             )
       case AppEvent.ReplyReceived(invitationId, conversationId, result, expectedAccount, nowMs)         =>
-        state.invitations.get(invitationId) match
-          case None                                             => (state, Vector.empty)
-          case Some(invitation) if nowMs > invitation.expiresAt =>
-            val expired = invitation.copy(lifecycle = InvitationLifecycle.Expired)
-            (state.copy(invitations = state.invitations.updated(invitationId, expired)), Vector(AppEffect.PersistInvitation(expired)))
-          case Some(invitation)                                 =>
-            val mismatch     = expectedAccount.exists(account => account != result.fields.channelAccount)
-            val peer         = result.fields.userPub
-            val contact      = AppContact(
-              userPub = peer,
-              devicePub = result.fields.devicePub,
-              channelLabel = invitation.invitation.fields.channelLabel,
-              channelAccount = invitation.invitation.fields.channelAccount,
-              peerChannelAccount = Some(result.fields.channelAccount),
-              safetyVerified = false,
-              confirmation = if mismatch then ContactConfirmation.AccountMismatch else ContactConfirmation.Pending
-            )
-            val session      = AppSession(result.state, conversationId, 1L)
-            val conversation = state.conversations
-              .get(conversationId)
-              .getOrElse(Conversation(conversationId, peer, session.state.peerDevicePub, Map.empty, Set.empty, Map.empty))
-            val next         = state.copy(
-              contacts = state.contacts.updated(peer, contact),
-              sessions = state.sessions.updated(session.state.sessionId, session),
-              conversations = state.conversations.updated(conversationId, conversation),
-              invitations = state.invitations - invitationId
-            )
-            (next, Vector(AppEffect.PersistContact(contact), AppEffect.PersistSession(session), AppEffect.DeleteInvitation(invitationId)))
+        if !state.lock.isUnlocked then (state, Vector.empty)
+        else
+          state.invitations.get(invitationId) match
+            case None                                             => (state, Vector.empty)
+            case Some(invitation) if nowMs > invitation.expiresAt =>
+              val expired = invitation.copy(lifecycle = InvitationLifecycle.Expired)
+              (state.copy(invitations = state.invitations.updated(invitationId, expired)), Vector(AppEffect.PersistInvitation(expired)))
+            case Some(invitation)                                 =>
+              val mismatch     = expectedAccount.exists(account => account != result.fields.channelAccount)
+              val peer         = result.fields.userPub
+              val contact      = AppContact(
+                userPub = peer,
+                devicePub = result.fields.devicePub,
+                channelLabel = invitation.invitation.fields.channelLabel,
+                channelAccount = invitation.invitation.fields.channelAccount,
+                peerChannelAccount = Some(result.fields.channelAccount),
+                safetyVerified = false,
+                confirmation = if mismatch then ContactConfirmation.AccountMismatch else ContactConfirmation.Pending
+              )
+              val session      = AppSession(result.state, conversationId, 1L)
+              val conversation = state.conversations
+                .get(conversationId)
+                .getOrElse(Conversation(conversationId, peer, session.state.peerDevicePub, Map.empty, Set.empty, Map.empty))
+              val next         = state.copy(
+                contacts = state.contacts.updated(peer, contact),
+                sessions = state.sessions.updated(session.state.sessionId, session),
+                conversations = state.conversations.updated(conversationId, conversation),
+                invitations = state.invitations - invitationId
+              )
+              (next, Vector(AppEffect.PersistContact(contact), AppEffect.PersistSession(session), AppEffect.DeleteInvitation(invitationId)))
       case AppEvent.RejectInvitation(invitationId)                                                      =>
         (state.copy(invitations = state.invitations - invitationId), Vector(AppEffect.DeleteInvitation(invitationId)))
       case AppEvent.StartRekey(sessionId, r1, rekeyId, nonce, nowMs)                                    =>
@@ -343,16 +349,18 @@ object Application:
                     )
           case Some(_)                                 => (state, Vector.empty)
       case AppEvent.RekeyAckReceived(newSessionId, frame, expected, newDh)                              =>
-        state.sessions.get(newSessionId) match
-          case None        => (state, Vector.empty)
-          case Some(value) =>
-            Rekey.acceptAck(value.state, frame, expected, newDh) match
-              case Left(_)       => (state, Vector(AppEffect.Notify(Notification.RekeyFailed)))
-              case Right(result) =>
-                val active                    = value.copy(state = result.state, retireOldOnFirstData = false)
-                val (retired, retiredEffects) = retireOld(state, active, SessionRetirement.InitiatorAck)
-                val next                      = retired.copy(sessions = retired.sessions.updated(newSessionId, active))
-                (next, AppEffect.PersistSession(active) +: retiredEffects)
+        if !state.lock.isUnlocked then (state, Vector.empty)
+        else
+          state.sessions.get(newSessionId) match
+            case None        => (state, Vector.empty)
+            case Some(value) =>
+              Rekey.acceptAck(value.state, frame, expected, newDh) match
+                case Left(_)       => (state, Vector(AppEffect.Notify(Notification.RekeyFailed)))
+                case Right(result) =>
+                  val active                    = value.copy(state = result.state, retireOldOnFirstData = false)
+                  val (retired, retiredEffects) = retireOld(state, active, SessionRetirement.InitiatorAck)
+                  val next                      = retired.copy(sessions = retired.sessions.updated(newSessionId, active))
+                  (next, AppEffect.PersistSession(active) +: retiredEffects)
 
   private def retireOld(state: AppState, active: AppSession, retirement: SessionRetirement): (AppState, Vector[AppEffect]) =
     val retired = state.sessions.values
@@ -423,7 +431,7 @@ object Application:
       )
 
   private def sendNow(state: AppState, value: OutgoingMessage, nowMs: Long): (AppState, Vector[AppEffect]) =
-    if state.connection != ConnectionState.Online then
+    if state.connection != ConnectionState.Online || !state.lock.isUnlocked then
       (state.copy(outgoing = state.outgoing.updated(value.id, value.copy(state = OutgoingState.Queued))), Vector.empty)
     else if value.attempts >= AppLimits.MaxSendAttempts then markFailed(state, value, value.attempts)
     else
@@ -472,7 +480,7 @@ object Application:
     failed.take(drop).foldLeft(state)((current, value) => current.copy(outgoing = current.outgoing - value.id))
 
   private def pump(state: AppState, nowMs: Long): (AppState, Vector[AppEffect]) =
-    if state.connection != ConnectionState.Online then (state, Vector.empty)
+    if state.connection != ConnectionState.Online || !state.lock.isUnlocked then (state, Vector.empty)
     else
       val slots = math.max(0, AppLimits.MaxInFlight - inFlightCount(state))
       val ready = state.outgoing.values

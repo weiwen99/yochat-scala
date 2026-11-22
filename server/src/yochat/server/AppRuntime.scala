@@ -19,6 +19,7 @@ import yochat.core.{
   RekeyAccept,
   RekeyId,
   RekeyRequest,
+  RekeyRole,
   Reply,
   ReplyResult,
   SessionId,
@@ -58,10 +59,20 @@ final class AppRuntime private (
   def state: IO[AppState] = AppRuntime.readRef(stateRef)
 
   def submit(event: AppEvent): IO[Boolean] =
-    queue.tryOffer(RuntimeCommand.App(event))
+    AppRuntime.readRef(fatal).flatMap {
+      case Some(_) => IO.pure(false)
+      case None    => queue.tryOffer(RuntimeCommand.App(event))
+    }
+
+  private def ensureReady: IO[Unit] =
+    AppRuntime.readRef(fatal).flatMap {
+      case Some(error) => IO.raiseError(new RuntimeError(s"runtime-fatal:${error.code}"))
+      case None        => IO.unit
+    }
 
   def sendMessage(conversationId: ByteVector, body: String): IO[Long] =
     for
+      _        <- ensureReady
       id       <- messageIds.updateAndGet(AppRuntime.nextId)
       nonce    <- random.nonce
       accepted <- submit(
@@ -84,6 +95,7 @@ final class AppRuntime private (
     note: String
   ): IO[Invitation] =
     for
+      _          <- ensureReady
       ephemeral  <- random.x25519
       ratchet    <- random.x25519
       now         = clock.millis()
@@ -113,13 +125,18 @@ final class AppRuntime private (
                       )
                     )
       _          <- if accepted then IO.unit else IO.raiseError(new RuntimeError("event-queue-full"))
+      visible    <- awaitState(_.invitations.contains(invitation.fields.ephPub.bytes), 5.seconds)
+      _          <- if visible then IO.unit else IO.raiseError(new RuntimeError("invitation-not-visible"))
     yield invitation
 
   def receiveInvitation(text: String, expectedAccount: Option[String]): IO[Invitation] =
     for
+      _          <- ensureReady
       invitation <- IO.fromEither(Invitation.fromText(text).left.map(error => new RuntimeError(error.toString)))
       accepted   <- submit(AppEvent.InvitationReceived(invitation, expectedAccount, clock.millis()))
       _          <- if accepted then IO.unit else IO.raiseError(new RuntimeError("event-queue-full"))
+      visible    <- awaitState(_.invitations.contains(invitation.fields.ephPub.bytes), 5.seconds)
+      _          <- if visible then IO.unit else IO.raiseError(new RuntimeError("invitation-not-visible"))
     yield invitation
 
   def acceptInvitation(
@@ -129,10 +146,15 @@ final class AppRuntime private (
     note: String
   ): IO[ReplyResult] =
     for
+      _              <- ensureReady
       state          <- AppRuntime.readRef(stateRef)
       invitation     <- state.invitations.get(invitationId) match
                           case Some(value) => IO.pure(value)
                           case None        => IO.raiseError(new RuntimeError("invitation-not-found"))
+      _              <- invitation.expectedAccount match
+                          case Some(expected) if expected != invitation.invitation.fields.channelAccount =>
+                            IO.raiseError(new RuntimeError("account-mismatch"))
+                          case _                                                                         => IO.unit
       ephemeral      <- random.x25519
       ratchet0       <- random.x25519
       ratchet1       <- random.x25519
@@ -163,6 +185,7 @@ final class AppRuntime private (
 
   def startRekey(sessionId: SessionId): IO[Unit] =
     for
+      _        <- ensureReady
       state    <- AppRuntime.readRef(stateRef)
       _        <- if state.sessions.contains(sessionId) then IO.unit else IO.raiseError(new RuntimeError("session-not-found"))
       r1       <- random.x25519
@@ -226,7 +249,7 @@ object AppRuntime:
       random         = new RuntimeRandom
       transport      = new RelayAppTransport(relay, queue, notifications, clock, timers)
       executor       = new AppEffectExecutor(store, identity, transport)
-      loop          <- eventLoop(queue, stateRef, messageIds, random, executor, fatal, clock).start
+      loop          <- eventLoop(store, transport, queue, stateRef, messageIds, random, executor, fatal, clock).start
       inbound       <- relay.incoming
                          .flatMap(incoming => queue.tryOffer(RuntimeCommand.Inbound(incoming.from, incoming.payload)).void)
                          .foreverM
@@ -251,11 +274,15 @@ object AppRuntime:
                          inbound,
                          updates
                        )
+      online        <- relay.isOnline
+      _             <- queue.tryOffer(RuntimeCommand.Connection(online, clock.millis()))
       accepted      <- queue.tryOffer(RuntimeCommand.App(AppEvent.Unlock(identity, clock.millis(), idleTimeoutMs)))
       _             <- if accepted then IO.unit else IO.raiseError(new RuntimeError("event-queue-full"))
     yield runtime
 
   private def eventLoop(
+    store: Store,
+    transport: RelayAppTransport,
     queue: Queue[IO, RuntimeCommand],
     stateRef: Ref[IO, AppState],
     messageIds: Ref[IO, Long],
@@ -264,13 +291,22 @@ object AppRuntime:
     fatal: Ref[IO, Option[AppExecutionError]],
     clock: Clock
   ): IO[Unit] =
-    queue.take.flatMap(command => handle(command, queue, stateRef, messageIds, random, executor, fatal, clock)).attempt.flatMap {
-      case Right(_)    => eventLoop(queue, stateRef, messageIds, random, executor, fatal, clock)
-      case Left(error) =>
-        fatal.set(Some(AppExecutionError.Unsupported(s"runtime-loop:${error.getClass.getSimpleName}")))
+    AppRuntime.readRef(fatal).flatMap {
+      case Some(_) => IO.unit
+      case None    =>
+        queue.take
+          .flatMap(command => handle(store, transport, command, queue, stateRef, messageIds, random, executor, fatal, clock))
+          .attempt
+          .flatMap {
+            case Right(_)    => eventLoop(store, transport, queue, stateRef, messageIds, random, executor, fatal, clock)
+            case Left(error) =>
+              fatal.set(Some(AppExecutionError.Unsupported(s"runtime-loop:${error.getClass.getSimpleName}")))
+          }
     }
 
   private def handle(
+    store: Store,
+    transport: RelayAppTransport,
     command: RuntimeCommand,
     queue: Queue[IO, RuntimeCommand],
     stateRef: Ref[IO, AppState],
@@ -281,16 +317,18 @@ object AppRuntime:
     clock: Clock
   ): IO[Unit] =
     command match
-      case RuntimeCommand.App(event)             => applyEvent(event, queue, stateRef, executor, fatal, clock)
+      case RuntimeCommand.App(event)             => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock)
       case RuntimeCommand.Connection(on, now)    =>
-        applyEvent(AppEvent.ConnectionChanged(on, now), queue, stateRef, executor, fatal, clock)
+        applyEvent(store, transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, executor, fatal, clock)
       case RuntimeCommand.Inbound(from, payload) =>
         translateInbound(from, payload, messageIds, random, stateRef, clock).flatMap {
           case None        => IO.unit
-          case Some(event) => applyEvent(event, queue, stateRef, executor, fatal, clock)
+          case Some(event) => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock)
         }
 
   private def applyEvent(
+    store: Store,
+    transport: RelayAppTransport,
     event: AppEvent,
     queue: Queue[IO, RuntimeCommand],
     stateRef: Ref[IO, AppState],
@@ -302,12 +340,15 @@ object AppRuntime:
       current        <- AppRuntime.readRef(stateRef)
       (next, effects) = Application.step(current, event)
       _              <- stateRef.set(next)
-      _              <- executeEffects(effects, queue, executor, fatal, clock)
+      _              <- executeEffects(store, transport, effects, queue, stateRef, executor, fatal, clock)
     yield ()
 
   private def executeEffects(
+    store: Store,
+    transport: RelayAppTransport,
     effects: Vector[AppEffect],
     queue: Queue[IO, RuntimeCommand],
+    stateRef: Ref[IO, AppState],
     executor: AppEffectExecutor,
     fatal: Ref[IO, Option[AppExecutionError]],
     clock: Clock
@@ -317,35 +358,43 @@ object AppRuntime:
         AppRuntime.readRef(fatal).flatMap {
           case Some(_) => IO.unit
           case None    =>
-            executor.execute(effect).flatMap {
-              case Right(_)                                =>
-                effect match
-                  case AppEffect.PersistOutbound(message, _) =>
-                    enqueue(
-                      RuntimeCommand.App(
-                        AppEvent.PersistOutboundSucceeded(message.id, message.generation, clock.millis())
-                      ),
-                      queue
-                    )
-                  case _                                     => IO.unit
-              case Left(AppExecutionError.TransportFailed) => IO.unit
-              case Left(error)                             =>
-                effect match
-                  case AppEffect.PersistOutbound(message, _) =>
-                    enqueue(
-                      RuntimeCommand.App(
-                        AppEvent.PersistOutboundFailed(message.id, message.generation, clock.millis())
-                      ),
-                      queue
-                    )
-                  case _                                     => fatal.set(Some(error))
-            }
+            effect match
+              case AppEffect.SendWire(toDevice, messageId, generation, wire) =>
+                transport
+                  .sendWireResult(toDevice, messageId, generation, wire)
+                  .flatMap(event => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock))
+              case _                                                         =>
+                executor.execute(effect).flatMap {
+                  case Right(_)                                =>
+                    effect match
+                      case AppEffect.PersistOutbound(message, _) =>
+                        applyEvent(
+                          store,
+                          transport,
+                          AppEvent.PersistOutboundSucceeded(message.id, message.generation, clock.millis()),
+                          queue,
+                          stateRef,
+                          executor,
+                          fatal,
+                          clock
+                        )
+                      case _                                     => IO.unit
+                  case Left(AppExecutionError.TransportFailed) =>
+                    effect match
+                      case AppEffect.SendReply(_, _, _) => fatal.set(Some(AppExecutionError.TransportFailed))
+                      case _                            => IO.unit
+                  case Left(error)                             =>
+                    recoverState(store, stateRef).flatMap(_ => fatal.set(Some(error)))
+                }
         }
       }
     }
 
-  private def enqueue(command: RuntimeCommand, queue: Queue[IO, RuntimeCommand]): IO[Unit] =
-    queue.tryOffer(command).void
+  private def recoverState(store: Store, stateRef: Ref[IO, AppState]): IO[Unit] =
+    AppStateRestore.load(store).flatMap {
+      case Right(state) => stateRef.set(state)
+      case Left(_)      => IO.unit
+    }
 
   private def translateInbound(
     from: Ed25519Public,
@@ -375,12 +424,12 @@ object AppRuntime:
                                    .updateAndGet(nextId)
                                    .map(id => Some(AppEvent.InboundFrame(id, frame.header.sessionId, frame, newDh, nonce, now)))
                                case MessageKind.RekeyConfirm                                 =>
-                                 expectedControl(state, frame.header.sessionId) match
+                                 expectedControl(state, frame.header.sessionId, RekeyRole.Responder) match
                                    case None           => IO.pure(None)
                                    case Some(expected) =>
                                      IO.pure(Some(AppEvent.RekeyConfirmReceived(frame.header.sessionId, frame, expected, nonce, newDh)))
                                case MessageKind.RekeyConfirmAck                              =>
-                                 expectedControl(state, frame.header.sessionId) match
+                                 expectedControl(state, frame.header.sessionId, RekeyRole.Initiator) match
                                    case None           => IO.pure(None)
                                    case Some(expected) =>
                                      random.x25519.map(dh => Some(AppEvent.RekeyAckReceived(frame.header.sessionId, frame, expected, dh)))
@@ -428,12 +477,12 @@ object AppRuntime:
             case _                                => tryInvitation(tail)
     tryInvitation(state.invitations.values.toList.sortBy(_.id.toHex))
 
-  private def expectedControl(state: AppState, newSessionId: SessionId): Option[ControlExtension] =
+  private def expectedControl(state: AppState, newSessionId: SessionId, role: RekeyRole): Option[ControlExtension] =
     state.sessions.get(newSessionId).flatMap { newSession =>
       state.sessions.values
         .filter(_.conversationId == newSession.conversationId)
         .flatMap(_.state.rekey)
-        .find(_.newSessionId.contains(newSessionId))
+        .find(rekey => rekey.role == role && rekey.newSessionId.contains(newSessionId))
         .map(rekey => ControlExtension(rekey.epoch, rekey.id))
     }
 
@@ -480,11 +529,9 @@ final private[server] class TimerService private (
       previous   <- fibers.modify(values => (values.removed(timer), values.get(timer)))
       _          <- previous.fold(IO.unit)(_.cancel)
       delay       = math.max(0L, deadlineMs - clock.millis())
-      fiber      <- (IO.sleep(delay.millis) *> queue
-                      .tryOffer(
-                        RuntimeCommand.App(AppEvent.TimerFired(timer, generation, clock.millis()))
-                      )
-                      .void).start
+      fiber      <- IO.sleep(delay.millis)
+                      .flatMap(_ => queue.offer(RuntimeCommand.App(AppEvent.TimerFired(timer, generation, clock.millis()))).void)
+                      .start
       _          <- fibers.update(_.updated(timer, fiber))
     yield ()
 
@@ -515,11 +562,12 @@ final private[server] class RelayAppTransport(
 ) extends AppTransport:
 
   def sendWire(toDevice: Ed25519Public, messageId: Long, generation: Long, wire: WireFrame): IO[Unit] =
-    relay.send(toDevice, RelayPayload.Wire(wire.bytes)).attempt.flatMap {
-      case Right(_) =>
-        feedback(AppEvent.SendSucceeded(messageId, generation))
-      case Left(_)  =>
-        feedback(AppEvent.SendFailed(messageId, generation, clock.millis()))
+    sendWireResult(toDevice, messageId, generation, wire).flatMap(feedback)
+
+  def sendWireResult(toDevice: Ed25519Public, messageId: Long, generation: Long, wire: WireFrame): IO[AppEvent] =
+    relay.send(toDevice, RelayPayload.Wire(wire.bytes)).attempt.map {
+      case Right(_) => AppEvent.SendSucceeded(messageId, generation)
+      case Left(_)  => AppEvent.SendFailed(messageId, generation, clock.millis())
     }
 
   def sendAck(sessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame): IO[Unit] =

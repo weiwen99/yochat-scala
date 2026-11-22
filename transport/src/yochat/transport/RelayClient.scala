@@ -96,7 +96,7 @@ object RelayClient:
                 case false =>
                   current.set(Some(value)) *> updates.tryOffer(true) *>
                     value.readLoop(incoming).start.flatMap(_.join) *>
-                    current.set(None) *> updates.tryOffer(false) *> IO.sleep(backoff) *> loop(InitialBackoff)
+                    value.close *> current.set(None) *> updates.tryOffer(false) *> IO.sleep(backoff) *> loop(InitialBackoff)
               }
           }
       }
@@ -145,10 +145,13 @@ final private[transport] class RelayConnection(
       case Left(error) => IO.raiseError(new TransportError(error))
       case Right(body) =>
         writeLock.permit.use { _ =>
-          IO.blocking(RelayWire.writeFrame(out, RelayWire.Data, body)).flatMap {
-            case Left(error) => IO.raiseError(new TransportError(error))
-            case Right(_)    => IO.unit
-          }
+          IO.blocking(RelayWire.writeFrame(out, RelayWire.Data, body))
+            .timeout(5.seconds)
+            .flatMap {
+              case Left(error) => IO.raiseError(new TransportError(error))
+              case Right(_)    => IO.unit
+            }
+            .handleErrorWith(error => close *> IO.raiseError(error))
         }
 
   def readLoop(incoming: Queue[IO, RelayIncoming]): IO[Unit] =

@@ -58,6 +58,50 @@ class AppLockSpec extends FunSuite:
     assertEquals(effects, Vector.empty)
   }
 
+  test("a late send success after disconnect does not bypass the retry timer") {
+    val peers                    = AppTestSupport.connected
+    val conversation             = peers.aliceState.sessions.values.head.conversationId
+    val (persisting, _)          = Application.step(
+      peers.aliceState,
+      AppEvent.UserSend(9L, conversation, yochat.core.Crypto.text("body"), TestKeys.nonce(3), 0L)
+    )
+    val generation               = persisting.outgoing(9L).generation
+    val (queued, _)              = Application.step(persisting, AppEvent.PersistOutboundSucceeded(9L, generation, 10L))
+    assertEquals(queued.outgoing(9L).state, OutgoingState.InFlight)
+    val (offline, _)             = Application.step(queued, AppEvent.ConnectionChanged(online = false, nowMs = 20L))
+    assertEquals(offline.outgoing(9L).state, OutgoingState.Queued)
+    val (late, effects)          = Application.step(offline, AppEvent.SendSucceeded(9L, generation))
+    assertEquals(late.outgoing(9L).state, OutgoingState.Queued)
+    assertEquals(effects, Vector.empty)
+  }
+
+  test("a locked runtime ignores reply import and cannot pump queued data") {
+    val peers       = AppTestSupport.connected
+    val conversation = yochat.core.Crypto.sha256(yochat.core.Crypto.text("locked")).bytes
+    val invitation  = peers.invitation
+    val (created, _) = Application.step(
+      AppState.empty.copy(identity = Some(peers.alice), lock = LockState.Unlocked(0L)),
+      AppEvent.InvitationCreated(
+        invitation,
+        peers.aliceEphemeral.privateKey,
+        AppTestSupport.xpair(2).privateKey,
+        Some("@bob"),
+        0L
+      )
+    )
+    val locked      = created.copy(lock = LockState.Locked(1L))
+    val (reply, replyEffects) = Application.step(
+      locked,
+      AppEvent.ReplyReceived(invitation.fields.ephPub.bytes, conversation, peers.aliceReply, Some("@bob"), 1_000L)
+    )
+    assertEquals(reply, locked)
+    assertEquals(replyEffects, Vector.empty)
+    val (connected, connectionEffects) = Application.step(locked, AppEvent.ConnectionChanged(online = true, nowMs = 2_000L))
+    assertEquals(connected.connection, ConnectionState.Online)
+    assertEquals(connected.outgoing, locked.outgoing)
+    assertEquals(connectionEffects, Vector.empty)
+  }
+
   test("idle timeout locks exactly at the injected deadline and unlock installs it") {
     val peers                 = AppTestSupport.connected
     val (unlocked, _)         = Application.step(

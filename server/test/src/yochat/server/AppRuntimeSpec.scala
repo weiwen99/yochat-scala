@@ -112,16 +112,46 @@ class AppRuntimeSpec extends FunSuite:
                            10.seconds
                          )
           _           <- requireState(runtimeB, retiredB, "bob rekey retirement")
+          restoredAfterRekey <- AppStateRestore.load(storeA)
+          rekeyRestore <- IO.fromEither(restoredAfterRekey.left.map(error => new AssertionError(error.code)))
+          _            = assert(rekeyRestore.sessions.values.forall(_.nextSeq == 3L))
+          stateB      <- runtimeB.state
+          conversationB <- stateB.conversations.keys.headOption match
+                             case Some(value) => IO.pure(value)
+                             case None        => IO.raiseError(new AssertionError("missing bob conversation"))
           port        <- IO.pure(server.port)
           _           <- server.close
-          _           <- runtimeA.awaitState(_.connection == ConnectionState.Offline, 5.seconds)
-          _           <- runtimeB.awaitState(_.connection == ConnectionState.Offline, 5.seconds)
+          offlineA    <- runtimeA.awaitState(_.connection == ConnectionState.Offline, 5.seconds)
+          offlineB    <- runtimeB.awaitState(_.connection == ConnectionState.Offline, 5.seconds)
+          _           <- requireState(runtimeA, offlineA, "alice disconnect")
+          _           <- requireState(runtimeB, offlineB, "bob disconnect")
           _           <- RelayServer.start(port).use { _ =>
                            for
-                             _ <- runtimeA.awaitState(_.connection == ConnectionState.Online, 10.seconds)
-                             _ <- runtimeB.awaitState(_.connection == ConnectionState.Online, 10.seconds)
-                             _ <- runtimeA.sendMessage(conversationId, "after-reconnect")
-                             _ <- runtimeA.awaitState(_.outgoing.isEmpty, 10.seconds)
+                             onlineA <- runtimeA.awaitState(_.connection == ConnectionState.Online, 10.seconds)
+                             onlineB <- runtimeB.awaitState(_.connection == ConnectionState.Online, 10.seconds)
+                             _       <- requireState(runtimeA, onlineA, "alice reconnect")
+                             _       <- requireState(runtimeB, onlineB, "bob reconnect")
+                             _       <- runtimeA.sendMessage(conversationId, "after-reconnect")
+                             delivered3 <- awaitMessageState(
+                                             storeA,
+                                             conversationId,
+                                             alice,
+                                             storeA.identity.devicePublic,
+                                             3L,
+                                             MessageState.Delivered,
+                                             5.seconds
+                                           )
+                             _       <- if delivered3 then IO.unit else IO.raiseError(new AssertionError("post-reconnect delivery missing"))
+                             received3 <- awaitMessageState(
+                                            storeB,
+                                            conversationB,
+                                            alice,
+                                            storeA.identity.devicePublic,
+                                            3L,
+                                            MessageState.Received,
+                                            5.seconds
+                                          )
+                             _       <- if received3 then IO.unit else IO.raiseError(new AssertionError("post-reconnect receive missing"))
                            yield ()
                          }
         yield ()

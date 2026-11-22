@@ -77,6 +77,7 @@ final private class RelayServerConnection(
 
   override def run(): Unit =
     try
+      socket.setSoTimeout(5_000)
       @scala.annotation.tailrec
       def loop(): Unit =
         if !socket.isClosed then
@@ -97,11 +98,13 @@ final private class RelayServerConnection(
           Ed25519Public.from(body) match
             case Left(_)       => closeUnsafe()
             case Right(device) =>
-              registered.set(Some(device))
-              Option(clients.put(device.bytes.toHex, this)).foreach { previous =>
-                if previous ne this then previous.closeUnsafe()
-              }
               sendUnsafe(RelayWire.RegisterAck, ByteVector.empty)
+              if !closed.get() then
+                socket.setSoTimeout(0)
+                registered.set(Some(device))
+                Option(clients.put(device.bytes.toHex, this)).foreach { previous =>
+                  if previous ne this then previous.closeUnsafe()
+                }
       case RelayWire.Data     =>
         registered.get().foreach { source =>
           RelayWire.parseData(body) match

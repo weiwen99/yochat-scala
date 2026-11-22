@@ -20,7 +20,7 @@ object RelayPayload:
   private val ReplyKind: Int        = 2
   private val RekeyRequestKind: Int = 3
   private val RekeyAcceptKind: Int  = 4
-  val MaxPayload: Int               = 1_048_700
+  val MaxPayload: Int               = 1_048_774
 
   def encode(value: RelayPayload): Either[String, ByteVector] =
     val (kind, bytes) = value match

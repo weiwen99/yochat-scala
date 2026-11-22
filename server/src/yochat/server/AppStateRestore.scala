@@ -121,17 +121,23 @@ object AppStateRestore:
     val peer         = record.state.peerUserPub
     val byPeer       = snapshot.conversations.filter(_.peerUserPub == peer).sortBy(_.id.toHex).headOption
     val byMessage    = snapshot.messages.values.flatten.find(_.sessionId == record.state.sessionId).map(_.conversationId)
-    val conversation = byPeer.map(_.id).orElse(byMessage)
+    val conversation = byMessage.orElse(byPeer.map(_.id))
     conversation match
       case None     => Left(StorageError.NotFound("session-conversation"))
       case Some(id) =>
         val maxOutbound = snapshot.messages.values.flatten
-          .filter(message => message.sessionId == record.state.sessionId && message.state != MessageState.Received)
+          .filter(message => message.conversationId == id && message.state != MessageState.Received)
           .map(_.seq)
           .maxOption
           .getOrElse(0L)
         val nextSeq     = if maxOutbound == Long.MaxValue then Long.MaxValue else maxOutbound + 1L
-        Right(AppSession(record.state, id, math.max(1L, nextSeq)))
+        val retireOld   = snapshot.sessions.exists { other =>
+          other.state.sessionId != record.state.sessionId &&
+          other.state.rekey.exists(rekey =>
+            rekey.role == yochat.core.RekeyRole.Responder && rekey.newSessionId.contains(record.state.sessionId)
+          )
+        }
+        Right(AppSession(record.state, id, math.max(1L, nextSeq), retireOldOnFirstData = retireOld))
 
   private def outgoingFrom(
     snapshot: StoreSnapshot,
@@ -164,8 +170,9 @@ object AppStateRestore:
       case MessageState.Received | MessageState.Delivered => Right(None)
       case state                                          =>
         sessions.get(record.sessionId) match
-          case None        => Left(StorageError.NotFound("outgoing-session"))
-          case Some(value) =>
+          case None if state == MessageState.Failed => Right(None)
+          case None                                 => Left(StorageError.NotFound("outgoing-session"))
+          case Some(value)                          =>
             WireFrame
               .parse(record.wire)
               .map { wire =>
@@ -210,7 +217,7 @@ object AppStateRestore:
             expectedAccount = data.peerAccount,
             lifecycle = data.state match
               case InvitationState.Pending                             =>
-                if data.ephemeralPrivate.isDefined && data.ratchetPrivate.isDefined then InvitationLifecycle.Issued
+                if data.ephemeralPrivate.isDefined || data.ratchetPrivate.isDefined then InvitationLifecycle.Issued
                 else InvitationLifecycle.AwaitingReply
               case InvitationState.Accepted | InvitationState.Consumed => InvitationLifecycle.Accepted
               case InvitationState.Declined | InvitationState.Expired  => InvitationLifecycle.Expired,
