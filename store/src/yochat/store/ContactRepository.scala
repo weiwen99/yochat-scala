@@ -46,6 +46,23 @@ private[store] object ContactRepository:
       }
     }
 
+  def list(runtime: StoreRuntime): IO[Either[StorageError, List[ContactRecord]]] =
+    runtime.run {
+      sql"SELECT user_pub FROM contacts ORDER BY user_pub".query[Array[Byte]].to[List].flatMap { keys =>
+        keys.foldLeft(FC.pure(List.empty[ContactRecord])) { (acc, key) =>
+          acc.flatMap(values =>
+            Ed25519Public.from(ByteVector.view(key)) match
+              case Left(_)       => Sql.abort(StorageError.InvalidEnvelope)
+              case Right(public) =>
+                loadOptionProgram(runtime, public).flatMap {
+                  case Some(record) => FC.pure(values :+ record)
+                  case None         => Sql.abort(StorageError.NotFound("contact"))
+                }
+          )
+        }
+      }
+    }
+
   def update(
     runtime: StoreRuntime,
     userPub: Ed25519Public,

@@ -166,7 +166,8 @@ class ContactInvitationSpec extends FunSuite:
 
   private def invitationData(): InvitationData =
     InvitationData(
-      ephemeralPrivate = StoreTestSupport.xpair().privateKey,
+      ephemeralPrivate = Some(StoreTestSupport.xpair().privateKey),
+      ratchetPrivate = None,
       peerAccount = Some("bob@example.test"),
       state = InvitationState.Pending,
       confirmationState = ContactConfirmation.Confirmed,

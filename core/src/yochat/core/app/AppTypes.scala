@@ -44,6 +44,7 @@ final case class AppInvitation(
   id: ByteVector,
   invitation: Invitation,
   ephemeralPrivate: Option[X25519Private],
+  ratchetPrivate: Option[X25519Private],
   expectedAccount: Option[String],
   lifecycle: InvitationLifecycle,
   expiresAt: Long
@@ -69,6 +70,7 @@ final case class OutgoingMessage(
   sessionId: SessionId,
   authorPub: Ed25519Public,
   devicePub: Ed25519Public,
+  peerDevicePub: Ed25519Public,
   seq: Long,
   body: ByteVector,
   wire: WireFrame,

@@ -24,21 +24,37 @@ import yochat.store.{
 /** Transport boundary for effects that leave the process. The executor never opens sockets itself. */
 trait AppTransport:
 
-  def sendWire(messageId: Long, wire: WireFrame): IO[Unit]
+  def sendWire(toDevice: yochat.core.Ed25519Public, messageId: Long, generation: Long, wire: WireFrame): IO[Unit]
 
-  def sendAck(sessionId: yochat.core.SessionId, frame: WireFrame): IO[Unit]
+  def sendAck(sessionId: yochat.core.SessionId, toDevice: yochat.core.Ed25519Public, frame: WireFrame): IO[Unit]
 
-  def sendGap(sessionId: yochat.core.SessionId, frame: WireFrame): IO[Unit]
+  def sendGap(sessionId: yochat.core.SessionId, toDevice: yochat.core.Ed25519Public, frame: WireFrame): IO[Unit]
 
-  def sendReply(invitationId: ByteVector, text: String): IO[Unit]
+  def sendReply(invitationId: ByteVector, toDevice: yochat.core.Ed25519Public, text: String): IO[Unit]
 
-  def sendRekeyRequest(sessionId: yochat.core.SessionId, request: RekeyRequest): IO[Unit]
+  def sendRekeyRequest(
+    sessionId: yochat.core.SessionId,
+    toDevice: yochat.core.Ed25519Public,
+    request: RekeyRequest
+  ): IO[Unit]
 
-  def sendRekeyAccept(sessionId: yochat.core.SessionId, accept: RekeyAccept): IO[Unit]
+  def sendRekeyAccept(
+    sessionId: yochat.core.SessionId,
+    toDevice: yochat.core.Ed25519Public,
+    accept: RekeyAccept
+  ): IO[Unit]
 
-  def sendRekeyConfirm(newSessionId: yochat.core.SessionId, frame: WireFrame): IO[Unit]
+  def sendRekeyConfirm(
+    newSessionId: yochat.core.SessionId,
+    toDevice: yochat.core.Ed25519Public,
+    frame: WireFrame
+  ): IO[Unit]
 
-  def sendRekeyConfirmAck(newSessionId: yochat.core.SessionId, frame: WireFrame): IO[Unit]
+  def sendRekeyConfirmAck(
+    newSessionId: yochat.core.SessionId,
+    toDevice: yochat.core.Ed25519Public,
+    frame: WireFrame
+  ): IO[Unit]
 
   def startTimer(timer: TimerId, deadlineMs: Long): IO[Unit]
 
@@ -88,6 +104,8 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
         persistContact(contact)
       case AppEffect.PersistSession(session)                                                              =>
         persistSession(session)
+      case AppEffect.PersistSafetyVerified(userPub, verified)                                             =>
+        persistSafetyVerified(userPub, verified)
       case AppEffect.PersistInvitation(invitation)                                                        =>
         persistInvitation(invitation)
       case AppEffect.DeleteInvitation(invitationId)                                                       =>
@@ -96,22 +114,22 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
         deleteSession(sessionId, retirement)
       case AppEffect.UpdateMessageState(conversationId, sessionId, authorPub, devicePub, seq, transition) =>
         updateMessageState(conversationId, sessionId, authorPub, devicePub, seq, transition)
-      case AppEffect.SendWire(messageId, wire)                                                            =>
-        transportOnly(transport.sendWire(messageId, wire))
-      case AppEffect.SendAck(sessionId, frame)                                                            =>
-        transportOnly(transport.sendAck(sessionId, frame))
-      case AppEffect.SendGap(sessionId, frame)                                                            =>
-        transportOnly(transport.sendGap(sessionId, frame))
-      case AppEffect.SendReply(invitationId, text)                                                        =>
-        transportOnly(transport.sendReply(invitationId, text))
-      case AppEffect.SendRekeyRequest(sessionId, request)                                                 =>
-        transportOnly(transport.sendRekeyRequest(sessionId, request))
-      case AppEffect.SendRekeyAccept(sessionId, accept)                                                   =>
-        transportOnly(transport.sendRekeyAccept(sessionId, accept))
-      case AppEffect.SendRekeyConfirm(newSessionId, frame)                                                =>
-        transportOnly(transport.sendRekeyConfirm(newSessionId, frame))
-      case AppEffect.SendRekeyConfirmAck(newSessionId, frame)                                             =>
-        transportOnly(transport.sendRekeyConfirmAck(newSessionId, frame))
+      case AppEffect.SendWire(toDevice, messageId, generation, wire)                                      =>
+        transportOnly(transport.sendWire(toDevice, messageId, generation, wire))
+      case AppEffect.SendAck(sessionId, toDevice, frame)                                                  =>
+        transportOnly(transport.sendAck(sessionId, toDevice, frame))
+      case AppEffect.SendGap(sessionId, toDevice, frame)                                                  =>
+        transportOnly(transport.sendGap(sessionId, toDevice, frame))
+      case AppEffect.SendReply(invitationId, toDevice, text)                                              =>
+        transportOnly(transport.sendReply(invitationId, toDevice, text))
+      case AppEffect.SendRekeyRequest(sessionId, toDevice, request)                                       =>
+        transportOnly(transport.sendRekeyRequest(sessionId, toDevice, request))
+      case AppEffect.SendRekeyAccept(sessionId, toDevice, accept)                                         =>
+        transportOnly(transport.sendRekeyAccept(sessionId, toDevice, accept))
+      case AppEffect.SendRekeyConfirm(newSessionId, toDevice, frame)                                      =>
+        transportOnly(transport.sendRekeyConfirm(newSessionId, toDevice, frame))
+      case AppEffect.SendRekeyConfirmAck(newSessionId, toDevice, frame)                                   =>
+        transportOnly(transport.sendRekeyConfirmAck(newSessionId, toDevice, frame))
       case AppEffect.StartTimer(timer, deadlineMs)                                                        =>
         transportOnly(transport.startTimer(timer, deadlineMs))
       case AppEffect.CancelTimer(timer)                                                                   =>
@@ -210,38 +228,49 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
 
   private def persistSession(session: AppSession): IO[Either[AppExecutionError, Unit]] =
     for
+      lock         <- lockGeneration
+      conversation <- ensureConversation(session.conversationId, session, lock)
+      result       <- conversation match
+                        case Left(error) => IO.pure(Left(error))
+                        case Right(_)    =>
+                          store.loadSession(session.state.sessionId).flatMap {
+                            case Right(record)                  =>
+                              store.updateSession(session.state, record.version, lock).map(mapStore)
+                            case Left(StorageError.NotFound(_)) =>
+                              store.insertSession(session.state, lock).map(mapStore)
+                            case Left(error)                    => IO.pure(Left(AppExecutionError.StoreFailed(error)))
+                          }
+    yield result
+
+  private def persistSafetyVerified(userPub: yochat.core.Ed25519Public, verified: Boolean): IO[Either[AppExecutionError, Unit]] =
+    for
       lock   <- lockGeneration
-      loaded <- store.loadSession(session.state.sessionId)
+      loaded <- store.loadContact(userPub)
       result <- loaded match
-                  case Right(record)                  =>
-                    store.updateSession(session.state, record.version, lock).map(mapStore)
-                  case Left(StorageError.NotFound(_)) =>
-                    store.insertSession(session.state, lock).map(mapStore)
-                  case Left(error)                    => IO.pure(Left(AppExecutionError.StoreFailed(error)))
+                  case Right(record) => store.setSafetyVerified(userPub, verified, record.version, lock).map(mapStore)
+                  case Left(error)   => IO.pure(Left(AppExecutionError.StoreFailed(error)))
     yield result
 
   private def persistInvitation(invitation: AppInvitation): IO[Either[AppExecutionError, Unit]] =
-    invitation.ephemeralPrivate match
-      case None                   => IO.pure(Left(AppExecutionError.Unsupported("PersistInvitation:no-ephemeral-private")))
-      case Some(ephemeralPrivate) =>
-        for
-          lock   <- lockGeneration
-          data    = InvitationData(
-                      ephemeralPrivate = ephemeralPrivate,
-                      peerAccount = invitation.expectedAccount,
-                      state = invitationState(invitation.lifecycle),
-                      confirmationState = StoreConfirmation.Pending,
-                      payload = invitation.invitation.canonical,
-                      expiresAt = invitation.expiresAt
-                    )
-          loaded <- store.loadInvitation(invitation.id)
-          result <- loaded match
-                      case Right(record)                  =>
-                        store.updateInvitation(invitation.id, data, record.version, lock).map(mapStore)
-                      case Left(StorageError.NotFound(_)) =>
-                        store.insertInvitation(invitation.id, data, lock).map(mapStore)
-                      case Left(error)                    => IO.pure(Left(AppExecutionError.StoreFailed(error)))
-        yield result
+    for
+      lock   <- lockGeneration
+      data    = InvitationData(
+                  ephemeralPrivate = invitation.ephemeralPrivate,
+                  ratchetPrivate = invitation.ratchetPrivate,
+                  peerAccount = invitation.expectedAccount,
+                  state = invitationState(invitation.lifecycle),
+                  confirmationState = StoreConfirmation.Pending,
+                  payload = invitation.invitation.canonical,
+                  expiresAt = invitation.expiresAt
+                )
+      loaded <- store.loadInvitation(invitation.id)
+      result <- loaded match
+                  case Right(record)                  =>
+                    store.updateInvitation(invitation.id, data, record.version, lock).map(mapStore)
+                  case Left(StorageError.NotFound(_)) =>
+                    store.insertInvitation(invitation.id, data, lock).map(mapStore)
+                  case Left(error)                    => IO.pure(Left(AppExecutionError.StoreFailed(error)))
+    yield result
 
   private def deleteInvitation(invitationId: ByteVector): IO[Either[AppExecutionError, Unit]] =
     for

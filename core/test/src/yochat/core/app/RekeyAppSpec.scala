@@ -17,21 +17,21 @@ class RekeyAppSpec extends FunSuite:
       peers.aliceState,
       AppEvent.StartRekey(oldSessionId, r1, rekeyId, TestKeys.nonce(10), 0L)
     )
-    val request                      = startEffects.collectFirst { case AppEffect.SendRekeyRequest(_, value) => value }.getOrElse(fail("missing request"))
+    val request                      = startEffects.collectFirst { case AppEffect.SendRekeyRequest(_, _, value) => value }.getOrElse(fail("missing request"))
     assert(startEffects.exists { case AppEffect.PersistSession(_) => true; case _ => false })
 
     val (bobStarted, bobStartEffects) = Application.step(
       peers.bobState,
       AppEvent.RekeyRequestReceived(oldSessionId, request, r2, r2Next, TestKeys.nonce(11))
     )
-    val accept                        = bobStartEffects.collectFirst { case AppEffect.SendRekeyAccept(_, value) => value }.getOrElse(fail("missing accept"))
+    val accept                        = bobStartEffects.collectFirst { case AppEffect.SendRekeyAccept(_, _, value) => value }.getOrElse(fail("missing accept"))
     assert(bobStarted.sessions.values.exists(_.state.phase == yochat.core.SessionPhase.Pending))
 
     val (aliceAccepted, aliceAcceptEffects) = Application.step(
       aliceStarted,
       AppEvent.RekeyAcceptReceived(oldSessionId, accept, TestKeys.nonce(12))
     )
-    val confirm                             = aliceAcceptEffects.collectFirst { case AppEffect.SendRekeyConfirm(_, value) => value }.getOrElse(fail("missing confirm"))
+    val confirm                             = aliceAcceptEffects.collectFirst { case AppEffect.SendRekeyConfirm(_, _, value) => value }.getOrElse(fail("missing confirm"))
     val newSessionId                        = aliceAccepted.sessions.keys.find(_ != oldSessionId).getOrElse(fail("missing new session"))
     assertEquals(aliceAccepted.sessions(oldSessionId).state.phase, yochat.core.SessionPhase.ReadOnly)
 
@@ -40,7 +40,7 @@ class RekeyAppSpec extends FunSuite:
       bobStarted,
       AppEvent.RekeyConfirmReceived(newSessionId, confirm, expected, TestKeys.nonce(13), None)
     )
-    val ack                               = bobConfirmEffects.collectFirst { case AppEffect.SendRekeyConfirmAck(_, value) => value }.getOrElse(fail("missing ack"))
+    val ack                               = bobConfirmEffects.collectFirst { case AppEffect.SendRekeyConfirmAck(_, _, value) => value }.getOrElse(fail("missing ack"))
     assertEquals(bobConfirmed.sessions(newSessionId).state.phase, yochat.core.SessionPhase.Active)
 
     val (aliceAcked, ackEffects) = Application.step(

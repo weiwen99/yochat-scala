@@ -39,6 +39,19 @@ private[store] object SessionRepository:
   def load(runtime: StoreRuntime, sessionId: SessionId): IO[Either[StorageError, SessionRecord]] =
     runtime.run(loadProgram(runtime, sessionId))
 
+  def list(runtime: StoreRuntime): IO[Either[StorageError, List[SessionRecord]]] =
+    runtime.run {
+      sql"SELECT id FROM sessions ORDER BY id".query[Array[Byte]].to[List].flatMap { ids =>
+        ids.foldLeft(FC.pure(List.empty[SessionRecord])) { (acc, id) =>
+          acc.flatMap(values =>
+            SessionId.from(ByteVector.view(id)) match
+              case Left(_)        => Sql.abort(StorageError.InvalidEnvelope)
+              case Right(session) => loadProgram(runtime, session).map(values :+ _)
+          )
+        }
+      }
+    }
+
   def update(
     runtime: StoreRuntime,
     state: RatchetState,

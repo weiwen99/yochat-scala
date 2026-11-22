@@ -39,8 +39,10 @@ object Invitation:
     yield Invitation(fields, sig, bytes)
 
   def fromText(value: String): Either[CoreError, Invitation] =
+    Base64Url.decode(value).flatMap(fromCanonical)
+
+  def fromCanonical(canonical: ByteVector): Either[CoreError, Invitation] =
     for
-      canonical <- Base64Url.decode(value)
       _         <- if canonical.size < Signature.Length then Left(CoreError.InvalidInvitation) else Right(())
       fieldBytes = canonical.dropRight(Signature.Length)
       sigBytes   = canonical.takeRight(Signature.Length)

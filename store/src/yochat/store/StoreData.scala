@@ -28,7 +28,8 @@ final case class ContactData(
   override def toString: String = s"ContactData(confirmation=$confirmationState, safetyVerified=$safetyVerified)"
 
 final case class InvitationData(
-  ephemeralPrivate: X25519Private,
+  ephemeralPrivate: Option[X25519Private],
+  ratchetPrivate: Option[X25519Private],
   peerAccount: Option[String],
   state: InvitationState,
   confirmationState: ContactConfirmation,
@@ -40,10 +41,11 @@ final case class InvitationData(
 
 private[store] object StoreDataCodec:
 
-  private val ContactVersion: Int    = 1
-  private val InvitationVersion: Int = 1
-  private val MaxFieldBytes: Int     = 4096
-  private val MaxPayloadBytes: Int   = 1_048_576
+  private val ContactVersion: Int     = 1
+  private val InvitationVersion: Int  = 1
+  private val InvitationVersion2: Int = 2
+  private val MaxFieldBytes: Int      = 4096
+  private val MaxPayloadBytes: Int    = 1_048_576
 
   def encodeContact(value: ContactData): Either[StorageError, ByteVector] =
     for
@@ -89,8 +91,9 @@ private[store] object StoreDataCodec:
       for peer <- writeOptionString(value.peerAccount, "peer_account")
       yield
         val writer = CodecWriter()
-          .u8(InvitationVersion)
-          .bytes(value.ephemeralPrivate.bytes)
+          .u8(InvitationVersion2)
+        writeOptionFixed(writer, value.ephemeralPrivate.map(_.bytes))
+        writeOptionFixed(writer, value.ratchetPrivate.map(_.bytes))
         writeOptionBytes(writer, peer)
         writer
           .u8(invitationCode(value.state))
@@ -102,19 +105,38 @@ private[store] object StoreDataCodec:
   def decodeInvitation(value: ByteVector): Either[StorageError, InvitationData] =
     val reader = CodecReader(value)
     for
-      (version, r1)      <- reader.u8
-      _                  <- if version == InvitationVersion then Right(()) else Left(StorageError.InvalidEnvelope)
-      (ephemeralRaw, r2) <- r1.bytes(32)
-      ephemeral          <- X25519Private.from(ephemeralRaw).left.map(_ => StorageError.InvalidEnvelope)
-      (peer, r3)         <- readOptionString(r2)
-      (stateCode, r4)    <- r3.u8
+      (version, r1) <- reader.u8
+      decoded       <- if version == InvitationVersion then decodeLegacyInvitation(r1) else decodeCurrentInvitation(version, r1)
+    yield decoded
+
+  private def decodeCurrentInvitation(version: Int, reader: CodecReader): Either[StorageError, InvitationData] =
+    for
+      _                  <- if version == InvitationVersion2 then Right(()) else Left(StorageError.InvalidEnvelope)
+      (ephemeral, r2)    <- readOptionFixed(reader, X25519Private.from)
+      (ratchet, r3)      <- readOptionFixed(r2, X25519Private.from)
+      (peer, r4)         <- readOptionString(r3)
+      (stateCode, r5)    <- r4.u8
       state              <- invitationFromCode(stateCode)
-      (confirmation, r5) <- r4.u8
+      (confirmation, r6) <- r5.u8
       confirmationState  <- confirmationFromCode(confirmation)
-      (payload, r6)      <- r5.bytes(MaxPayloadBytes)
-      (expiresAt, r7)    <- r6.u64
-      _                  <- r7.finish
-    yield InvitationData(ephemeral, peer, state, confirmationState, payload, expiresAt)
+      (payload, r7)      <- r6.bytes(MaxPayloadBytes)
+      (expiresAt, r8)    <- r7.u64
+      _                  <- r8.finish
+    yield InvitationData(ephemeral, ratchet, peer, state, confirmationState, payload, expiresAt)
+
+  private def decodeLegacyInvitation(reader: CodecReader): Either[StorageError, InvitationData] =
+    for
+      (ephemeralRaw, r1) <- reader.bytes(32)
+      ephemeral          <- X25519Private.from(ephemeralRaw).left.map(_ => StorageError.InvalidEnvelope)
+      (peer, r2)         <- readOptionString(r1)
+      (stateCode, r3)    <- r2.u8
+      state              <- invitationFromCode(stateCode)
+      (confirmation, r4) <- r3.u8
+      confirmationState  <- confirmationFromCode(confirmation)
+      (payload, r5)      <- r4.bytes(MaxPayloadBytes)
+      (expiresAt, r6)    <- r5.u64
+      _                  <- r6.finish
+    yield InvitationData(Some(ephemeral), None, peer, state, confirmationState, payload, expiresAt)
 
   private def writeString(value: String, field: String): Either[StorageError, ByteVector] =
     normalize(value, field).flatMap { normalized =>
@@ -131,6 +153,24 @@ private[store] object StoreDataCodec:
     value match
       case None        => writer.u8(0)
       case Some(bytes) => writer.u8(1).bytes(bytes)
+
+  private def writeOptionFixed(writer: CodecWriter, value: Option[ByteVector]): Unit =
+    value match
+      case None        => writer.u8(0)
+      case Some(bytes) => writer.u8(1).fixed(bytes)
+
+  private def readOptionFixed[A](
+    reader: CodecReader,
+    parse: ByteVector => Either[yochat.core.CoreError, A]
+  ): Either[StorageError, (Option[A], CodecReader)] =
+    reader.u8.flatMap {
+      case (0, next) => Right((None, next))
+      case (1, next) =>
+        next.fixed(32).flatMap { case (raw, after) =>
+          parse(raw).left.map(_ => StorageError.InvalidEnvelope).map(value => (Some(value), after))
+        }
+      case _         => Left(StorageError.InvalidEnvelope)
+    }
 
   private def readOptionString(reader: CodecReader): Either[StorageError, (Option[String], CodecReader)] =
     reader.u8.flatMap {
@@ -203,6 +243,10 @@ final private[store] class CodecWriter private ():
 
   def bytes(value: ByteVector): CodecWriter =
     u32(value.size)
+    out.write(value.toArray)
+    this
+
+  def fixed(value: ByteVector): CodecWriter =
     out.write(value.toArray)
     this
 

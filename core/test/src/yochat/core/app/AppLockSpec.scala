@@ -25,7 +25,7 @@ class AppLockSpec extends FunSuite:
       AppEvent.UserSend(7L, conversation, yochat.core.Crypto.text("body"), TestKeys.nonce(1), 0L)
     )
     assert(persistEffects.exists { case AppEffect.PersistOutbound(_, _) => true; case _ => false })
-    assert(!persistEffects.exists { case AppEffect.SendWire(_, _) => true; case _ => false })
+    assert(!persistEffects.exists { case AppEffect.SendWire(_, _, _, _) => true; case _ => false })
     val outgoing                     = persisting.outgoing(7L)
     assertEquals(outgoing.state, OutgoingState.Persisting)
 
@@ -33,7 +33,7 @@ class AppLockSpec extends FunSuite:
       persisting,
       AppEvent.PersistOutboundSucceeded(7L, outgoing.generation, 10L)
     )
-    assert(successEffects.exists { case AppEffect.SendWire(7L, _: WireFrame) => true; case _ => false })
+    assert(successEffects.exists { case AppEffect.SendWire(_, 7L, _, _: WireFrame) => true; case _ => false })
     assert(successEffects.exists { case AppEffect.StartTimer(TimerId(TimerKind.Delivery, 7L), _) => true; case _ => false })
     assertEquals(queued.outgoing(7L).state, OutgoingState.InFlight)
   }

@@ -79,6 +79,14 @@ final case class ConversationRecord(
 
   override def toString: String = s"ConversationRecord(lastAppliedSeq=$lastAppliedSeq)"
 
+final case class StoreSnapshot(
+  contacts: List[ContactRecord],
+  invitations: List[InvitationRecord],
+  sessions: List[SessionRecord],
+  conversations: List[ConversationRecord],
+  messages: Map[ByteVector, List[MessageRecord]]
+)
+
 enum CutoverRole:
   case Initiator, Responder
 

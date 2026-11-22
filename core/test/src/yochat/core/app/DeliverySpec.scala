@@ -26,10 +26,10 @@ class DeliverySpec extends FunSuite:
     Application.step(state, AppEvent.InboundFrame(messageId, sessionId, frame, newDh, TestKeys.nonce(nonceSeed), 10L))
 
   private def ackFrame(effects: Vector[AppEffect]): WireFrame =
-    effects.collectFirst { case AppEffect.SendAck(_, frame) => frame }.getOrElse(fail("missing SendAck"))
+    effects.collectFirst { case AppEffect.SendAck(_, _, frame) => frame }.getOrElse(fail("missing SendAck"))
 
   private def gapFrame(effects: Vector[AppEffect]): WireFrame =
-    effects.collectFirst { case AppEffect.SendGap(_, frame) => frame }.getOrElse(fail("missing SendGap"))
+    effects.collectFirst { case AppEffect.SendGap(_, _, frame) => frame }.getOrElse(fail("missing SendGap"))
 
   test("a data ACK marks the message Delivered and removes it from the outbox") {
     val peers                  = AppTestSupport.connected
@@ -62,8 +62,8 @@ class DeliverySpec extends FunSuite:
     val gap                    = gapFrame(bob3Effects)
     val (afterGap, gapEffects) = receive(alice1, aliceSession, gap, 204L, 6)
 
-    assert(gapEffects.exists { case AppEffect.SendWire(2L, _) => true; case _ => false })
-    assert(gapEffects.exists { case AppEffect.SendWire(3L, _) => true; case _ => false })
+    assert(gapEffects.exists { case AppEffect.SendWire(_, 2L, _, _) => true; case _ => false })
+    assert(gapEffects.exists { case AppEffect.SendWire(_, 3L, _, _) => true; case _ => false })
     assertEquals(afterGap.outgoing.get(1L), None)
     assertEquals(afterGap.outgoing(2L).state, OutgoingState.InFlight)
     assertEquals(afterGap.outgoing(3L).state, OutgoingState.InFlight)
@@ -85,7 +85,7 @@ class DeliverySpec extends FunSuite:
         val (next, added) = receive(state, bobSession, wire, 400L + index, 8 + index)
         (next, effects ++ added)
       }
-    assert(duplicateEffects.exists { case AppEffect.SendAck(_, _) => true; case _ => false })
+    assert(duplicateEffects.exists { case AppEffect.SendAck(_, _, _) => true; case _ => false })
     assertEquals(bob2.conversations.values.head.seen, Set.empty)
     assertEquals(bob2.conversations.values.head.buffered, Map.empty)
     assertEquals(bob2.outgoing, Map.empty)
@@ -123,6 +123,7 @@ class DeliverySpec extends FunSuite:
       sessionId = session.state.sessionId,
       authorPub = peers.alice.user.publicKey,
       devicePub = peers.alice.device.publicKey,
+      peerDevicePub = session.state.peerDevicePub,
       seq = 1L,
       body = Crypto.text("full"),
       wire = wire,

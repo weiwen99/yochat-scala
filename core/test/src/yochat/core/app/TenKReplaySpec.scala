@@ -36,7 +36,7 @@ class TenKReplaySpec extends FunSuite:
         val (received, acks, nextDhSeed) = ids.foldLeft((bobState, Vector.empty[WireFrame], dhSeed)) { case ((state, collected, seed), id) =>
           val (next, effects, afterSeed) =
             receive(state, bobSession, sent.outgoing(id).wire, 1_000_000L + id, TestKeys.nonce(((id + 50) % 250).toInt + 1), seed)
-          val frames                     = effects.collect { case AppEffect.SendAck(_, frame) => frame }
+          val frames                     = effects.collect { case AppEffect.SendAck(_, _, frame) => frame }
           (next, collected ++ frames, afterSeed)
         }
         val (afterAcks, _, finalSeed)    = acks.foldLeft((sent, Vector.empty[AppEffect], nextDhSeed)) { case ((state, effects, seed), frame) =>

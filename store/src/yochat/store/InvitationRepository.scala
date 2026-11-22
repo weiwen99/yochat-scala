@@ -39,6 +39,20 @@ private[store] object InvitationRepository:
       }
     }
 
+  def list(runtime: StoreRuntime): IO[Either[StorageError, List[InvitationRecord]]] =
+    runtime.run {
+      sql"SELECT id FROM invitations ORDER BY id".query[Array[Byte]].to[List].flatMap { ids =>
+        ids.foldLeft(FC.pure(List.empty[InvitationRecord])) { (acc, id) =>
+          acc.flatMap(values =>
+            loadOptionProgram(runtime, ByteVector.view(id)).flatMap {
+              case Some(record) => FC.pure(values :+ record)
+              case None         => Sql.abort(StorageError.NotFound("invitation"))
+            }
+          )
+        }
+      }
+    }
+
   def update(
     runtime: StoreRuntime,
     id: ByteVector,

@@ -103,3 +103,13 @@
 - 测试: `DeliverySpec` 覆盖 ACK、Gap 重发、重复帧只回 ACK、32 条在途窗口、ACK 泵出下一条、1024 出站上限；`TenKReplaySpec` 以 32 条一批跑 10,000 条真实 `Application.step`，ACK 逐个回送，结果为 `TENK_REPLAY messages=10000 elapsed_ms=11504 outgoing=0 next_seq=10001`，低于 50s 门；`./mill core.test` 全绿。
 - 模型: 新增 Q6 `q6_delivery.qnt`，Apalache `safe` 通过；`./models/check.sh` 全部 9 个 check `[ok]`，`QUINT_CHECKS PASS`。Q3 仍只验证尝试预算；Q6 承担 ACK/缺口语义。
 - 未关闭: 真实 relay/transport 与两进程 10k E2E 仍未接；10k 协议回放不是 E2E，不替代 G13；UI 的“已交给中继/已送达/失败”显示在 M4 实现。
+
+## M3 transport / runtime / restore（2026-11-22）
+
+- 对象: `transport/`（新增模块）、`server/src/yochat/server/AppRuntime.scala`、`server/src/yochat/server/AppStateRestore.scala`、`server/test/src/yochat/server/AppRuntimeSpec.scala`、`core`/`store` 的 M3 接口调整、`build.mill`、`check.sh`；父提交 `18ca98a`。
+- 传输: 最小 TCP relay 只按注册 device key 路由 `Wire`/`Reply`/`RekeyRequest`/`RekeyAccept` 负载，帧和连接数有界；`RelayClient` 单 supervisor、最多一个注册 socket、断线后按 100ms–5s 退避重连，incoming/update 队列有界。relay 不解析密文、不提供认证；这是 S1 已知约束。
+- Runtime: 单写者、有界事件队列；`Application.step` 的 effects 顺序执行，`PersistOutboundSucceeded/Failed`、`SendSucceeded/Failed`、`TimerFired`、`ConnectionChanged` 回灌同一队列。入站 `Data`/`DataAck`/`Gap`/Reply/RekeyRequest/RekeyAccept/RekeyConfirm/RekeyConfirmAck` 由 runtime 路由；每个入站帧生成新 response nonce，DH 变化时生成新 X25519 对。`SendWire` 携带目标 device 与 generation，transport 接受后才回 `SendSucceeded`。
+- 邀请/恢复: `InvitationCreated` 同时保存 ephemeral 与 ratchet 私钥；`InvitationReceived` 产生持久化效果；`InvitationData` 升到 v2（可选私钥，兼容 v1）；`Invitation.fromCanonical` 直接解析存储的原样 canonical。`AppStateRestore` 从 store 恢复 contacts/sessions/conversations/outgoing/invitations；conversation 的 `nextSeq` 与 gap buffer 由持久化入站消息重放得到。
+- 修复: `ReplyCreated`/`ReplyReceived` 在核心状态中创建 conversation；`PersistSession` 确保 conversation 行；`SafetyVerified` 改为单条 `PersistSafetyVerified`，由 store 同一事务更新 contact 与全部 session，避免 `checkSafety` 读取旧 session 时失败。
+- 测试: `AppRuntimeSpec` 用两个真实 Store、两个 `AppRuntime`、真实 TCP relay 和独立身份，覆盖 invitation/reply、收到邀请无本地私钥仍落库、message ACK 后 `Delivered`、rekey cutover、relay 重启后重连、`AppStateRestore`。`./check.sh` 全绿：`core.test` 145；`store.test` 20；`transport.test` 6；`server.test` 5；Q1–Q6 9 个 Quint check；spike compile/crypto/storage/doobie/demo 100 条 + reconnect `ok=true`。回执：`TENK_REPLAY messages=10000 elapsed_ms=11649 outgoing=0 next_seq=10001`；`STORE_THROUGHPUT inserts=1000 reads=1000 insert_ms=1286 read_ms=141 total_ms=1428`；`SPIKE messages=100 total=101 reconnect=true aliceSent=101 aliceAcked=101 elapsedMs=49 reconnectMs=30 bobReceived=101 ok=true`。
+- 未关闭: UI/shell、15 条行为契约、两进程 1k/10k E2E 与外部密码学评审；runtime 尚未调度 idle timeout，也尚未把 `Lock` 的 generation bump 落到 store；relay 无认证；`AppRuntimeSpec` 是同 JVM、两 Store/两 Runtime 的集成测试，不是两进程 E2E；旧 M2 数据中无 conversation 行且无消息可推导的 session 会在 restore 时 fail-closed。

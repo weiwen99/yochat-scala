@@ -223,6 +223,49 @@ final class Store private[store] (
   def bumpLockGeneration(expected: Long): IO[Either[StorageError, Long]] =
     MetaRepository.bumpLockGeneration(runtime, expected)
 
+  def listContacts: IO[Either[StorageError, List[ContactRecord]]] =
+    ContactRepository.list(runtime)
+
+  def listInvitations: IO[Either[StorageError, List[InvitationRecord]]] =
+    InvitationRepository.list(runtime)
+
+  def listSessions: IO[Either[StorageError, List[SessionRecord]]] =
+    SessionRepository.list(runtime)
+
+  def listConversations: IO[Either[StorageError, List[ConversationRecord]]] =
+    ConversationRepository.list(runtime)
+
+  def listAllMessages(conversationId: ByteVector): IO[Either[StorageError, List[MessageRecord]]] =
+    MessageRepository.listAll(runtime, conversationId, 100_000)
+
+  def snapshot: IO[Either[StorageError, StoreSnapshot]] =
+    for
+      contacts      <- listContacts
+      invitations   <- listInvitations
+      sessions      <- listSessions
+      conversations <- listConversations
+      messages      <- conversations match
+                         case Left(error)   => IO.pure(Left(error))
+                         case Right(values) =>
+                           values.foldLeft(IO.pure[Either[StorageError, Map[ByteVector, List[MessageRecord]]]](Right(Map.empty))) {
+                             (acc, conversation) =>
+                               acc.flatMap {
+                                 case Left(error) => IO.pure(Left(error))
+                                 case Right(map)  =>
+                                   listAllMessages(conversation.id).map {
+                                     case Right(records) => Right(map.updated(conversation.id, records))
+                                     case Left(error)    => Left(error)
+                                   }
+                               }
+                           }
+    yield for
+      contactValues      <- contacts
+      invitationValues   <- invitations
+      sessionValues      <- sessions
+      conversationValues <- conversations
+      messageValues      <- messages
+    yield StoreSnapshot(contactValues, invitationValues, sessionValues, conversationValues, messageValues)
+
   def backup(target: Path): IO[Either[StorageError, Unit]] =
     Backup.create(runtime, target)
 

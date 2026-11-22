@@ -20,7 +20,13 @@ class ReplayModelsSpec extends FunSuite:
     val alice0      = Application
       .step(
         AppState.empty.copy(identity = Some(peers.alice), lock = LockState.Unlocked(0L)),
-        AppEvent.InvitationCreated(peers.invitation, peers.aliceEphemeral.privateKey, Some("@bob"), 0L)
+        AppEvent.InvitationCreated(
+          peers.invitation,
+          peers.aliceEphemeral.privateKey,
+          AppTestSupport.xpair(2).privateKey,
+          Some("@bob"),
+          0L
+        )
       )
       ._1
     val bob0        = Application
@@ -149,7 +155,7 @@ class ReplayModelsSpec extends FunSuite:
       assertEquals(changed.connection == ConnectionState.Online, after.connected)
       assertEquals(changed.outgoing.get(1L).fold(0)(_.attempts), after.attempts)
       assertEquals(changed.outgoing.contains(1L), after.pending)
-      if after.connected && !before.connected then assert(effects.exists { case AppEffect.SendWire(_, _) => true; case _ => false })
+      if after.connected && !before.connected then assert(effects.exists { case AppEffect.SendWire(_, _, _, _) => true; case _ => false })
       changed
     }
     assert(finalState.outgoing(1L).attempts <= 3)
@@ -168,21 +174,21 @@ class ReplayModelsSpec extends FunSuite:
       peers.aliceState,
       AppEvent.StartRekey(oldSession, r1, rekeyId, TestKeys.nonce(10), 0L)
     )
-    val request                   = startEffects.collectFirst { case AppEffect.SendRekeyRequest(_, value) => value }.getOrElse(fail("missing request"))
+    val request                   = startEffects.collectFirst { case AppEffect.SendRekeyRequest(_, _, value) => value }.getOrElse(fail("missing request"))
     val (bob0, bobEffects)        = Application.step(
       peers.bobState,
       AppEvent.RekeyRequestReceived(oldSession, request, r2, r2Next, TestKeys.nonce(11))
     )
-    val accept                    = bobEffects.collectFirst { case AppEffect.SendRekeyAccept(_, value) => value }.getOrElse(fail("missing accept"))
+    val accept                    = bobEffects.collectFirst { case AppEffect.SendRekeyAccept(_, _, value) => value }.getOrElse(fail("missing accept"))
     val (alice1, aliceEffects)    = Application.step(alice0, AppEvent.RekeyAcceptReceived(oldSession, accept, TestKeys.nonce(12)))
-    val confirm                   = aliceEffects.collectFirst { case AppEffect.SendRekeyConfirm(_, value) => value }.getOrElse(fail("missing confirm"))
+    val confirm                   = aliceEffects.collectFirst { case AppEffect.SendRekeyConfirm(_, _, value) => value }.getOrElse(fail("missing confirm"))
     val newSession                = alice1.sessions.keys.find(_ != oldSession).getOrElse(fail("missing new session"))
     val expected                  = ControlExtension(request.epoch, request.id)
     val (bob1, bobConfirmEffects) = Application.step(
       bob0,
       AppEvent.RekeyConfirmReceived(newSession, confirm, expected, TestKeys.nonce(13), None)
     )
-    val ack                       = bobConfirmEffects.collectFirst { case AppEffect.SendRekeyConfirmAck(_, value) => value }.getOrElse(fail("missing ack"))
+    val ack                       = bobConfirmEffects.collectFirst { case AppEffect.SendRekeyConfirmAck(_, _, value) => value }.getOrElse(fail("missing ack"))
     val alice2                    = Application.step(alice1, AppEvent.RekeyAckReceived(newSession, ack, expected, AppTestSupport.xpair(64)))._1
     val (_, frame)                = Ratchet
       .encryptUser(

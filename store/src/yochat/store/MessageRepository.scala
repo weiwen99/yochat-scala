@@ -10,8 +10,9 @@ import yochat.core.{Ed25519Public, MessageKind, SessionId, WireFrame}
 
 private[store] object MessageRepository:
 
-  private val MaxBodyBytes: Int = 1_048_576
-  private val MaxListLimit: Int = 1_000
+  private val MaxBodyBytes: Int    = 1_048_576
+  private val MaxListLimit: Int    = 1_000
+  private val MaxRestoreLimit: Int = 100_000
 
   final private case class Row(
     id: Long,
@@ -150,6 +151,25 @@ private[store] object MessageRepository:
              |FROM messages
              |WHERE conversation_id = ${conversationId.toArray} AND author_pub = ${authorPub.bytes.toArray}
              |ORDER BY seq LIMIT $limit""".stripMargin
+          .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long)]
+          .to[List]
+          .flatMap(_.foldLeft(FC.pure(List.empty[MessageRecord])) { (acc, tuple) =>
+            acc.flatMap(values => decode(runtime, toRow(tuple)).map(values :+ _))
+          })
+      }
+
+  def listAll(
+    runtime: StoreRuntime,
+    conversationId: ByteVector,
+    limit: Int
+  ): IO[Either[StorageError, List[MessageRecord]]] =
+    if limit <= 0 || limit > MaxRestoreLimit then IO.pure(Left(StorageError.InvalidArgument("limit")))
+    else
+      runtime.run {
+        sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at
+             |FROM messages
+             |WHERE conversation_id = ${conversationId.toArray}
+             |ORDER BY author_pub, seq LIMIT $limit""".stripMargin
           .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long)]
           .to[List]
           .flatMap(_.foldLeft(FC.pure(List.empty[MessageRecord])) { (acc, tuple) =>

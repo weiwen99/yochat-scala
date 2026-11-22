@@ -14,6 +14,9 @@ fi
 ./mill store.checkFormat
 ./mill store.fix --check
 ./mill store.test
+./mill transport.checkFormat
+./mill transport.fix --check
+./mill transport.test
 ./mill server.checkFormat
 ./mill server.fix --check
 ./mill server.test

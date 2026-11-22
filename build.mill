@@ -57,9 +57,23 @@ object store extends CommonModule with ScalafmtModule with ScalafixModule:
       mvn"org.scalameta::munit:1.3.6"
     )
 
+object transport extends CommonModule with ScalafmtModule with ScalafixModule:
+
+  def moduleDeps = Seq(core)
+
+  def mvnDeps = Seq(
+    mvn"org.typelevel::cats-effect:3.7.1"
+  )
+
+  object test extends ScalaTests with TestModule.Munit:
+
+    def mvnDeps = Seq(
+      mvn"org.scalameta::munit:1.3.6"
+    )
+
 object server extends CommonModule with ScalafmtModule with ScalafixModule:
 
-  def moduleDeps = Seq(core, store)
+  def moduleDeps = Seq(core, store, transport)
 
   def mvnDeps = Seq(
     mvn"org.typelevel::cats-effect:3.7.1"

@@ -9,7 +9,7 @@ object Application:
 
   def step(state: AppState, event: AppEvent): (AppState, Vector[AppEffect]) =
     event match
-      case AppEvent.Unlock(identity, nowMs, idleTimeoutMs)                                      =>
+      case AppEvent.Unlock(identity, nowMs, idleTimeoutMs)                                              =>
         val deadline = saturatingAdd(nowMs, math.max(0L, idleTimeoutMs))
         val current  = state.lock.value
         val outgoing = state.outgoing.map { case (id, value) => id -> value.copy(generation = current) }
@@ -20,13 +20,13 @@ object Application:
           outgoing = outgoing
         )
         pump(next, nowMs)
-      case AppEvent.Lock                                                                        =>
+      case AppEvent.Lock                                                                                =>
         lock(state)
-      case AppEvent.IdleTimeout(nowMs)                                                          =>
+      case AppEvent.IdleTimeout(nowMs)                                                                  =>
         state.idleDeadline match
           case Some(deadline) if nowMs >= deadline => lock(state)
           case _                                   => (state, Vector.empty)
-      case AppEvent.UserSend(messageId, conversationId, body, nonce, nowMs)                     =>
+      case AppEvent.UserSend(messageId, conversationId, body, nonce, nowMs)                             =>
         if state.outgoing.size >= AppLimits.MaxOutgoing then (state, Vector(AppEffect.Notify(Notification.QueueFull)))
         else
           (for
@@ -45,6 +45,7 @@ object Application:
               sessionId = session.state.sessionId,
               authorPub = identity.user.publicKey,
               devicePub = identity.device.publicKey,
+              peerDevicePub = session.state.peerDevicePub,
               seq = session.nextSeq,
               body = body,
               wire = wire,
@@ -59,19 +60,19 @@ object Application:
             )
             (nextState, Vector(AppEffect.PersistOutbound(outgoing, nextSession)))
           ).getOrElse((state, Vector.empty))
-      case AppEvent.PersistOutboundSucceeded(messageId, generation, nowMs)                      =>
+      case AppEvent.PersistOutboundSucceeded(messageId, generation, nowMs)                              =>
         matchOutgoing(state, messageId, generation, Set(OutgoingState.Persisting)) match
           case None        => (state, Vector.empty)
           case Some(value) =>
             val queued = value.copy(state = OutgoingState.Queued)
             pump(state.copy(outgoing = state.outgoing.updated(messageId, queued)), nowMs)
-      case AppEvent.PersistOutboundFailed(messageId, generation, _)                             =>
+      case AppEvent.PersistOutboundFailed(messageId, generation, _)                                     =>
         matchOutgoing(state, messageId, generation, Set(OutgoingState.Persisting)) match
           case None        => (state, Vector.empty)
           case Some(value) =>
             val failed = value.copy(state = OutgoingState.Failed)
             (trimFailed(state.copy(outgoing = state.outgoing.updated(messageId, failed))), Vector(AppEffect.Notify(Notification.MessageFailed)))
-      case AppEvent.SendSucceeded(messageId, generation)                                        =>
+      case AppEvent.SendSucceeded(messageId, generation)                                                =>
         matchOutgoing(state, messageId, generation, Set(OutgoingState.InFlight, OutgoingState.Queued, OutgoingState.Sent)) match
           case None        => (state, Vector.empty)
           case Some(value) =>
@@ -88,14 +89,14 @@ object Application:
                 )
               )
             )
-      case AppEvent.SendFailed(messageId, generation, nowMs)                                    =>
+      case AppEvent.SendFailed(messageId, generation, nowMs)                                            =>
         matchOutgoing(state, messageId, generation, Set(OutgoingState.InFlight, OutgoingState.Queued, OutgoingState.Sent)) match
           case None        => (state, Vector.empty)
           case Some(value) =>
             val (next, effects) = retryOrFail(state, value, nowMs)
             val (pumped, more)  = pump(next, nowMs)
             (pumped, effects ++ more)
-      case AppEvent.TimerFired(timer, generation, nowMs)                                        =>
+      case AppEvent.TimerFired(timer, generation, nowMs)                                                =>
         matchOutgoing(state, timer.messageId, generation, Set(OutgoingState.InFlight, OutgoingState.Queued, OutgoingState.Sent)) match
           case None        => (state.copy(timers = state.timers - timer), Vector.empty)
           case Some(value) =>
@@ -103,7 +104,7 @@ object Application:
             val (next, effects) = sendNow(withoutTimer, value, nowMs)
             val (pumped, more)  = pump(next, nowMs)
             (pumped, effects ++ more)
-      case AppEvent.ConnectionChanged(online, nowMs)                                            =>
+      case AppEvent.ConnectionChanged(online, nowMs)                                                    =>
         if !online then
           val cancelled = state.timers.keys.toVector.map(AppEffect.CancelTimer.apply)
           val queued    = state.outgoing.map { case (id, value) =>
@@ -116,7 +117,7 @@ object Application:
           (state.copy(connection = ConnectionState.Offline, timers = Map.empty, outgoing = queued), cancelled)
         else if state.connection == ConnectionState.Online then (state, Vector.empty)
         else pump(state.copy(connection = ConnectionState.Online), nowMs)
-      case AppEvent.InboundFrame(messageId, sessionId, frame, newDh, responseNonce, nowMs)      =>
+      case AppEvent.InboundFrame(messageId, sessionId, frame, newDh, responseNonce, nowMs)              =>
         if !state.lock.isUnlocked then (state, Vector.empty)
         else
           state.sessions.get(sessionId) match
@@ -140,7 +141,7 @@ object Application:
                     case Left(error)                                                                                   => receiveFailure(state, sessionId, value, error)
                     case Right(result)                                                                                 =>
                       receiveSuccess(state, messageId, sessionId, value, conversation, frame, result, responseNonce, nowMs)
-      case AppEvent.SafetyVerified(userPub, _)                                                  =>
+      case AppEvent.SafetyVerified(userPub, _)                                                          =>
         state.contacts.get(userPub) match
           case None          => (state, Vector.empty)
           case Some(contact) =>
@@ -151,27 +152,42 @@ object Application:
               contacts = state.contacts.updated(userPub, verified),
               sessions = updated.foldLeft(state.sessions)((map, session) => map.updated(session.state.sessionId, session))
             )
-            (next, AppEffect.PersistContact(verified) +: updated.map(AppEffect.PersistSession.apply))
-      case AppEvent.InvitationCreated(invitation, ephemeralPrivate, expectedAccount, _)         =>
+            (next, Vector(AppEffect.PersistSafetyVerified(userPub, verified = true)))
+      case AppEvent.InvitationCreated(invitation, ephemeralPrivate, ratchetPrivate, expectedAccount, _) =>
         val id     = invitation.fields.ephPub.bytes
-        val record =
-          AppInvitation(id, invitation, Some(ephemeralPrivate), expectedAccount, InvitationLifecycle.Issued, invitation.fields.expiresAt)
+        val record = AppInvitation(
+          id,
+          invitation,
+          Some(ephemeralPrivate),
+          Some(ratchetPrivate),
+          expectedAccount,
+          InvitationLifecycle.Issued,
+          invitation.fields.expiresAt
+        )
         val next   = state.copy(invitations = state.invitations.updated(id, record))
         (next, Vector(AppEffect.PersistInvitation(record)))
-      case AppEvent.InvitationReceived(invitation, expectedAccount, _)                          =>
+      case AppEvent.InvitationReceived(invitation, expectedAccount, _)                                  =>
         val id     = invitation.fields.ephPub.bytes
-        val record = AppInvitation(id, invitation, None, expectedAccount, InvitationLifecycle.AwaitingReply, invitation.fields.expiresAt)
+        val record = AppInvitation(
+          id,
+          invitation,
+          None,
+          None,
+          expectedAccount,
+          InvitationLifecycle.AwaitingReply,
+          invitation.fields.expiresAt
+        )
         val next   = state.copy(invitations = state.invitations.updated(id, record))
-        (next, Vector.empty)
-      case AppEvent.ReplyCreated(invitationId, conversationId, result, nowMs)                   =>
+        (next, Vector(AppEffect.PersistInvitation(record)))
+      case AppEvent.ReplyCreated(invitationId, conversationId, result, nowMs)                           =>
         state.invitations.get(invitationId) match
           case None                                             => (state, Vector.empty)
           case Some(invitation) if nowMs > invitation.expiresAt =>
             val expired = invitation.copy(lifecycle = InvitationLifecycle.Expired)
             (state.copy(invitations = state.invitations.updated(invitationId, expired)), Vector(AppEffect.PersistInvitation(expired)))
           case Some(invitation)                                 =>
-            val peer    = result.state.peerUserPub
-            val contact = AppContact(
+            val peer         = result.state.peerUserPub
+            val contact      = AppContact(
               userPub = peer,
               devicePub = result.state.peerDevicePub,
               channelLabel = invitation.invitation.fields.channelLabel,
@@ -180,10 +196,14 @@ object Application:
               safetyVerified = false,
               confirmation = ContactConfirmation.Confirmed
             )
-            val session = AppSession(result.state, conversationId, 1L)
-            val next    = state.copy(
+            val session      = AppSession(result.state, conversationId, 1L)
+            val conversation = state.conversations
+              .get(conversationId)
+              .getOrElse(Conversation(conversationId, peer, session.state.peerDevicePub, Map.empty, Set.empty, Map.empty))
+            val next         = state.copy(
               contacts = state.contacts.updated(peer, contact),
               sessions = state.sessions.updated(session.state.sessionId, session),
+              conversations = state.conversations.updated(conversationId, conversation),
               invitations = state.invitations - invitationId
             )
             (
@@ -192,19 +212,19 @@ object Application:
                 AppEffect.PersistContact(contact),
                 AppEffect.PersistSession(session),
                 AppEffect.DeleteInvitation(invitationId),
-                AppEffect.SendReply(invitationId, result.text)
+                AppEffect.SendReply(invitationId, invitation.invitation.fields.devicePub, result.text)
               )
             )
-      case AppEvent.ReplyReceived(invitationId, conversationId, result, expectedAccount, nowMs) =>
+      case AppEvent.ReplyReceived(invitationId, conversationId, result, expectedAccount, nowMs)         =>
         state.invitations.get(invitationId) match
           case None                                             => (state, Vector.empty)
           case Some(invitation) if nowMs > invitation.expiresAt =>
             val expired = invitation.copy(lifecycle = InvitationLifecycle.Expired)
             (state.copy(invitations = state.invitations.updated(invitationId, expired)), Vector(AppEffect.PersistInvitation(expired)))
           case Some(invitation)                                 =>
-            val mismatch = expectedAccount.exists(account => account != result.fields.channelAccount)
-            val peer     = result.fields.userPub
-            val contact  = AppContact(
+            val mismatch     = expectedAccount.exists(account => account != result.fields.channelAccount)
+            val peer         = result.fields.userPub
+            val contact      = AppContact(
               userPub = peer,
               devicePub = result.fields.devicePub,
               channelLabel = invitation.invitation.fields.channelLabel,
@@ -213,16 +233,20 @@ object Application:
               safetyVerified = false,
               confirmation = if mismatch then ContactConfirmation.AccountMismatch else ContactConfirmation.Pending
             )
-            val session  = AppSession(result.state, conversationId, 1L)
-            val next     = state.copy(
+            val session      = AppSession(result.state, conversationId, 1L)
+            val conversation = state.conversations
+              .get(conversationId)
+              .getOrElse(Conversation(conversationId, peer, session.state.peerDevicePub, Map.empty, Set.empty, Map.empty))
+            val next         = state.copy(
               contacts = state.contacts.updated(peer, contact),
               sessions = state.sessions.updated(session.state.sessionId, session),
+              conversations = state.conversations.updated(conversationId, conversation),
               invitations = state.invitations - invitationId
             )
             (next, Vector(AppEffect.PersistContact(contact), AppEffect.PersistSession(session), AppEffect.DeleteInvitation(invitationId)))
-      case AppEvent.RejectInvitation(invitationId)                                              =>
+      case AppEvent.RejectInvitation(invitationId)                                                      =>
         (state.copy(invitations = state.invitations - invitationId), Vector(AppEffect.DeleteInvitation(invitationId)))
-      case AppEvent.StartRekey(sessionId, r1, rekeyId, nonce, nowMs)                            =>
+      case AppEvent.StartRekey(sessionId, r1, rekeyId, nonce, nowMs)                                    =>
         state.identity match
           case None                                    => (state, Vector.empty)
           case Some(identity) if state.lock.isUnlocked =>
@@ -234,9 +258,12 @@ object Application:
                   case Right(start) =>
                     val updated = value.copy(state = start.state)
                     val next    = state.copy(sessions = state.sessions.updated(sessionId, updated))
-                    (next, Vector(AppEffect.PersistSession(updated), AppEffect.SendRekeyRequest(sessionId, start.request)))
+                    (
+                      next,
+                      Vector(AppEffect.PersistSession(updated), AppEffect.SendRekeyRequest(sessionId, value.state.peerDevicePub, start.request))
+                    )
           case Some(_)                                 => (state, Vector.empty)
-      case AppEvent.RekeyRequestReceived(sessionId, request, r2, r2Next, nonce)                 =>
+      case AppEvent.RekeyRequestReceived(sessionId, request, r2, r2Next, nonce)                         =>
         state.identity match
           case None                                    => (state, Vector.empty)
           case Some(identity) if state.lock.isUnlocked =>
@@ -253,10 +280,10 @@ object Application:
                       state.sessions.updated(sessionId, oldSession).updated(session.state.sessionId, session)
                     )
                     val effects    = AppEffect.PersistSession(oldSession) +: newSession.map(AppEffect.PersistSession.apply).toVector :+ AppEffect
-                      .SendRekeyAccept(sessionId, result.accept)
+                      .SendRekeyAccept(sessionId, value.state.peerDevicePub, result.accept)
                     (state.copy(sessions = sessions), effects)
           case Some(_)                                 => (state, Vector.empty)
-      case AppEvent.RekeyAcceptReceived(sessionId, accept, confirmNonce)                        =>
+      case AppEvent.RekeyAcceptReceived(sessionId, accept, confirmNonce)                                =>
         state.identity match
           case None                                    => (state, Vector.empty)
           case Some(identity) if state.lock.isUnlocked =>
@@ -283,11 +310,11 @@ object Application:
                               Vector(
                                 AppEffect.PersistSession(oldSession),
                                 AppEffect.PersistSession(newSession),
-                                AppEffect.SendRekeyConfirm(newSession.state.sessionId, confirm.frame)
+                                AppEffect.SendRekeyConfirm(newSession.state.sessionId, newSession.state.peerDevicePub, confirm.frame)
                               )
                             )
           case Some(_)                                 => (state, Vector.empty)
-      case AppEvent.RekeyConfirmReceived(newSessionId, frame, expected, responseNonce, newDh)   =>
+      case AppEvent.RekeyConfirmReceived(newSessionId, frame, expected, responseNonce, newDh)           =>
         state.identity match
           case None                                    => (state, Vector.empty)
           case Some(identity) if state.lock.isUnlocked =>
@@ -307,9 +334,15 @@ object Application:
                   case Right(result) =>
                     val active = value.copy(state = result.state, retireOldOnFirstData = true)
                     val next   = state.copy(sessions = state.sessions.updated(newSessionId, active))
-                    (next, Vector(AppEffect.PersistSession(active), AppEffect.SendRekeyConfirmAck(newSessionId, result.frame)))
+                    (
+                      next,
+                      Vector(
+                        AppEffect.PersistSession(active),
+                        AppEffect.SendRekeyConfirmAck(newSessionId, value.state.peerDevicePub, result.frame)
+                      )
+                    )
           case Some(_)                                 => (state, Vector.empty)
-      case AppEvent.RekeyAckReceived(newSessionId, frame, expected, newDh)                      =>
+      case AppEvent.RekeyAckReceived(newSessionId, frame, expected, newDh)                              =>
         state.sessions.get(newSessionId) match
           case None        => (state, Vector.empty)
           case Some(value) =>
@@ -405,7 +438,7 @@ object Application:
       )
       val effects  =
         (if hadRetry then Vector(AppEffect.CancelTimer(retry)) else Vector.empty[AppEffect]) ++
-          Vector(AppEffect.SendWire(value.id, value.wire), AppEffect.StartTimer(delivery, deadline))
+          Vector(AppEffect.SendWire(value.peerDevicePub, value.id, value.generation, value.wire), AppEffect.StartTimer(delivery, deadline))
       (next, effects)
 
   private def markFailed(state: AppState, value: OutgoingMessage, attempts: Int): (AppState, Vector[AppEffect]) =
@@ -584,14 +617,14 @@ object Application:
               .encryptGap(session.state, identity.device.publicKey, identity.device.privateKey, expected, nonce)
               .toOption
               .fold((session, Vector.empty[AppEffect])) { case (next, frame) =>
-                (session.copy(state = next), Vector(AppEffect.SendGap(sessionId, frame)))
+                (session.copy(state = next), Vector(AppEffect.SendGap(sessionId, session.state.peerDevicePub, frame)))
               }
           case None if highest > 0L =>
             Ratchet
               .encryptDataAck(session.state, identity.device.publicKey, identity.device.privateKey, highest, nonce)
               .toOption
               .fold((session, Vector.empty[AppEffect])) { case (next, frame) =>
-                (session.copy(state = next), Vector(AppEffect.SendAck(sessionId, frame)))
+                (session.copy(state = next), Vector(AppEffect.SendAck(sessionId, session.state.peerDevicePub, frame)))
               }
           case None                 => (session, Vector.empty)
 

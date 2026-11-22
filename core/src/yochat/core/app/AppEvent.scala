@@ -38,7 +38,14 @@ enum AppEvent:
     nowMs: Long
   )
   case SafetyVerified(userPub: Ed25519Public, nowMs: Long)
-  case InvitationCreated(invitation: Invitation, ephemeralPrivate: X25519Private, expectedAccount: Option[String], nowMs: Long)
+
+  case InvitationCreated(
+    invitation: Invitation,
+    ephemeralPrivate: X25519Private,
+    ratchetPrivate: X25519Private,
+    expectedAccount: Option[String],
+    nowMs: Long
+  )
   case InvitationReceived(invitation: Invitation, expectedAccount: Option[String], nowMs: Long)
   case ReplyCreated(invitationId: ByteVector, conversationId: ByteVector, result: ReplyResult, nowMs: Long)
 
@@ -75,6 +82,7 @@ enum AppEffect:
   case PersistInbound(message: BufferedMessage, session: AppSession)
   case PersistContact(contact: AppContact)
   case PersistSession(session: AppSession)
+  case PersistSafetyVerified(userPub: Ed25519Public, verified: Boolean)
   case PersistInvitation(invitation: AppInvitation)
   case DeleteInvitation(invitationId: ByteVector)
   case DeleteSession(sessionId: SessionId, retirement: SessionRetirement)
@@ -87,14 +95,14 @@ enum AppEffect:
     seq: Long,
     transition: MessageTransition
   )
-  case SendWire(messageId: Long, wire: WireFrame)
-  case SendAck(sessionId: SessionId, frame: WireFrame)
-  case SendGap(sessionId: SessionId, frame: WireFrame)
-  case SendReply(invitationId: ByteVector, text: String)
-  case SendRekeyRequest(sessionId: SessionId, request: RekeyRequest)
-  case SendRekeyAccept(sessionId: SessionId, accept: RekeyAccept)
-  case SendRekeyConfirm(newSessionId: SessionId, frame: WireFrame)
-  case SendRekeyConfirmAck(newSessionId: SessionId, frame: WireFrame)
+  case SendWire(toDevice: Ed25519Public, messageId: Long, generation: Long, wire: WireFrame)
+  case SendAck(sessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame)
+  case SendGap(sessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame)
+  case SendReply(invitationId: ByteVector, toDevice: Ed25519Public, text: String)
+  case SendRekeyRequest(sessionId: SessionId, toDevice: Ed25519Public, request: RekeyRequest)
+  case SendRekeyAccept(sessionId: SessionId, toDevice: Ed25519Public, accept: RekeyAccept)
+  case SendRekeyConfirm(newSessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame)
+  case SendRekeyConfirmAck(newSessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame)
   case StartTimer(timer: TimerId, deadlineMs: Long)
   case CancelTimer(timer: TimerId)
   case Notify(notification: Notification)

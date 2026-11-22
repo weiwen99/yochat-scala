@@ -11,28 +11,61 @@ class AppEffectExecutorSpec extends FunSuite:
 
   final private class RecordingTransport(state: Ref[IO, Vector[String]]) extends AppTransport:
 
-    def sendWire(messageId: Long, wire: yochat.core.WireFrame): IO[Unit] =
+    def sendWire(
+      toDevice: yochat.core.Ed25519Public,
+      messageId: Long,
+      generation: Long,
+      wire: yochat.core.WireFrame
+    ): IO[Unit] =
       state.update(_ :+ s"wire:$messageId:${wire.bytes.toHex}")
 
-    def sendAck(sessionId: yochat.core.SessionId, frame: yochat.core.WireFrame): IO[Unit] =
+    def sendAck(
+      sessionId: yochat.core.SessionId,
+      toDevice: yochat.core.Ed25519Public,
+      frame: yochat.core.WireFrame
+    ): IO[Unit] =
       state.update(_ :+ s"ack:$sessionId:${frame.header.seq}")
 
-    def sendGap(sessionId: yochat.core.SessionId, frame: yochat.core.WireFrame): IO[Unit] =
+    def sendGap(
+      sessionId: yochat.core.SessionId,
+      toDevice: yochat.core.Ed25519Public,
+      frame: yochat.core.WireFrame
+    ): IO[Unit] =
       state.update(_ :+ s"gap:$sessionId:${frame.header.seq}")
 
-    def sendReply(invitationId: ByteVector, text: String): IO[Unit] =
+    def sendReply(
+      invitationId: ByteVector,
+      toDevice: yochat.core.Ed25519Public,
+      text: String
+    ): IO[Unit] =
       state.update(_ :+ s"reply:${invitationId.toHex}:$text")
 
-    def sendRekeyRequest(sessionId: yochat.core.SessionId, request: yochat.core.RekeyRequest): IO[Unit] =
+    def sendRekeyRequest(
+      sessionId: yochat.core.SessionId,
+      toDevice: yochat.core.Ed25519Public,
+      request: yochat.core.RekeyRequest
+    ): IO[Unit] =
       state.update(_ :+ s"rekey-request:$sessionId")
 
-    def sendRekeyAccept(sessionId: yochat.core.SessionId, accept: yochat.core.RekeyAccept): IO[Unit] =
+    def sendRekeyAccept(
+      sessionId: yochat.core.SessionId,
+      toDevice: yochat.core.Ed25519Public,
+      accept: yochat.core.RekeyAccept
+    ): IO[Unit] =
       state.update(_ :+ s"rekey-accept:$sessionId")
 
-    def sendRekeyConfirm(newSessionId: yochat.core.SessionId, frame: yochat.core.WireFrame): IO[Unit] =
+    def sendRekeyConfirm(
+      newSessionId: yochat.core.SessionId,
+      toDevice: yochat.core.Ed25519Public,
+      frame: yochat.core.WireFrame
+    ): IO[Unit] =
       state.update(_ :+ s"rekey-confirm:$newSessionId")
 
-    def sendRekeyConfirmAck(newSessionId: yochat.core.SessionId, frame: yochat.core.WireFrame): IO[Unit] =
+    def sendRekeyConfirmAck(
+      newSessionId: yochat.core.SessionId,
+      toDevice: yochat.core.Ed25519Public,
+      frame: yochat.core.WireFrame
+    ): IO[Unit] =
       state.update(_ :+ s"rekey-ack:$newSessionId")
 
     def startTimer(timer: TimerId, deadlineMs: Long): IO[Unit] =
@@ -171,12 +204,13 @@ class AppEffectExecutorSpec extends FunSuite:
     ExecutorTestSupport.withStore { store =>
       val fixture    = ExecutorTestSupport.fixture()
       val ephemeral  = ExecutorTestSupport.xpair(7)
+      val ratchet    = ExecutorTestSupport.xpair(8)
       val invitation = yochat.core.Invitation
         .create(
           fixture.identity.user,
           fixture.identity.device,
           ephemeral.publicKey,
-          ExecutorTestSupport.xpair(8).publicKey,
+          ratchet.publicKey,
           "test",
           "@alice",
           10_000L,
@@ -184,7 +218,10 @@ class AppEffectExecutorSpec extends FunSuite:
         )
         .fold(error => fail(error.toString), identity)
       val app        = AppState.empty.copy(identity = Some(fixture.identity), lock = LockState.Unlocked(0L))
-      val event      = Application.step(app, AppEvent.InvitationCreated(invitation, ephemeral.privateKey, Some("@bob"), 0L))
+      val event      = Application.step(
+        app,
+        AppEvent.InvitationCreated(invitation, ephemeral.privateKey, ratchet.privateKey, Some("@bob"), 0L)
+      )
       for
         ref      <- Ref.of[IO, Vector[String]](Vector.empty)
         executor  = new AppEffectExecutor(store, fixture.identity, new RecordingTransport(ref))
@@ -193,7 +230,8 @@ class AppEffectExecutorSpec extends FunSuite:
         record   <- store.loadInvitation(invitation.fields.ephPub.bytes)
         loaded   <- IO.fromEither(record.left.map(error => new AssertionError(error.code)))
       yield
-        assertEquals(loaded.data.ephemeralPrivate, ephemeral.privateKey)
+        assertEquals(loaded.data.ephemeralPrivate, Some(ephemeral.privateKey))
+        assertEquals(loaded.data.ratchetPrivate, Some(ratchet.privateKey))
         assertEquals(loaded.data.expiresAt, 10_000L)
     }
   }

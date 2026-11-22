@@ -36,6 +36,20 @@ private[store] object ConversationRepository:
       }
     }
 
+  def list(runtime: StoreRuntime): IO[Either[StorageError, List[ConversationRecord]]] =
+    runtime.run {
+      sql"SELECT id FROM conversations ORDER BY id".query[Array[Byte]].to[List].flatMap { ids =>
+        ids.foldLeft(FC.pure(List.empty[ConversationRecord])) { (acc, id) =>
+          acc.flatMap(values =>
+            row(ByteVector.view(id)).flatMap {
+              case Some(record) => FC.pure(values :+ record)
+              case None         => Sql.abort(StorageError.NotFound("conversation"))
+            }
+          )
+        }
+      }
+    }
+
   def advance(
     runtime: StoreRuntime,
     id: ByteVector,

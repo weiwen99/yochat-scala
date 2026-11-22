@@ -17,13 +17,13 @@ class InboundSpec extends FunSuite:
     val duplicate = Application.step(second._1, AppEvent.InboundFrame(102L, sessionId, frames(1), None, TestKeys.nonce(4), 0L))
 
     assert(first._2.exists { case AppEffect.PersistInbound(message, _) => message.seq == 1L; case _ => false })
-    assert(first._2.exists { case AppEffect.SendAck(_, _) => true; case _ => false })
+    assert(first._2.exists { case AppEffect.SendAck(_, _, _) => true; case _ => false })
     assert(third._2.exists { case AppEffect.Notify(Notification.Waiting) => true; case _ => false })
-    assert(third._2.exists { case AppEffect.SendGap(_, _) => true; case _ => false })
+    assert(third._2.exists { case AppEffect.SendGap(_, _, _) => true; case _ => false })
     assert(second._2.exists { case AppEffect.PersistInbound(message, _) => message.seq == 2L; case _ => false })
     assertEquals(second._1.conversations.values.head.nextSeq.getOrElse(peers.alice.user.publicKey, 1L), 4L)
     assert(!duplicate._2.exists { case AppEffect.PersistInbound(_, _) => true; case _ => false })
-    assert(duplicate._2.exists { case AppEffect.SendAck(_, _) => true; case _ => false })
+    assert(duplicate._2.exists { case AppEffect.SendAck(_, _, _) => true; case _ => false })
     assertEquals(duplicate._1.conversations.values.head.nextSeq.getOrElse(peers.alice.user.publicKey, 1L), 4L)
   }
 

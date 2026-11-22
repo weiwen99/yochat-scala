@@ -18,7 +18,7 @@ class OutboxSpec extends FunSuite:
     assertEquals(offline.timers, Map.empty)
     assertEquals(offline.outgoing(1L).state, OutgoingState.Queued)
     val (online, onlineEffects)   = Application.step(offline, AppEvent.ConnectionChanged(online = true, nowMs = 3L))
-    assert(onlineEffects.exists { case AppEffect.SendWire(1L, _) => true; case _ => false })
+    assert(onlineEffects.exists { case AppEffect.SendWire(_, 1L, _, _) => true; case _ => false })
     assertEquals(online.outgoing(1L).attempts, 2)
   }
 
@@ -31,7 +31,7 @@ class OutboxSpec extends FunSuite:
     val (afterOne, oneEffects)     = Application.step(queued, AppEvent.SendFailed(2L, generation, 2L))
     assert(oneEffects.exists { case AppEffect.StartTimer(TimerId(TimerKind.Retry, 2L), _) => true; case _ => false })
     val (afterTwo, twoEffects)     = Application.step(afterOne, AppEvent.TimerFired(TimerId(TimerKind.Retry, 2L), generation, 3L))
-    assert(twoEffects.exists { case AppEffect.SendWire(2L, _) => true; case _ => false })
+    assert(twoEffects.exists { case AppEffect.SendWire(_, 2L, _, _) => true; case _ => false })
     val (afterThree, threeEffects) = Application.step(afterTwo, AppEvent.SendFailed(2L, generation, 4L))
     assert(threeEffects.exists { case AppEffect.Notify(Notification.MessageFailed) => true; case _ => false })
     assertEquals(afterThree.outgoing(2L).state, OutgoingState.Failed)
@@ -44,6 +44,6 @@ class OutboxSpec extends FunSuite:
     val generation        = persisting.outgoing(3L).generation
     val (failed, effects) = Application.step(persisting, AppEvent.PersistOutboundFailed(3L, generation, 1L))
     assertEquals(failed.outgoing(3L).state, OutgoingState.Failed)
-    assert(!effects.exists { case AppEffect.SendWire(_, _) => true; case _ => false })
+    assert(!effects.exists { case AppEffect.SendWire(_, _, _, _) => true; case _ => false })
     assert(effects.exists { case AppEffect.Notify(Notification.MessageFailed) => true; case _ => false })
   }
