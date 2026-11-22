@@ -30,7 +30,7 @@
 - ADR-0006 §3.3 的“第一条业务消息携带双方账号与安全码断言”尚未定义 wire schema；当前只实现安全码验证状态和正文门。E2E#1/#2 前必须补。
 - 一次性邀请消费、账号不符的待确认状态、旧 session 行删除、SQLCipher/AEAD AAD 与 state_version 高水位属于 store/ADR-0007；本提交不声称完成。
 - 外部密码学评审仍是发布门；本记录不是密码学证明。
-- 1,000 条 <5s / ≤800MB / E2E 14 契约不在本提交；`./check.sh` 只覆盖单元与 spike 门。
+- 1,000 条 <5s、10k 两进程 E2E、≤800MB、E2E 15 契约不在本提交；10k 协议回放由后续 ADR-0008 记录补入 `core.test`。
 - `VectorsSpec` 的 handshake 固定值来自本实现 transcript；它防止回归，不作为独立密码学证明。KDF/初始/rekey 向量与 Python HKDF/HMAC 独立值对拍。
 
 ## ADR-0007 storage / doobie review
@@ -63,7 +63,7 @@
 - ADR-0007 已 accepted（内部 round 1/2/closure，无剩余 BLOCKER/MAJOR）；外部密码学评审未做。不得把 spike PASS 当 S1 完成。
 - 生产 `store/`、`KeyProvider`、`identity.bin`、联系人/邀请高水位、备份、崩溃注入、G8–G14/G16 在 ADR-0007 接受时未实现；本文件末尾的“生产 store 与 G8–G16 实现记录”关闭其中可执行部分，G13/G10 shell/G14 launcher 仍开放。
 - `ZTSE` 的 `REWRITE` 与人签字仍未完成；G10 的合法 key source 重开和 G11 的 contact/invitation 点查已由生产 store 测试覆盖，keychain shell 仍属 G10 外部。
-- 1,000 条 <5s、≤800MB、14 条 E2E 未跑；storage/doobie spike 不是这些门的替代。
+- 1,000 条 <5s、10k 两进程 E2E、≤800MB、15 条 E2E 未跑；10k 协议回放已由 ADR-0008 的 `core.test` 覆盖。
 
 ## 生产 `store/` 与 G8–G16 实现记录
 
@@ -81,7 +81,7 @@
 - 纯核心: `Application.step(AppState, AppEvent): (AppState, Vector[AppEffect])`；不读时钟、不取随机数、不做 IO。时间、nonce、DH 密钥、Reply/Rekey 结果、持久化完成/失败都由事件注入。
 - 覆盖: 应用锁/空闲锁定/旧代次结果丢弃（`AppLockSpec`）；邀请/应答、账号不符、拒绝静默、过期、安全码门（`RelationshipSpec`）；写前落盘：`PersistOutbound` 成功前不产生 `SendWire`，持久化失败不发（`OutboxSpec`）；单作者顺序、缺口缓冲、连续冲刷、去重（`ConversationSpec`、`InboundSpec`）；无匹配/锁定入站静默；重连有界重放、重试上限（`OutboxSpec`）；Q5 rekey request/accept/confirm/ack、旧 ReadOnly 会话在 cutover 后删除（`RekeyAppSpec`）。
 - 测试: `./mill core.test` 全绿；新增 app 测试 16 个。`AppEffect` 的持久化组由后续执行器按事务/顺序落地；当前 `PersistSession`/`PersistInbound` 是描述，不是已接 store 的 executor。
-- Quint: `models/` 有 Q1–Q5 五个有限模型与 `checks.json`；`./models/check.sh` 用 Quint 0.33.1 + Apalache 0.62.4 检查 `safe`，Q2/Q4/Q5 的 temporal 用 TLC。8 个 check 全部 `[ok]`；Q4 活性前提是连接最终稳定，Q3 不声称不公平网络下送达。模型抓到了 Q5 删除后追加 pending 的反例并已修正，也让 Q4 的公平性前提收紧。
+- Quint: `models/` 有 Q1–Q5 五个有限模型与 `checks.json`；ADR-0008 追加 Q6（ACK/缺口），现为 Q1–Q6、9 个 check。`./models/check.sh` 用 Quint 0.33.1 + Apalache 0.62.4 检查 `safe`，Q2/Q4/Q5 的 temporal 用 TLC；Q4 活性前提是连接最终稳定，Q3 只证明尝试预算，Q6 覆盖 ACK/缺口。模型抓到了 Q5 删除后追加 pending 的反例并已修正，也让 Q4 的公平性前提收紧。
 - Replay: `models/traces/{q1_relationship,q2_order,q3_resend,q4_reconnect,q5_rekey}.itf.json` 都是 seed=0x1 的固定轨迹，SHA-256 固定在 `checks.json` 与测试中。`ReplaySpec` 重放 Q2；`ReplayModelsSpec` 重放 Q1/Q3/Q4/Q5。Q1/Q3/Q4 比较逐状态观测投影；Q5 因 `start`/`firstData` 是抽象动作、与真实 control-frame 顺序不能一一对应，只执行核心 rekey 序列并检查每个 trace 状态的 Q5 安全不变量，不声称逐字段等价。所有重放直接调用真实 `Application.step`。
 - 未关闭: `AppState` 尚未接 `store/`、transport、server/UI；Q5 的 control-frame 路由由执行器传入显式事件；没有真实 E2E/性能回执。下一步是阶段 review；review 通过后再接 transport/runtime。
 
@@ -93,3 +93,13 @@
 - AppEffect 调整: `PersistInbound(message, session)` 让消息与候选 session 同事务；`DeleteSession(id, retirement)` 携带 initiator/responder proof；`UpdateMessageState` 用业务键而不是行 id；本地邀请携带 ephemeral private 以写入 `invitations.sealed`。
 - 测试: 4 个 executor 测试，覆盖 PersistOutbound→SendWire 精确 wire、SendSucceeded→store `Sent`、PersistInbound→`Received`、DeleteSession proof、邀请私钥落库；`./server.test` 全绿。
 - 未关闭: `AppTransport` 只是接口，真实 relay client 未实现；收到的邀请不持久化（本地邀请持久化）；`AppEffect` 到 transport 的失败回灌、事务分组、应用层消息 id 与 store 行 id 的展示映射、UI/E2E 仍未接。外部密码学评审仍是发布门。
+
+## ADR-0008 ACK / 缺口 / 有界状态（2026-11-22）
+
+- 对象: `core/src/yochat/core/MessageKind.scala`、`MessageHeader.scala`、`Ratchet.scala`、`core/src/yochat/core/app`、`store/src/yochat/store/Records.scala`、`server/src/yochat/server/AppEffectExecutor.scala`、`models/q6_delivery.qnt`；父提交 `192f1b8`。
+- 协议: 新增 `DataAck`/`Gap` 控制帧，均在会话棘轮下加密和签名；`DataAck.seq` 是累计确认，`Gap.seq` 是期望的下一条数据序号。`DataAck`/`Gap` 不占数据序号，不进入 `messages` 表。
+- 状态: `OutgoingState` 增加 `InFlight`；`MessageState` 增加 `Delivered`（码 5，保留 Pending=1/Sent=2/Received=3/Failed=4 的旧编码）；`Delivered` 只由认证 ACK 触发，`Sent` 仍只表示 transport 接受。
+- 窗口: `MaxInFlight = 32`、`MaxOutgoing = 1024`、`MaxFailedRetained = 64`；`seen` 只保留未应用的未来序号，`applied` 不再留在核心，`outgoing` 在 Delivered 时删除。
+- 测试: `DeliverySpec` 覆盖 ACK、Gap 重发、重复帧只回 ACK、32 条在途窗口、ACK 泵出下一条、1024 出站上限；`TenKReplaySpec` 以 32 条一批跑 10,000 条真实 `Application.step`，ACK 逐个回送，结果为 `TENK_REPLAY messages=10000 elapsed_ms=11504 outgoing=0 next_seq=10001`，低于 50s 门；`./mill core.test` 全绿。
+- 模型: 新增 Q6 `q6_delivery.qnt`，Apalache `safe` 通过；`./models/check.sh` 全部 9 个 check `[ok]`，`QUINT_CHECKS PASS`。Q3 仍只验证尝试预算；Q6 承担 ACK/缺口语义。
+- 未关闭: 真实 relay/transport 与两进程 10k E2E 仍未接；10k 协议回放不是 E2E，不替代 G13；UI 的“已交给中继/已送达/失败”显示在 M4 实现。

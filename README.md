@@ -1,10 +1,10 @@
 # YoChat (有聊)
 
-A serverless, end-to-end-encrypted, friend-to-friend messenger. This repository is a full rewrite of the 2026-09..2026-11 implementation. The old implementation is kept read-only at `~/projects/yochat-reference`; its requirements are snapshotted under `docs/spec/`.
+A no-account-server, end-to-end-encrypted, friend-to-friend messenger. S1 uses one minimal relay to forward ciphertext; without the relay, two devices on different networks cannot communicate. This repository is a full rewrite of the 2026-09..2026-11 implementation. The old implementation is kept read-only at `~/projects/yochat-reference`; its requirements are snapshotted under `docs/spec/`.
 
 ## Status
 
-Plan 0001 is at the M2/M3 boundary. `core/` contains the protocol core and a pure application kernel (`yochat.core.app`: lock, invitations/safety, write-before-send, ordering, reconnect, rekey); `models/` contains the five finite Q1–Q5 Quint models with Apalache/TLC receipts; and the production `store/` (doobie + SQLite + application-layer AEAD) exists. Q1–Q5 have fixed ITF traces replayed against the real Scala `Application.step` (Q5 as a safety-invariant projection); the `AppEffect` executor in `server/` persists through the store and calls an explicit transport sink. A real transport, runtime, UI/shell, the 14 E2E contracts and the two-process 1,000-message receipt are not implemented. The storage gates G8–G12/G15/G16 pass in `store/`; G10 keychain shell, G14 launcher, G13 E2E, and external cryptographic review remain open.
+Plan 0001 is at the M2/M3 boundary. `core/` contains the protocol core and a pure application kernel (`yochat.core.app`: lock, invitations/safety, write-before-send, ordering, reconnect, rekey); `models/` contains the six finite Q1–Q6 Quint models with Apalache/TLC receipts; and the production `store/` (doobie + SQLite + application-layer AEAD) exists. Q1–Q5 have fixed ITF traces replayed against the real Scala `Application.step` (Q5 as a safety-invariant projection); Q6 covers ACK/gap and is paired with `DeliverySpec`/`TenKReplaySpec`, without a fixed trace; the `AppEffect` executor in `server/` persists through the store and calls an explicit transport sink. A real transport, runtime, UI/shell, the 15 E2E contracts and the two-process 1k/10k receipts are not implemented. The storage gates G8–G12/G15/G16 pass in `store/`; G10 keychain shell, G14 launcher, G13 E2E, and external cryptographic review remain open.
 
 ## Read first
 

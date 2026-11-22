@@ -18,7 +18,7 @@
 | 配置项 | 8 | 16 | 2× | 中继地址、数据目录、锁参数、性能阈值、skip/rekey/retired-ratchet 上限 |
 | 工程师日 | 20（估算） | 25–35（估算） | 1.25–1.75× | 含 spike 与测试移植；不含 S2 |
 | 发布波次 | 1 | 1 | 1× | S1 一次交付 |
-| Quint 模型 | 旧 144（复盘口径；当前检出 170） | 5 | 0.03× | 只建模保留的一条协议路径 |
+| Quint 模型 | 旧 144（复盘口径；当前检出 170） | 6 | 0.04× | 只建模保留的一条协议路径 |
 | 生产代码 | 旧约 250k 行 | ≤30k 行 | 0.12× | 硬预算，不是愿望 |
 
 不要用「旧项目有 93 条需求」来论证本计划需要更多；那正是复盘里的范围放大。
@@ -46,7 +46,7 @@
 ## 目标
 
 1. 两个用户、每个用户各一台设备，完成邀请/应答加好友。
-2. 单聊消息先落盘再发送；按作者顺序应用，去重；缺失时等待并重发。
+2. 单聊消息先落盘再发送；按作者顺序应用，去重；认证 ACK 确认送达，缺口请求触发有界重发。
 3. 双方重启不丢消息；断网后重连继续。
 4. 安全门：签名验证、密文篡改拒绝、重放拒绝、密钥分离。
 5. 性能门与测试门进 `./check.sh`，回执存数值。
@@ -59,7 +59,7 @@
 - 跨作者最终全序（GBNV）：S2；S1 只保证同一作者顺序，T1 标记为不等价。
 - 群聊、文件传输：后续版本。
 - 恢复短语、四设备迁移接管：后续版本。
-- 联系人删除/拉黑：S3；不在 S1 的 14 条行为契约里。
+- 联系人删除/拉黑：S3；不在 S1 的 15 条行为契约里。
 - 完全 p2p / NAT 打洞：v1 是 relay-only（ADR-0002）。
 - 发布级 WCAG 审计、十万条首屏 500ms：S3。
 - 没有中继时，跨网两台设备不能通信。这是 v1 的已知约束。
@@ -115,7 +115,7 @@ def step(state: State, event: Event): (State, Vector[Effect])
 
 - `State` 只含纯数据：身份、联系人、会话、消息索引、待发/待确认集合、邀请、定时器身份、连接状态、加密会话状态（phase/safetyVerified/root/rekeyBase/ratchet/chain/skipped/retiredDh/rekey/rekeyAttempts/rekeyCooldown）、`lock`（locked/unlocked + generation）、`idleDeadline`、待确认关系。
 - `Event`：用户动作、网络到达、定时器到期、对端可达性变化、效果完成/失败、`Lock`/`Unlock`/`IdleTimeout`、邀请过期。
-- `Effect`：`Persist`、`Send`、`StartTimer`、`RequestRandom`、`Notify`。核心不产生包含正文、密钥、联系人名或公钥的日志事件；执行器统一脱敏。
+- `Effect`：`Persist`、`Send`、`SendAck`/`SendGap`、`StartTimer`、`RequestRandom`、`UpdateMessageState`、`Notify`。核心不产生包含正文、密钥、联系人名或公钥的日志事件；执行器统一脱敏。
 - 执行器负责：状态与效果同事务提交、效果幂等、稳定定时器身份、出站前重查授权；锁定事件递增 `lock.generation`，旧代数的在途结果不落地。
 - 核心不读时钟、不取随机数、不做 IO。时间与随机数作为事件输入。
 
@@ -125,7 +125,7 @@ def step(state: State, event: Event): (State, Vector[Effect])
 | --- | --- | --- |
 | `contacts` | `user_pub`, `sealed`, `version`, `created_at` | `sealed` 含渠道/账号/别名/备注/`safety_verified`/`confirmation_state`；AAD 绑定 `user_pub`+`version`；`safety_verified` 不在明文列 |
 | `conversations` | `id`, `peer_user_pub`, `created_at`, `last_applied_seq` | 一对一；每个用户各一台设备 |
-| `messages` | `id`, `conversation_id`, `session_id`, `author_pub`, `device_pub`, `seq`, `body`, `wire`, `state`, `created_at` | `body` 是应用层 AEAD 信封；`wire` 是完整 `header || ct || sig`，重发原样使用；`(session_id, device_pub, seq)` 唯一；`seq` 每作者每会话、跨 rekey 不重置 |
+| `messages` | `id`, `conversation_id`, `session_id`, `author_pub`, `device_pub`, `seq`, `body`, `wire`, `state`, `created_at` | `body` 是应用层 AEAD 信封；`wire` 是完整 `header || ct || sig`，重发原样使用；`(session_id, device_pub, seq)` 唯一；`seq` 每作者每会话、跨 rekey 不重置；`state` 含 `Pending/Sent/Delivered/Received/Failed` |
 | `invitations` | `id`, `sealed`, `version`, `created_at` | `sealed` 含一次性私钥、账号、有效期、状态、payload；AAD 绑定 `id`+`version`；过期/作废后删除并保留高水位 tombstone |
 | `sessions` | `id`, `peer_user_pub`, `peer_device_pub`, `state`, `state_version`, `generation`, `updated_at` | `state` 加密后存 phase/safetyVerified/root/rekeyBase/ratchet/chain/skipped/retiredDh/rekey/rekeyAttempts/rekeyCooldown；`state_version` 防回滚 |
 | `meta` | `key`, `value` | schema 版本、`lock-generation`、`session-state-version`/`contact-version`/`invitation-version` 高水位；`value` 只放整数 |
@@ -137,10 +137,10 @@ def step(state: State, event: Event): (State, Vector[Effect])
 1. **邀请**：S1 只做定向邀请。A 用用户私钥签名，携带 A 的用户公钥、A 的设备公钥、A 的渠道标签与权威账号、有效期、一次性公钥（同时是邀请 id）。邀请是文本，可粘贴到任何渠道。
 2. **应答**：B 生成自己的用户/设备密钥，用 A 的一次性公钥加密应答，签名覆盖整份邀请摘要与 B 的全部声明；B 的渠道标签/账号与 A 的声明进入载荷。只有 A 能解开。
 3. **建立关系**：A 解对应答，核对双方渠道账号；不符进待确认并标记。双方核对安全码（带外、人工）；`safety_verified=false` 前不发送/不呈现用户正文，只允许控制/rekey。B 在发出应答时完成本方确认；A 在第一条经认证操作后确认；邀请过期+宽限后降级并提示重新交换。拒绝应答只删本地待确认项，不产生任何信号。
-4. **单聊**：消息先落盘，再经中继发送；接收方先验签，再按 `(session_id, device_pub, seq)` 去重、解密、按 `author_pub + seq` 排序。入站先按联系人与邀请匹配；无匹配或未授权请求静默丢弃，不产生应用层响应。
-5. **等待/重发**：缺失消息时显示「等待」，由接收方在时限后请求重发；发送方在无确认时兜底重发。两者都有上限。
+4. **单聊**：消息先落盘，再经中继发送；接收方先验签，再按 `(session_id, device_pub, seq)` 去重、解密、按 `author_pub + seq` 排序。入站先按联系人与邀请匹配；无匹配或未授权请求静默丢弃，不产生应用层响应。`Sent` 只表示 transport 接受；收到认证 `DataAck` 后才写 `Delivered`。
+5. **等待/重发**：接收方按累计序号回 `DataAck`；出现缺口时回 `Gap(expected)`，同一缺口只回一次。发送方用有界在途窗口发送，ACK 推进窗口并取消 timer，Gap 触发 `expected` 之后的未确认消息重发。重试有上限；耗尽后标 `Failed` 并通知，不静默丢。
 6. **通道重建**：解密失败时由接收方发起重建并重传未确认消息；超过上限才告知用户。
-7. **断网重连**：连接状态变化是 `Event`；重连后有界重放未确认消息。
+7. **断网重连**：连接状态变化是 `Event`；断线时在途/已发消息回到排队，重连后按窗口有界重放未确认消息。
 
 S1 每个用户各一台设备，协议按「两成员组」建模；S2 扩展到多成员时沿用同一成员语义，不另写一套。S1 只保证同一作者顺序；跨作者最终全序（GBNV）在 S2，T1 标记为不等价。
 
@@ -163,16 +163,24 @@ A-first 不能直接用 Rust 的 p2panda 群棘轮。ADR-0006 已接受 S1 的�
 2. **联系人**：列表；加好友（粘贴邀请/应答）；显示安全码；待确认、账号不符、邀请过期/作废有独立状态。
 3. **聊天**：会话、消息列表、输入框；等待/重发/重建状态只显示为状态，不显示为错误。
 
+UI 验收（M4 前）：
+
+- 消息正文可用鼠标拖动选择和键盘复制；不得用全局 `user-select: none` 关掉选择。
+- 三屏各有用户故事；布局用 CSS 设计令牌，不做“所有功能平铺”的单页。
+- 发送状态区分“已交给中继”“已送达”“失败/等待”；`Sent` 不得显示成“已送达”。
+- 服务端通过 WebSocket 推送事件；UI 可以有时钟 timer 刷新相对时间，但不得用 timer 轮询网络帧。
+- 空、加载、错误、等待、缺口、队列满都有可见状态；不新增屏幕。
+
 不做旧文档里额外长出来的界面功能；新增一屏需要单独提案。
 
 ## 测试规格等价
 
 按 ADR-0004 的 T1：
 
-- Quint：邀请交换（Q1）、消息排序/去重（Q2）、等待/重发（Q3）、重连（Q4）、通道重建（Q5）。目标 5 个模型，不是 144；KEEP/DROP 映射见 `test-parity.md`。
-- Scala 属性/状态机：同生成器、同性质、同参考模型；真实 SQLite 事务与崩溃重启。`identity_creation.qnt` 与 `idle_autolock.qnt` 没有 5 个模型槽位，走 Scala 属性并在 `test-parity.md` 逐条签字。
-- 行为契约：14 个 E2E 场景（见 `docs/agents/verification.md`）；联系人删除/拉黑已移出 S1，#12 改为日志/诊断内容边界。
-- 单元测试：按新结构重写；不追求覆盖率。
+- Quint：邀请交换（Q1）、消息排序/去重（Q2）、尝试预算（Q3）、重连（Q4）、通道重建（Q5）、ACK/缺口（Q6）。目标 6 个模型，不是 144；KEEP/DROP 映射见 `test-parity.md`。Q3/Q4/Q6 的模型变更单独一轮并签字。
+- Scala 属性/状态机：同生成器、同性质、同参考模型；真实 SQLite 事务与崩溃重启。`identity_creation.qnt` 与 `idle_autolock.qnt` 没有 6 个模型槽位，走 Scala 属性并在 `test-parity.md` 逐条签字。
+- 行为契约：15 个 E2E 场景（见 `docs/agents/verification.md`）；新增“已连接时丢一帧，Gap 触发重发，双方只显示一次”；联系人删除/拉黑已移出 S1，#12 改为日志/诊断内容边界。
+- 单元测试：按新结构重写；不追求覆盖率。状态有界、旧序号重复、ACK 丢失、Gap 重发、队列满都要有失败用例。
 - `test-parity.md` 在实现计划里逐条登记旧测试；省略/弱化必须写理由并人签字。GBNV 标记为 S2 不等价，不静默忽略。
 - Kani 无 Scala 等价物：登记缺口，用属性测试补足或人工裁决。
 
@@ -180,11 +188,13 @@ A-first 不能直接用 Rust 的 p2panda 群棘轮。ADR-0006 已接受 S1 的�
 
 | 指标 | 阈值 | 方法 |
 | --- | --- | --- |
-| 1,000 条端到端 | <5s | 两台本地进程，固定数据与种子，中位数；A-first named gate，不校准 |
+| 1,000 条两进程端到端 | <5s | 两台本地进程，固定数据与种子，中位数；A-first named gate，不校准 |
+| 10,000 条协议回放 | <50s | 真实 `Application.step`，固定种子，无 IO；检查全部 `Delivered` 与状态有界 |
+| 10,000 条两进程端到端 | <60s | 真实 SQLite + transport harness；S1 交付门，首次回执如实记录 |
 | 冷启动 | p50 ≤2s / p95 ≤4s | 含 Electron 壳的 shell spike，进程启动到 UI 可交互；只校准一次 |
 | 空闲内存 | ≤800MB | 空闲 5 分钟后，JVM + Electron 合计；shell spike，不校准 |
 
-指标进 `./check.sh` 与回执；文档数字不是门。1,000 条 <5s 与 ≤800MB 不由 spike 失败后放宽；只有冷启动阈值按 ADR-0004 校准一次。
+指标进 `./check.sh` 与回执；文档数字不是门。1,000 条 <5s、10,000 条门与 ≤800MB 不由 spike 失败后放宽；只有冷启动阈值按 ADR-0004 校准一次。10k 阈值按 1k 线性推导，E2E 留 20% 余量；确需改阈值，单独写 ADR 并人签字。
 
 ## Spike（先于实现）
 
@@ -202,8 +212,8 @@ spike 的产物是代码、测量记录与 ADR，不是「调研结论」。没�
 
 1. **两方 ratchet/前向保密**：最高风险，但它是单独的方案 gate。ADR-0006 已做 D2 复用分析并选定 Signal Double Ratchet 两方子集；若实现或外部评审无法满足，重新设计或用新 ADR 再评估 B，不把失败记成 JVM/relay 路线不可行。
 2. **本地存储加密/密钥源**：ADR-0007 已选 plain SQLite + 应用层 AEAD；钥匙串/口令、`identity.bin`、崩溃/重启和回滚门仍需实现测试；失败不自动切 B，另开 ADR。
-3. **Electron + JVM 资源与生命周期**：shell spike 先验证；冷启动只校准一次，内存与 1,000 条门不放宽。
-4. **relay-only 改变产品叙事**：v1 明确写「没有账号服务器，但有一个中继」；不宣称完全 p2p。
+3. **Electron + JVM 资源与生命周期**：shell spike 先验证；冷启动只校准一次，内存、1,000 条与 10,000 条门不放宽。
+4. **relay-only 的产品取舍**：用户已于 2026-11-22 接受 S1 relay-only。文案统一为「没有账号服务器，但有一个中继」，UI 显示中继状态；不宣称完全 p2p。直连/NAT 穿透留到后续版本，另写 ADR。
 5. **测试移植工作量**：T1 限制在行为契约与领域不变量；按功能分批，不追全量。
 6. **范围回潮**：任何新增功能必须过 ADR-0003 的三问；删不掉就不进。删除判据只删功能，不删 ADR-0003 的 S1 安全不变量。
 
@@ -211,10 +221,10 @@ spike 的产物是代码、测量记录与 ADR，不是「调研结论」。没�
 
 - M0 约束与计划（本提交）。
 - M1 spike + ADR-0006（加密）、ADR-0007（存储，已接受；doobie + SQLite + 应用层 AEAD）。
-- M2 core 状态机 + 5 个 Quint 模型 + 对拍。
-- M3 store + transport + relay + 邀请/应答。
+- M2 core 状态机 + Q1–Q6 Quint 模型 + 对拍。
+- M3 store + transport + relay + 邀请/应答 + 数据 ACK/缺口 + 有界发送窗口。
 - M4 UI 三屏 + Electron 壳。
-- M5 E2E 行为契约 + 性能门 + test-parity。
+- M5 E2E 行为契约 + 1k/10k 性能门 + test-parity。
 - M6 合入、清理工作树、更新 impl。
 
 ## 取代的旧文档
@@ -230,5 +240,5 @@ spike 的产物是代码、测量记录与 ADR，不是「调研结论」。没�
 2. 互发 100 条消息，顺序正确、无重复；双方重启后仍在；S1 只保证同一作者顺序，GBNV 不在 v1。
 3. 断网、重连，未确认消息继续送达。
 4. 篡改密文/签名/重放被拒绝；应用锁、空闲锁定、日志/诊断无秘密、入站准入按 ADR-0003 的不可删清单落地。
-5. 14 条 E2E 行为契约全绿；性能回执含三个指标；`test-parity.md` 无未签字省略。
+5. 15 条 E2E 行为契约全绿；性能回执含 1k/10k、冷启动和内存指标；`test-parity.md` 无未签字省略。
 6. 生产代码 ≤30k 行、测试 ≤15k 行、最大文件 ≤2k 行、最大模块 ≤8k 行。

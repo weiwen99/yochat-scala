@@ -13,7 +13,7 @@ YoChat (有聊) 的重写仓库。给在本仓库工作的 AI 与人：先读本
 
 ## 1. 项目定位
 
-YoChat 是一个 serverless、端到端加密的 friend-to-friend IM。本仓是 2026-09..2026-11 实现的完全重写。旧实现只读在 `~/projects/yochat-reference`。
+YoChat 是一个无账号服务器、端到端加密的 friend-to-friend IM。S1 使用一个最小中继转发密文；没有中继时，跨网的两台设备不能通信。本仓是 2026-09..2026-11 实现的完全重写。旧实现只读在 `~/projects/yochat-reference`。
 
 **v1 是 S1**（ADR-0003）：一个用户 + 一个联系人，各一台设备；加好友、单聊、先落盘再发、重启不丢、断网重连。多设备、历史同步、吊销传播、群聊、文件传输不在 v1。
 
@@ -41,7 +41,7 @@ Scala 代码必须遵守 `scala-best-practices`。写、改、重构或评审 Sc
 - 先量规模再写设计：表数、组件数、配置项、工程师日、发布波次；任一维度产出 > 需求 3× 必须解释，解释不了就砍。
 - 每个新抽象必须解释为什么不能复用现有模式。
 - v1 范围外的保证写成「已知约束」，不造抽象填它。
-- 协议只保留一条路径：relay-only（不做直连/NAT 打洞）、单聊、先落盘再发、离线重试。多设备、历史同步、吊销传播不进 v1。
+- 协议只保留一条路径：relay-only（不做直连/NAT 打洞）、单聊、先落盘再发、认证 ACK/缺口请求、有界发送窗口、离线重试。多设备、历史同步、吊销传播不进 v1。
 - S1 只保证同一作者顺序；跨作者最终全序（GBNV）不在 v1，T1 标记为不等价。
 - 协议设计定稿后冻结 Quint 模型；只允许实现模型，不允许顺手改模型。改模型单独一轮，人签字。
 - 涉及数据库事务必须写全局锁序。
@@ -64,9 +64,9 @@ Scala 代码必须遵守 `scala-best-practices`。写、改、重构或评审 Sc
 ## 6. 测试与验证
 
 - 三层：Quint 协议性质；Scala 属性/状态机测试；行为契约 E2E。
-- 行为契约固定 14 个场景，不随重构改。单测可重写；每个 bug 修复先写失败用例。
+- 行为契约固定 15 个场景，不随重构改。单测可重写；每个 bug 修复先写失败用例。
 - 测试规格等价按 T1（ADR-0004）：保留功能的旧测试逐条映射；未移植的写进 `test-parity.md` 并说明理由，人签字。不得静默删除、跳过或放宽断言。
-- 性能进自动门：1,000 条端到端 <5s 与空闲内存 ≤800MB 是硬门，不校准；冷启动 p50/p95 由含 Electron 壳的 spike 测量，只校准一次。回执存数值。
+- 性能进自动门：1,000 条两进程端到端 <5s；10,000 条协议回放 <50s；10,000 条两进程端到端 <60s；空闲内存 ≤800MB。1,000 条与 10,000 条端到端是 S1 交付门；冷启动 p50/p95 由含 Electron 壳的 spike 测量，只校准一次。回执存数值，不静默放宽。
 - 测试结果必须真实：不得伪造；不得用类型检查、轨迹采样或有限状态探索冒充性质证明；不完整回执不算通过。
 - 门禁红先分类：隔离重跑固定落点 = 本提交缺陷；落点漂移 = 负载型 flake。不得用全局 `-j 1` 掩盖。
 - 开发期按改动影响范围跑定向检查并复用有效结果；全量门禁留到可集成批次或交付前。只有新改动、失败或未解决风险才扩大验证。
@@ -101,4 +101,4 @@ Scala 代码必须遵守 `scala-best-practices`。写、改、重构或评审 Sc
 
 ## 10. 当前状态
 
-计划 0001 在 M2/M3 边界：`core/` 协议核心、M2 纯应用状态机（`yochat.core.app`）、Q1–Q5 有限 Quint 模型（`models/`，Apalache 安全性质 + TLC 时间性质）与生产 `store/`（doobie + SQLite + 应用层 AEAD、高水位、锁代次、备份、崩溃注入）已实现；ADR-0006/0007 accepted。G8–G12、G15、G16 由生产 store 测试覆盖。Q1–Q5 都有固定 ITF trace 与 Scala `Application.step` replay（Q5 只做安全不变量投影）；`server/` 已有 AppEffect 执行器（store 持久化 + transport sink），但真实 transport、runtime、UI 与 14 条 E2E 尚未完成。G10 keychain shell、G14 Electron launcher、G13 两进程 1,000 条 E2E 仍开放；模型通过不替代 S1。
+计划 0001 在 M2/M3 边界：`core/` 协议核心、M2 纯应用状态机（`yochat.core.app`）、Q1–Q6 有限 Quint 模型（`models/`，Apalache 安全性质 + TLC 时间性质）与生产 `store/`（doobie + SQLite + 应用层 AEAD、高水位、锁代次、备份、崩溃注入）已实现；ADR-0006/0007/0008 accepted。G8–G12、G15、G16 由生产 store 测试覆盖。Q1–Q5 有固定 ITF trace 与 Scala `Application.step` replay（Q5 只做安全不变量投影）；Q6 覆盖 ACK/缺口，由 `DeliverySpec`/`TenKReplaySpec` 对拍，无固定 trace。`server/` 已有 AppEffect 执行器（store 持久化 + transport sink），但真实 transport、runtime、UI 与 15 条 E2E 尚未完成。G10 keychain shell、G14 Electron launcher、G13 两进程 1k/10k E2E 仍开放；模型通过不替代 S1。

@@ -3,14 +3,16 @@
 - 对象：`worktrees/plan-0001-a-first-spike`，分支 `feat/plan-0001-a-first-spike`，HEAD `2cee672`；`main` 在 `ee29802`。
 - 对照文件：[AGENTS.md](../../AGENTS.md)、[ADR-0002](../adr/0002-technology-stack.md)、[ADR-0003](../adr/0003-v1-scope.md)、[ADR-0004](../adr/0004-test-parity-and-performance-gates.md)、[设计文档](../plans/2026/11/0001-yochat-rewrite/design.md)、[2026-11-20 复盘](2026-11-20-yochat-postmortem/summary.md)。
 - 目的：汇总最近一周两个微信群中与 YoChat 有关的讨论，区分旧 Rust 实现与当前 Scala 重写，再对照 ADR、设计和已提交代码，列出偏差与调整。
-- 本文只新增文档，没有修改产品代码；M3 的 transport/runtime WIP 仍在 `git stash@{0}`，未恢复，也不作为已完成实现评估。
+- 本文成文时只新增文档，没有修改产品代码；裁决后的协议/状态实现见 `ADR-0008` 与后续提交。M3 的 transport/runtime WIP 仍在 `git stash@{0}`，本文不把它当作已完成实现评估。
+
+> 状态说明（2026-11-22 晚）：下面的“当前代码”指评估时的 `2cee672`。当日裁决后，relay-only 文案、ACK/缺口、有界状态和 10k 协议回放门已按 ADR-0008 实现；仍未完成的是 1k/10k 两进程 E2E、真实 transport/runtime 和 UI。
 
 ## 结论
 
 1. 范围与工程约束基本对齐。S1 仍是“两台设备、加好友、单聊、先落盘、重启、重连”；现有生产代码约 5,755 行，远低于 30k 预算，但 UI/transport/E2E 尚未实现，不能按最终规模解读；模块边界、查询计划、评审轮次上限都有对应规则。
-2. 产品叙事有硬冲突。`AGENTS.md` 和 `README.md` 写的是 “serverless”，ADR-0002/0003 和设计写的是 relay-only。群里反复说的是“没有中心服务器”“点对点直接通讯”。中继就是服务器，这两个说法不能同时成立。
-3. 送达语义没有落地。设计写“发送方在无确认时兜底重发、接收方在时限后请求重发”，但当前代码没有数据帧的 ACK 或缺口请求；`Sent` 只表示 transport sink 接受了帧。5 秒定时重发、3 次后失败，会把 transport 接受误当成送达，也会在重试耗尽后留下无法修复的失败状态。
-4. 核心状态有三个无界集合。`Conversation.seen`、`Conversation.applied`、`AppState.outgoing` 都会随消息数增长；旧实现的 10k 失败回放里出现了 20,001 条待发效果和 9,901 个重复日志位置。当前代码会随消息数持续增长，1,000 条以上会明显放大，长时间使用需要先修这个形状。
+2. 产品叙事有硬冲突。评估时 `AGENTS.md` 和 `README.md` 写的是 “serverless”，ADR-0002/0003 和设计写的是 relay-only；群里反复说的是“没有中心服务器”“点对点直接通讯”。中继就是服务器，这两个说法不能同时成立。
+3. 送达语义没有落地。评估时设计写“发送方在无确认时兜底重发、接收方在时限后请求重发”，但代码没有数据帧的 ACK 或缺口请求；`Sent` 只表示 transport sink 接受了帧。5 秒定时重发、3 次后失败，会把 transport 接受误当成送达，也会在重试耗尽后留下无法修复的失败状态。
+4. 核心状态有三个无界集合。评估时 `Conversation.seen`、`Conversation.applied`、`AppState.outgoing` 都会随消息数增长；旧实现的 10k 失败回放里出现了 20,001 条待发效果和 9,901 个重复日志位置。评估时的代码会随消息数持续增长，1,000 条以上会明显放大，长时间使用需要先修这个形状。
 5. UI 还没实现，问题还在设计层。群里说的单页平铺、没有 CSS、消息不能拖动选择、UI 定时器轮询网络包，当前设计只给了“三屏”，没有给可验收的 UI 约束。
 
 ## 来源与口径
@@ -127,7 +129,7 @@ flw 在 `125799` 给的建议是：自用不必解释太多；如果要让别人
 - 原句与位置：`AGENTS.md` 第 1 节“YoChat 是一个 serverless、端到端加密的 friend-to-friend IM”；`README.md` 开头“A serverless, end-to-end-encrypted, friend-to-friend messenger”；ADR-0002“v1 不是「完全 p2p」：没有中心账号服务器，但有一个中继”；群消息 `117173`、`124029`。
 - 对应规则：ADR-0002 的后果要求产品文案如实描述；`AGENTS.md` 第 9 节要求一手来源、对象、版本、口径一致；ADR 与顶层定位冲突应先提出，不能静默覆盖。
 - 问题与影响：同一个项目同时声称“serverless”和“有一个中继”。中继是常在线服务器，至少是转发和路由的单点。按群里的标准，这已经不是他要的产品。继续这样写，会让 UI、README、验收场景都建立在错误叙事上。
-- 关闭证据：由人裁决 S1 是否接受 relay-only。接受则统一改成“没有账号服务器，但有一个中继”，UI 显示中继状态，不再使用 serverless；不接受则停止 M3，重定 S1 拓扑。仅改一处文案不算关闭。
+- 关闭证据：已裁决接受 relay-only（2026-11-22）。`AGENTS.md`/`README.md` 已改成“没有账号服务器，但有一个中继”，ADR-0002 追加确认；UI 中继状态在 M4 实现。
 - 规模代价：接受 relay-only 约 0.5 人日文档与文案；改为直连 p2p 需要 NAT 穿透、回落和新的传输 spike，可能触发 ADR-0002 的 B 方案，不能塞进当前 S1。
 
 #### 2. 送达确认缺失
@@ -135,23 +137,23 @@ flw 在 `125799` 给的建议是：自用不必解释太多；如果要让别人
 - 原句与位置：`docs/plans/2026/11/0001-yochat-rewrite/design.md` 协议路径第 5 条“发送方在无确认时兜底重发；接收方在时限后请求重发”；`core/src/yochat/core/app/AppEvent.scala` 只有 `SendSucceeded`/`SendFailed`；`core/src/yochat/core/MessageKind.scala` 只有 `Data`、`RekeyConfirm`、`RekeyConfirmAck`；`AppTypes.scala` 的 `OutgoingState` 只有 `Persisting/Queued/Sent/Failed`；`AppStep.scala` 的 `DeliveryTimeoutMs = 5_000`、`MaxSendAttempts = 3`。
 - 对应规则：设计必须忠实实现；行为契约覆盖断网重连和 1,000 条吞吐；所有等待和重试有界；测试结果不得把 transport 接受当成对端送达。
 - 问题与影响：`SendSucceeded` 只表示 transport sink 接受了帧，`MessageTransition.Sent` 也只写 store 的 `Sent`。没有对端 ACK，也没有缺口请求。定时器到点后无条件重发，3 次后标记 `Failed`。这会在对端其实已收到时产生假失败，也会在重试耗尽后让消息停在失败状态；接收方没有缺口修复，发送方如果只看到 `Sent` 就会误以为已送达。群里 600 帧/30 秒 ACK 的冲突和 9,901 个重复位置，都是同一类语义缺失的放大版。
-- 关闭证据：增加认证过的数据 ACK 和缺口请求，接收方确认最高连续序号，发送方据此把消息标成 `Delivered` 并停表；或者明确把 `Sent` 降级为“已交给中继”，删除“送达”承诺，并接受重试耗尽后的失败。推荐前者。协议变更需要单独一轮模型修改、人签字，不能顺手改 Q3/Q4。
-- 规模代价：ACK/缺口约 2–3 人日，新增一个控制帧类型、一个状态和一组测试；模型修改单独一轮。若只改文案，代码代价低，但 S1 的“断网重连能续”只剩有限次重放，不能证明送达。
+- 关闭证据：已实现认证 `DataAck`/`Gap`、`OutgoingState.InFlight`、`MessageState.Delivered`；ACK 累计确认并停表，Gap 触发窗口内重发，重复数据只回 ACK。见 ADR-0008、`DeliverySpec`、`TenKReplaySpec`。1k/10k 两进程 E2E 仍在 M5。
+- 规模代价：ACK/缺口约 2–3 人日，新增两个控制帧类型、一个状态和一组测试；Q6 模型一轮。若只改文案，代码代价低，但 S1 的“断网重连能续”只剩有限次重放，不能证明送达。
 
 #### 3. 核心状态无界
 
 - 原句与位置：`core/src/yochat/core/app/AppTypes.scala` 中 `Conversation.seen: Set[MessageKey]`、`Conversation.applied: Vector[AppliedMessage]`、`AppState.outgoing: Map[Long, OutgoingMessage]`；`Conversation.accept` 对旧序号重复也执行 `seen + key`；`AppStep.scala` 的 `SendSucceeded` 只改状态，不删除 `outgoing`；`lock` 只过滤 `Persisting`。
 - 对应规则：`AGENTS.md` 第 5 节“所有操作有界结束：等待、队列、重试、广播都有上限和截止”；“大状态、正文、缓冲集合与网络帧……写明内存预算与释放时机”；`docs/agents/engineering.md` 同一约束。
 - 问题与影响：`seen` 对每个旧重复都增长；`applied` 保存全部正文；`outgoing` 保存已发送消息的 body 和 wire，直到进程退出。S1 只发 100 条时看不出来，1,000 条性能门和日常长聊会持续增长。旧实现的 20,001 条待发效果、9,901 个重复位置就是这种形状。旧序号重复还是无界增长的入口，不需要对端有恶意，只要重放或 bug 就能触发。
-- 关闭证据：用 `nextSeq` 加有界乱序窗口替代无限 `seen`；低于水位的老序号直接拒绝，不记录；核心不再保存完整 `applied` 历史，store 作为历史来源；`Delivered`/`Failed` 后按保留窗口清理 `outgoing`。加一条 1,000 条收发后的状态大小不变量测试，再加一条旧序号重放测试。
-- 规模代价：约 1–2 人日，改 `Conversation`/`AppState` 和重放测试；模型的大部分安全性质不变，但 Q2 的 `seen` 抽象要跟着改。
+- 关闭证据：已用 `nextSeq` 加有界乱序缓冲替代无限 `seen`；低于水位的老序号直接拒绝、不记录；核心不再保存完整 `applied` 历史，store 作为历史来源；`Delivered` 时删除 `outgoing`，`Failed` 受 64 条保留上限。`DeliverySpec` 覆盖旧序号重复不增长、32 条窗口、1024 出站上限；`TenKReplaySpec` 以 10k 条验证最终 `outgoing=0`、`next_seq=10001`。Q2 的 replay 改为 `nextSeq`/`buffered` 投影。
+- 规模代价：约 1–2 人日，改 `Conversation`/`AppState` 和重放测试；模型的大部分安全性质不变。
 
 #### 4. 发送端没有流控
 
 - 原句与位置：`AppStep.scala` 的 `PersistOutboundSucceeded` 在在线时立即 `SendWire` 并为每条消息启动 delivery timer；`replay` 把所有 `Queued`/`Sent` 按 message id 全量重发；`AppTypes.scala` 只有入站 `MaxBuffered = 256`，没有出站上限。
-- 对应规则：所有队列有界；性能门 1,000 条端到端 <5s；群消息 `124164`、`124633`、`124838` 的失败模式。
+- 对应规则：所有队列有界；性能门 1,000 条端到端 <5s、10,000 条 <50s/60s；群消息 `124164`、`124633`、`124838` 的失败模式。
 - 问题与影响：1,000 条突发会生成 1,000 个发送效果和 1,000 个定时器；transport 或对端慢时没有背压，重连时整队重放会和新消息争同一连接。没有优先级队列，所以不会像旧实现那样饿死低优先级消息，但仍会形成重试风暴。600 帧/分钟是过紧的固定限流，当前没有限流是另一个极端。
-- 关闭证据：按 peer 维护有界 in-flight 窗口，收到 ACK 再推进；窗口级一个定时器或退避调度，不为每条消息建 timer；出站队列设上限，满了让 UI 明确显示；不做消息优先级。用 1,000 条突发加 10% 丢包/重连测试证明没有无界增长和长时间饥饿。
+- 关闭证据：已实现 `MaxInFlight=32`、`MaxOutgoing=1024` 和 `pump`；在线按窗口发送，ACK 推进窗口，重连不再全量重发。每消息 timer 仍在，但最多 32 个；窗口级单 timer/批量 ACK 留作后续优化。`DeliverySpec` 覆盖 40 条发送只放 32 条、ACK 泵出第 33 条；`TenKReplaySpec` 覆盖 10k 条。
 - 规模代价：约 1–2 人日，依赖 ACK 决策；没有 ACK 时只能做出站队列上限，不能做可靠的窗口推进。
 
 #### 5. UI 验收缺失
@@ -162,13 +164,13 @@ flw 在 `125799` 给的建议是：自用不必解释太多；如果要让别人
 - 关闭证据：在 M4 前补 UI 验收：三屏各自的用户故事；消息文本可用鼠标和键盘选择复制；CSS 设计令牌和基本布局；空/加载/错误/等待状态；服务端通过 WebSocket 推送事件，UI 不轮询网络帧；发送状态区分“已交给中继/已送达/失败”。加一条 DOM 测试检查消息文本可选，一条架构检查确认 UI 没有网络轮询定时器。
 - 规模代价：约 1 人日设计加 M4 测试，不新增屏幕。
 
-#### 6. 性能门尚未兑现
+#### 6. 性能门只兑现协议层
 
-- 原句与位置：`AGENTS.md` 第 6 节“1,000 条端到端 <5s 与空闲内存 ≤800MB 是硬门”；`check.sh` 当前跑 core/store/server 测试、Quint 检查和 `spike.run demo --messages 100 --reconnect`，没有两进程 1,000 条 E2E、冷启动或内存回执；`store/test/src/yochat/store/ThroughputSpec.scala` 只测 1,000 次 store 写+读；ADR-0005 的 1,000 条 107ms 是本机回环、无持久化、无 UI 的 spike。
+- 原句与位置：`AGENTS.md` 第 6 节的 1k/10k 性能门；`check.sh` 当前跑 core/store/server 测试、Quint 检查和 `spike.run demo --messages 100 --reconnect`；`core.test` 已含 `TenKReplaySpec`，但还没有两进程 1,000 条 E2E、10,000 条 E2E、冷启动或内存回执；`store/test/src/yochat/store/ThroughputSpec.scala` 只测 1,000 次 store 写+读；ADR-0005 的 1,000 条 107ms 是本机回环、无持久化、无 UI 的 spike。
 - 对应规则：ADR-0004 性能硬门；`docs/agents/verification.md` 要求回执含命令、版本、输入哈希、判词。
-- 问题与影响：M2 绿不等于 S1 性能绿。当前没有两进程 E2E、没有重启/重连、没有冷启动和内存回执。把 store 测试或 spike 数字当成 1,000 条端到端，会重复旧复盘里“文档数字不是门”的错误。
-- 关闭证据：M5 补两进程 1,000 条 E2E、重启/重连、冷启动 p50/p95、空闲内存的回执，进 `check.sh`；在那之前只在状态里写“未验证”。10k/100k 不作为 S1 硬门；如果要做，放在 S1 之后作为诊断，并单独定义口径。
-- 规模代价：M5 的计划内工作，不新增功能；若现在就把 10k 变成硬门，会逼出历史同步和更大队列，超出 S1。
+- 问题与影响：10k 协议回放已绿（`TENK_REPLAY messages=10000 elapsed_ms=11504`），但它不覆盖 SQLite、真实 transport、进程重启或 UI；M2 绿仍不等于 S1 性能绿。把 store 测试、spike 数字或协议回放当成 1,000/10,000 条端到端，会重复旧复盘里“文档数字不是门”的错误。
+- 关闭证据：10k 协议回放已进 `core.test` 并断言 <50s；M5 仍需补两进程 1,000 条 E2E、10,000 条两进程 E2E、重启/重连、冷启动 p50/p95、空闲内存回执。10k 进 S1 门；100k 不进，另行定义口径。
+- 规模代价：M5 的计划内工作，不新增功能；10k 门会暴露窗口、ACK 批量、SQLite 事务和 timer 数量的问题，失败先修，不加优先级队列。
 
 ### 不是偏差，但要写清楚
 
@@ -181,12 +183,12 @@ flw 在 `125799` 给的建议是：自用不必解释太多；如果要让别人
 
 | 优先级 | 调整 | 触发点 | 验证 |
 | --- | --- | --- | --- |
-| P0 | 裁决 relay-only 是否可作为 S1 产品契约；统一 `AGENTS.md`、`README.md`、ADR、UI 文案 | 恢复 M3 前 | 文档一致性检查；UI 显示中继状态 |
-| P0 | 增加数据 ACK 与缺口请求，定义 `Delivered`；或明确 `Sent` 只是 transport 接受 | 恢复 M3 前 | 新 Q3/Q4 模型轮次；丢包/重连 E2E |
-| P0 | 有界化 `seen`、`applied`、`outgoing`；拒绝旧序号不记账 | 恢复 M3 前 | 1,000 条状态大小不变量；旧序号重放测试 |
+| P0 | 已裁决：接受 relay-only；统一 `AGENTS.md`、`README.md`、ADR、UI 文案 | 已完成 | 文档一致性检查；UI 显示中继状态 |
+| P0 | 已裁决：增加数据 ACK 与缺口请求，定义 `Delivered`；`Sent` 只表示 transport 接受 | 恢复 M3 前 | 新 Q3/Q4 模型轮次；丢包/重连 E2E |
+| P0 | 已裁决：有界化 `seen`、`applied`、`outgoing`；拒绝旧序号不记账 | 恢复 M3 前 | 1,000 条状态大小不变量；旧序号重放测试 |
 | P1 | 发送窗口与出站队列上限；窗口级重试，不做优先级队列 | M3 transport/runtime | 1,000 条突发 + 10% 丢包；无饥饿 |
 | P1 | UI 三屏的用户故事与验收：文本可选、CSS 令牌、状态语义、事件推送 | M4 前 | DOM 选择测试；无网络轮询定时器 |
-| P1 | 1,000 条两进程 E2E、重启/重连、冷启动、内存回执进 `check.sh` | M5 | 完整回执；不以 store/spike 代替 |
+| P1 | 1,000 条两进程 E2E、10,000 条协议回放、10,000 条两进程 E2E、重启/重连、冷启动、内存回执进 `check.sh` | M5 | 完整回执；不以 store/spike 代替 |
 | P2 | 257 条缺口边界测试；溢出可见 | M5 | 边界测试；UI 显示等待/溢出 |
 | P2 | 写 S2 的多设备顺序与历史可见性约束 | S2 立项前 | ADR 或设计评审；不在 S1 实现 |
 
@@ -201,26 +203,26 @@ flw 在 `125799` 给的建议是：自用不必解释太多；如果要让别人
 ### 不建议的调整
 
 - 不把多设备、历史同步、吊销传播塞进 S1。群里的 `124001`、`124046` 说明它们复杂，不是催它们进 v1。
-- 不把 10k/100k 变成 S1 硬门。S1 保持 1,000 条端到端门；10k 先作为 S1 后的诊断，并单独定义口径。
+- 不把 100k 变成 S1 硬门。10k 已进 S1：10k 协议回放 <50s，10k 两进程 E2E <60s；100k 需要单独定义历史同步、持久化和 UI 口径。
 - 不引入消息优先级。旧实现的饿死就是优先级队列造成的；S1 用有界窗口和 FIFO 即可。
 - 不为回应 UI 批评增加屏幕或功能。先把三屏的用户故事、CSS 布局、可选文本和状态语义做对。
 - 不启动第四次整体重写。当前问题是可达的局部修改；按 `AGENTS.md` 的 strangler 规则替换模块。
 
-## 需要人裁决
+## 裁决结果（2026-11-22）
 
-1. S1 是否接受 relay-only。接受则把它写成“没有账号服务器，但有一个中继”，并在 UI 显示中继状态；不接受则当前 ADR-0002/0003 与 S1 计划需要重定，M3 不应恢复。
-2. 是否在 S1 加数据 ACK 与缺口请求。推荐加；这是把 `Sent` 和 `Delivered` 分开的最小改动，也是 100 条/1,000 条验收能解释清楚的前提。
-3. 是否接受核心状态有界化带来的模型/测试修改。推荐接受；这是仓库“所有队列有界”规则的直接要求，不是性能优化。
-4. UI 的目标用户是自用还是给别人用。自用可以保留三屏、少解释；给别人用则按 `125799` 先写用户故事，再逐场景展开。
-5. 10k/100k 是否进入 S1 门。推荐不进；S1 保持 1,000 条硬门，10k 作为 S1 后的诊断，且必须先定义“消息条数、历史同步、持久化、UI”各自的口径。
+1. S1 接受 relay-only。产品文案统一为“没有账号服务器，但有一个中继”，UI 显示中继状态；直连/NAT 穿透留到后续版本。
+2. 加数据 ACK 与缺口请求；把 `Sent`（transport 接受）与 `Delivered`（对端认证确认）分开。
+3. 先修 `seen`/`applied`/`outgoing` 的无界状态，再恢复 M3。
+4. 10k 进 S1 性能门：10k 协议回放 <50s，10k 两进程 E2E <60s；100k 不进。
+5. 仍未裁决：UI 的目标用户是自用还是给别人用。自用可以保留三屏、少解释；给别人用则按 `125799` 先写用户故事，再逐场景展开。
 
 ## 证据边界
 
 - 微信群内容是参与者自述，不是对旧实现的独立代码审计；旧实现的数字和根因以 D 的发言为准，本文不把它们升级为对当前 Scala 分支的实测。
-- 当前分支只到 M2/M3 边界：没有真实 transport、runtime、UI/shell、14 条 E2E；`server/` 只有 AppEffect 执行器，没有事件循环。M3 stash 未评估。
-- 生产代码行数是物理行（含空行和注释）：`core/src` 2,970，`store/src` 2,451，`server/src` 334，合计 5,755；测试 3,400。`spike/` 是可行性证据，不计入生产预算。
+- 当前分支只到 M2/M3 边界：没有真实 transport、runtime、UI/shell、15 条 E2E；`server/` 只有 AppEffect 执行器，没有事件循环。M3 stash 未评估。
+- 生产代码行数是评估时的物理行（含空行和注释）：`core/src` 2,970，`store/src` 2,451，`server/src` 334，合计 5,755；测试 3,400。`spike/` 是可行性证据，不计入生产预算。
 - 10k/100k 的口径按群里的自我更正记为 1 万条；`124614` 的“十万通过”不作为已验证结论。
-- 本文没有重跑 `./check.sh`；M2 的绿色回执沿用上一轮结果。新增的只有这份文档和索引行。
+- 本文成文时没有重跑 `./check.sh`；裁决后的 ACK/有界状态实现已跑 `./check.sh` 并全绿，10k 协议回放回执见 `impl.md`；评估时 M2 的绿色回执沿用上一轮结果。
 
 ## 复现查询
 

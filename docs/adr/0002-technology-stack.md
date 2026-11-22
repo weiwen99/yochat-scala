@@ -65,3 +65,7 @@ A-first **传输/加密** spike（5 人日）必须证明：
 - JVM + Electron 的包体与空闲内存高于 Tauri；冷启动由含壳的 spike 校准一次，内存是硬门。
 - SQLCipher/JDBC、两方 ratchet/FS、Electron↔JVM 生命周期、Laminar 长列表都是 spike；没有通过 spike 之前不写实现。
 - B 是受控回退，不是第二条并行路径；同一时间只有一条网络实现。
+
+## 2026-11-22 产品契约确认
+
+用户确认 S1 接受 relay-only。产品文案统一为「没有账号服务器，但有一个中继」；不使用 serverless，不宣称完全 p2p。UI 必须显示中继状态。直连/NAT 穿透仍不在 S1，留到后续版本；若后续要改，另写 ADR，不在实现里静默改变拓扑。

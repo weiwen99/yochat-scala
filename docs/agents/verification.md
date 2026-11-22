@@ -32,7 +32,7 @@ Quint registry: `models/checks.json` with the main module, backend, invariants, 
 
 ## Behavior contracts
 
-14 E2E scenarios for S1, fixed across refactors:
+15 E2E scenarios for S1, fixed across refactors:
 
 1. first invitation and reply;
 2. add contact and show it on both sides;
@@ -47,7 +47,8 @@ Quint registry: `models/checks.json` with the main module, backend, invariants, 
 11. tampered signature rejected;
 12. log and diagnostics contain no message content, contact names, public keys, or key material;
 13. app lock and unlock;
-14. a message that cannot be decrypted triggers channel rebuild, not silent loss.
+14. a message that cannot be decrypted triggers channel rebuild, not silent loss;
+15. one data frame is dropped while connected; receiver sends `Gap`, sender resends, both sides show it once, and the sender ends in `Delivered`.
 
 Contact removal and blocking are S3, not S1; they are not a behavior contract for v1.
 
@@ -69,11 +70,21 @@ Unit tests may be rewritten. Every bug fix starts with a failing case. Do not ch
 
 ## Performance gates
 
-- 1,000 messages end-to-end <5s on the S1 setup.
+- 1,000 messages two-process end-to-end <5s on the S1 setup.
+- 10,000-message protocol replay <50s through real `Application.step`, fixed seed, no IO.
+- 10,000-message two-process end-to-end <60s with real SQLite and the transport harness.
+- 100,000 messages are not an S1 gate; a future run needs its own definition.
 - Cold start p50 ≤2s / p95 ≤4s (calibrate after the first spike).
 - Idle memory ≤800MB.
 - Same seed, same data, isolated processes; report median and p95; no heavy concurrent load.
 - The gate stores numbers in a receipt. A number in a document is not a gate.
+- 10k thresholds are derived linearly from the 1k gate, with 20% slack on E2E. Failures are fixed, not relaxed; changing a threshold needs a separate ADR and human sign-off.
+
+## State bounds
+
+- After 1,000 sent and received messages, `outgoing` is at most the in-flight window plus the failed-retention cap; `buffered` is at most `MaxBuffered`; `seen` contains only buffered future sequences.
+- Replaying an already-applied sequence must not grow `seen` or `buffered`.
+- `applied` history is not retained in core state; SQLite is the history source.
 
 ## Check scope
 
