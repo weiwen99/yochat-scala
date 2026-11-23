@@ -92,6 +92,9 @@ private[store] object Sql:
       case Right(result) => FC.pure(result)
       case Left(_)       => abort(StorageError.InvalidEnvelope)
 
+  def bindingKey(conversationId: ByteVector): String =
+    s"binding/${conversationId.toHex}"
+
   def sessionVersionKey(sessionId: SessionId): String =
     s"session-state-version/${sessionId.bytes.toHex}"
 

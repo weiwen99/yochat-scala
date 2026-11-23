@@ -262,8 +262,11 @@ final class ServiceProcess(
     val response = http.postEmpty(s"$base/api/contacts/$userPub/safety")
     requireStatus(s"$name verify safety", response, 200)
 
+  def trySendMessage(conversationId: String, body: String): HttpResult =
+    http.post(s"$base/api/conversations/$conversationId/messages", ujson.Obj("body" -> body))
+
   def sendMessage(conversationId: String, body: String): Long =
-    val response = http.post(s"$base/api/conversations/$conversationId/messages", ujson.Obj("body" -> body))
+    val response = trySendMessage(conversationId, body)
     requireStatus(s"$name send message", response, 200)
     E2E.longValue(response.json("messageId"))
 

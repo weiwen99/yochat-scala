@@ -9,6 +9,7 @@ enum CoreError:
   case InvalidInvitation
   case InvalidReply
   case InvalidSignature
+  case InvalidBinding
   case InvalidCiphertext
   case DuplicateSeq
   case Replay

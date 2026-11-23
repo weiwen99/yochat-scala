@@ -59,10 +59,12 @@ final case class AppSession(
   state: RatchetState,
   conversationId: ByteVector,
   nextSeq: Long,
-  retireOldOnFirstData: Boolean = false
+  retireOldOnFirstData: Boolean = false,
+  bindingEstablished: Boolean = true
 ):
 
-  override def toString: String = s"AppSession(conversation=$conversationId, nextSeq=$nextSeq, phase=${state.phase})"
+  override def toString: String =
+    s"AppSession(conversation=$conversationId, nextSeq=$nextSeq, phase=${state.phase}, binding=$bindingEstablished)"
 
 enum OutgoingState:
   case Persisting, Queued, InFlight, Sent, Failed

@@ -190,6 +190,9 @@ class ReplayModelsSpec extends FunSuite:
     )
     val ack                       = bobConfirmEffects.collectFirst { case AppEffect.SendRekeyConfirmAck(_, _, value) => value }.getOrElse(fail("missing ack"))
     val alice2                    = Application.step(alice1, AppEvent.RekeyAckReceived(newSession, ack, expected, AppTestSupport.xpair(64)))._1
+    val payload                   = AppTestSupport
+      .userPayload(alice2, 1L, Crypto.text("new-session-data"))
+      .fold(error => fail(error.toString), identity)
     val (_, frame)                = Ratchet
       .encryptUser(
         alice2.sessions(newSession).state,
@@ -197,7 +200,7 @@ class ReplayModelsSpec extends FunSuite:
         peers.alice.device.privateKey,
         1L,
         TestKeys.nonce(14),
-        Crypto.text("new-session-data")
+        payload
       )
       .fold(error => fail(error.toString), identity)
     val (bob2, dataEffects)       = Application.step(

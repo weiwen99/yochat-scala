@@ -25,7 +25,10 @@ private[store] object SnapshotRepository:
                              MessageRepository.listAllProgram(runtime, conversation.id).map(records => values.updated(conversation.id, records.toList))
                            )
                          }
-    yield StoreSnapshot(contacts, invitations, sessions, conversations, messages)
+      bindings        <- sql"SELECT key FROM meta WHERE key LIKE 'binding/%'".query[String].to[List].map { keys =>
+                           keys.flatMap(key => ByteVector.fromHex(key.stripPrefix("binding/"))).toSet
+                         }
+    yield StoreSnapshot(contacts, invitations, sessions, conversations, messages, bindings)
 
   private def ids(values: ConnectionIO[List[Array[Byte]]]): ConnectionIO[List[ByteVector]] =
     values.map(_.map(ByteVector.view))

@@ -165,6 +165,7 @@ private[store] object MessageRepository:
           _          <- Sql.changed(changed)
           messageId  <- sql"SELECT last_insert_rowid()".query[Long].unique
           _          <- SessionRepository.writeHighWater(prepared)
+          _          <- if seq == 1L then Sql.writeMeta(Sql.bindingKey(conversationId), 1L) else FC.unit
           _          <- retired.foldLeft(FC.unit) { case (acc, (sessionId, role, evidence)) =>
                           acc.flatMap(_ => SessionRepository.retireProgram(runtime, sessionId, lock, role, evidence))
                         }

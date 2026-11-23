@@ -11,7 +11,7 @@ import cats.effect.std.Semaphore
 import scodec.bits.ByteVector
 import ujson.Value
 
-import yochat.core.app.{AppEvent, AppState}
+import yochat.core.app.{AppEvent, AppLimits, AppState}
 import yochat.core.SessionId
 import yochat.store.{KeySource, MessageRecord, Store, StoreConfig, StorePaths}
 import yochat.transport.RelayClient
@@ -154,10 +154,21 @@ final class AppService private (
 
   def messagesJson(conversationId: ByteVector, limit: Int): IO[Either[ServiceError, Value]] =
     withRunningEither { running =>
-      running.store.listRecentMessages(conversationId, limit).map {
-        case Right(records) => Right(ApiJson.messages(records, running.store.identity.userPublic.bytes))
-        case Left(error)    => Left(ServiceError.StoreFailed(error.code))
-      }
+      for
+        state   <- running.runtime.state
+        records <- running.store.listRecentMessages(conversationId, math.min(1_000, limit + AppLimits.MaxBuffered))
+      yield records
+        .map { values =>
+          val localUser    = running.store.identity.userPublic.bytes
+          val conversation = state.conversations.get(conversationId)
+          val visible      = values.filter(record =>
+            record.authorPub.bytes == localUser ||
+              conversation.exists(value => ApiJson.visible(record, value, localUser))
+          )
+          ApiJson.messages(ApiJson.ordered(visible).takeRight(limit), localUser)
+        }
+        .left
+        .map(error => ServiceError.StoreFailed(error.code))
     }
 
   def createInvitation(

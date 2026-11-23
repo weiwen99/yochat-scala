@@ -7,7 +7,7 @@ import scodec.bits.ByteVector
 import ujson.Value
 
 import yochat.core.{Invitation, SafetyNumber, SessionPhase}
-import yochat.core.app.{AppContact, AppState, ContactConfirmation, Conversation, InvitationLifecycle}
+import yochat.core.app.{AppContact, AppLimits, AppState, ContactConfirmation, Conversation, InvitationLifecycle}
 import yochat.store.{MessageRecord, MessageState, Store}
 
 object ApiJson:
@@ -53,6 +53,13 @@ object ApiJson:
       "sessions"      -> ujson.Arr(sessions(state)*)
     )
 
+  def visible(record: MessageRecord, conversation: Conversation, localUser: ByteVector): Boolean =
+    record.authorPub.bytes == localUser ||
+      record.seq < conversation.nextSeq.getOrElse(record.authorPub, 1L)
+
+  def ordered(records: List[MessageRecord]): List[MessageRecord] =
+    records.sortBy(record => (record.seq, record.id))
+
   def messages(records: List[MessageRecord], localUser: ByteVector): Value =
     ujson.Arr(records.map(messageJson(_, localUser))*)
 
@@ -86,6 +93,12 @@ object ApiJson:
   def error(error: ServiceError): Value =
     ujson.Obj("error" -> error.code)
 
+  private def lastVisible(store: Store, conversation: Conversation, localUser: ByteVector): IO[Option[MessageRecord]] =
+    store.listRecentMessages(conversation.id, AppLimits.MaxBuffered + 1).map {
+      case Right(records) => ordered(records.filter(record => visible(record, conversation, localUser))).lastOption
+      case Left(_)        => None
+    }
+
   private def contactJson(store: Store, state: AppState, contact: AppContact): IO[Value] =
     val conversation = state.conversations.values.find(_.peerUserPub == contact.userPub)
     val safety       = state.identity
@@ -112,56 +125,37 @@ object ApiJson:
           )
         )
       case Some(conversation) =>
-        store
-          .listRecentMessages(conversation.id, 1)
-          .map {
-            case Right(records) => records.headOption
-            case Left(_)        => None
-          }
-          .map { record =>
-            ujson.Obj(
-              "userPub"            -> contact.userPub.bytes.toHex,
-              "devicePub"          -> contact.devicePub.bytes.toHex,
-              "displayName"        -> displayName(contact),
-              "channelLabel"       -> contact.channelLabel,
-              "channelAccount"     -> contact.channelAccount,
-              "peerChannelAccount" -> contact.peerChannelAccount.map(value => ujson.Str(value)).getOrElse(ujson.Null),
-              "alias"              -> contact.alias.map(value => ujson.Str(value)).getOrElse(ujson.Null),
-              "safetyCode"         -> safety,
-              "safetyVerified"     -> contact.safetyVerified,
-              "confirmation"       -> confirmation(contact.confirmation),
-              "conversationId"     -> conversation.id.toHex,
-              "lastMessage"        -> record.map(value => decodeBody(value.body)).getOrElse(""),
-              "lastMessageAt"      -> record.map(_.createdAt).getOrElse(0L)
-            )
-          }
+        lastVisible(store, conversation, state.identity.map(_.user.publicKey.bytes).getOrElse(ByteVector.empty)).map { record =>
+          ujson.Obj(
+            "userPub"            -> contact.userPub.bytes.toHex,
+            "devicePub"          -> contact.devicePub.bytes.toHex,
+            "displayName"        -> displayName(contact),
+            "channelLabel"       -> contact.channelLabel,
+            "channelAccount"     -> contact.channelAccount,
+            "peerChannelAccount" -> contact.peerChannelAccount.map(value => ujson.Str(value)).getOrElse(ujson.Null),
+            "alias"              -> contact.alias.map(value => ujson.Str(value)).getOrElse(ujson.Null),
+            "safetyCode"         -> safety,
+            "safetyVerified"     -> contact.safetyVerified,
+            "confirmation"       -> confirmation(contact.confirmation),
+            "conversationId"     -> conversation.id.toHex,
+            "lastMessage"        -> record.map(value => decodeBody(value.body)).getOrElse(""),
+            "lastMessageAt"      -> record.map(_.createdAt).getOrElse(0L)
+          )
+        }
 
   private def conversationJson(store: Store, state: AppState, conversation: Conversation): IO[Value] =
-    store.listRecentMessages(conversation.id, 1).map {
-      case Right(records) =>
-        val last               = records.headOption
-        val contact            = state.contacts.get(conversation.peerUserPub)
-        ujson.Obj(
-          "id"            -> conversation.id.toHex,
-          "peerUserPub"   -> conversation.peerUserPub.bytes.toHex,
-          "peerName"      -> contact.map(displayName).getOrElse(short(conversation.peerUserPub.bytes)),
-          "lastMessage"   -> last.map(value => decodeBody(value.body)).getOrElse(""),
-          "lastMessageAt" -> last.map(_.createdAt).getOrElse(0L),
-          "unread"        -> false,
-          "waiting"       -> conversation.gapRequested.isDefined,
-          "buffered"      -> conversation.buffered.size
-        )
-      case Left(_)        =>
-        ujson.Obj(
-          "id"            -> conversation.id.toHex,
-          "peerUserPub"   -> conversation.peerUserPub.bytes.toHex,
-          "peerName"      -> state.contacts.get(conversation.peerUserPub).map(displayName).getOrElse(short(conversation.peerUserPub.bytes)),
-          "lastMessage"   -> "",
-          "lastMessageAt" -> 0L,
-          "unread"        -> false,
-          "waiting"       -> conversation.gapRequested.isDefined,
-          "buffered"      -> conversation.buffered.size
-        )
+    lastVisible(store, conversation, state.identity.map(_.user.publicKey.bytes).getOrElse(ByteVector.empty)).map { last =>
+      val contact            = state.contacts.get(conversation.peerUserPub)
+      ujson.Obj(
+        "id"            -> conversation.id.toHex,
+        "peerUserPub"   -> conversation.peerUserPub.bytes.toHex,
+        "peerName"      -> contact.map(displayName).getOrElse(short(conversation.peerUserPub.bytes)),
+        "lastMessage"   -> last.map(value => decodeBody(value.body)).getOrElse(""),
+        "lastMessageAt" -> last.map(_.createdAt).getOrElse(0L),
+        "unread"        -> false,
+        "waiting"       -> conversation.gapRequested.isDefined,
+        "buffered"      -> conversation.buffered.size
+      )
     }
 
   private def invitations(state: AppState): Vector[Value] =

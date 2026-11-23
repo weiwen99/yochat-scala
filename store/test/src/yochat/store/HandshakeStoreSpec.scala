@@ -1,6 +1,7 @@
 package yochat.store
 
 import munit.FunSuite
+import org.typelevel.doobie.implicits.*
 import scodec.bits.ByteVector
 
 class HandshakeStoreSpec extends FunSuite:
@@ -112,6 +113,38 @@ class HandshakeStoreSpec extends FunSuite:
             snapshot.map(_.messages.get(conversation).toList.flatten.map(_.attempts)),
             Right(List(3))
           )
+      }
+    finally StoreTestSupport.deleteTree(directory)
+  }
+
+  test("first-data append records a binding marker; deleting it exposes legacy data") {
+    val directory = StoreTestSupport.temporaryDirectory("yochat-store-binding-")
+    try
+      val session      = StoreTestSupport.stateWith(StoreTestSupport.edPublic(), StoreTestSupport.edPublic(), 24, safetyVerified = false)
+      val conversation = StoreTestSupport.conversationId(24)
+      StoreTestSupport.withStore(directory) { store =>
+        for
+          _        <- store.insertContact(session.peerUserPub, StoreTestSupport.contact(), 0L)
+          _        <- store.createConversation(conversation, session.peerUserPub, 0L)
+          _        <- store.insertSession(session, 0L)
+          _        <- store.appendOutbound(
+                        session,
+                        1L,
+                        0L,
+                        conversation,
+                        session.peerUserPub,
+                        session.peerDevicePub,
+                        1L,
+                        StoreTestSupport.body("hello"),
+                        StoreTestSupport.wire(session, 1L),
+                        MessageState.Pending
+                      )
+          marked   <- store.snapshot
+          _         = StoreTestSupport.raw(store)(sql"DELETE FROM meta WHERE key LIKE 'binding/%'".update.run)
+          legacy   <- store.snapshot
+        yield
+          assertEquals(marked.map(_.bindings), Right(Set(conversation)))
+          assertEquals(legacy.map(_.bindings), Right(Set.empty[ByteVector]))
       }
     finally StoreTestSupport.deleteTree(directory)
   }

@@ -59,6 +59,9 @@ class RekeyAppSpec extends FunSuite:
     })
 
     val aliceNew                    = aliceAcked.sessions(newSessionId)
+    val payload                     = AppTestSupport
+      .userPayload(aliceAcked, 1L, yochat.core.Crypto.text("new"))
+      .fold(error => fail(error.toString), identity)
     val (_, frame)                  = Ratchet
       .encryptUser(
         aliceNew.state,
@@ -66,7 +69,7 @@ class RekeyAppSpec extends FunSuite:
         peers.alice.device.privateKey,
         1L,
         TestKeys.nonce(14),
-        yochat.core.Crypto.text("new")
+        payload
       )
       .fold(error => fail(error.toString), identity)
     val direct                      = Ratchet.decrypt(bobConfirmed.sessions(newSessionId).state, frame, false, Some(AppTestSupport.xpair(10)))

@@ -118,11 +118,13 @@ object AppStateRestore:
       }
     }
 
+  private def sessionConversation(snapshot: StoreSnapshot, record: SessionRecord): Option[ByteVector] =
+    val byPeer    = snapshot.conversations.filter(_.peerUserPub == record.state.peerUserPub).sortBy(_.id.toHex).headOption
+    val byMessage = snapshot.messages.values.flatten.find(_.sessionId == record.state.sessionId).map(_.conversationId)
+    byMessage.orElse(byPeer.map(_.id))
+
   private def sessionFrom(snapshot: StoreSnapshot, record: SessionRecord): Either[StorageError, AppSession] =
-    val peer         = record.state.peerUserPub
-    val byPeer       = snapshot.conversations.filter(_.peerUserPub == peer).sortBy(_.id.toHex).headOption
-    val byMessage    = snapshot.messages.values.flatten.find(_.sessionId == record.state.sessionId).map(_.conversationId)
-    val conversation = byMessage.orElse(byPeer.map(_.id))
+    val conversation = sessionConversation(snapshot, record)
     conversation match
       case None     => Left(StorageError.NotFound("session-conversation"))
       case Some(id) =>
@@ -138,7 +140,9 @@ object AppStateRestore:
             rekey.role == yochat.core.RekeyRole.Responder && rekey.newSessionId.contains(record.state.sessionId)
           )
         }
-        Right(AppSession(record.state, id, math.max(1L, nextSeq), retireOldOnFirstData = retireOld))
+        val hasData     = snapshot.messages.get(id).exists(_.nonEmpty)
+        val bound       = snapshot.bindings.contains(id) || !hasData
+        Right(AppSession(record.state, id, math.max(1L, nextSeq), retireOldOnFirstData = retireOld, bindingEstablished = bound))
 
   private def outgoingFrom(
     snapshot: StoreSnapshot,
@@ -171,9 +175,10 @@ object AppStateRestore:
       case MessageState.Received | MessageState.Delivered => Right(None)
       case state                                          =>
         sessions.get(record.sessionId) match
-          case None if state == MessageState.Failed => Right(None)
-          case None                                 => Left(StorageError.NotFound("outgoing-session"))
-          case Some(value)                          =>
+          case None if state == MessageState.Failed     => Right(None)
+          case None                                     => Left(StorageError.NotFound("outgoing-session"))
+          case Some(value) if !value.bindingEstablished => Right(None)
+          case Some(value)                              =>
             WireFrame
               .parse(record.wire)
               .map { wire =>

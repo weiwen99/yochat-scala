@@ -310,9 +310,8 @@ object S1E2E:
     pair.b.awaitSafety(handshake.aUser, verified = true)
 
   private def assertNoPreSafetyBody(pair: Pair, handshake: Handshake, label: String): Unit =
-    pair.a.sendMessage(handshake.aConversation, s"$label-before-safety")
-    // Queue a command after the send and wait for its durable completion. The runtime is a single FIFO, so the send event has been
-    // processed before this returns; an empty history is then meaningful without a wall-clock sleep.
+    val response = pair.a.trySendMessage(handshake.aConversation, s"$label-before-safety")
+    ensure(response.status == 400, s"$label pre-safety send returned ${response.status}, expected 400")
     pair.a.createInvitation(None)
     ensure(pair.a.messages(handshake.aConversation).isEmpty, s"$label pre-safety body persisted on A")
     ensure(pair.b.messages(handshake.bConversation).isEmpty, s"$label pre-safety body arrived on B")

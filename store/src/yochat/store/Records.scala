@@ -85,7 +85,8 @@ final case class StoreSnapshot(
   invitations: List[InvitationRecord],
   sessions: List[SessionRecord],
   conversations: List[ConversationRecord],
-  messages: Map[ByteVector, List[MessageRecord]]
+  messages: Map[ByteVector, List[MessageRecord]],
+  bindings: Set[ByteVector] = Set.empty
 )
 
 final case class HandshakeWrite(

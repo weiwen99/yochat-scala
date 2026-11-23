@@ -45,14 +45,18 @@ object AppTestSupport:
       bobUser.publicKey,
       bobDevice.publicKey,
       aliceReply.state.copy(safetyVerified = true),
-      conversation(bobUser.publicKey, bobDevice.publicKey)
+      conversation(bobUser.publicKey, bobDevice.publicKey),
+      channelAccount = "@alice",
+      peerChannelAccount = "@bob"
     )
     val bobState      = sessionState(
       bobIdentity,
       aliceUser.publicKey,
       aliceDevice.publicKey,
       bobReply.state.copy(safetyVerified = true),
-      conversation(aliceUser.publicKey, aliceDevice.publicKey)
+      conversation(aliceUser.publicKey, aliceDevice.publicKey),
+      channelAccount = "@bob",
+      peerChannelAccount = "@alice"
     )
     Peers(aliceIdentity, bobIdentity, aliceState, bobState, invitation, aliceEph, bobReply, aliceReply)
 
@@ -61,9 +65,12 @@ object AppTestSupport:
     peerUser: Ed25519Public,
     peerDevice: Ed25519Public,
     ratchet: RatchetState,
-    conversation: Conversation
+    conversation: Conversation,
+    channelAccount: String = "@peer",
+    peerChannelAccount: String = "@peer"
   ): AppState =
-    val contact = AppContact(peerUser, peerDevice, "test", "@peer", Some("@peer"), safetyVerified = true, ContactConfirmation.Confirmed)
+    val contact =
+      AppContact(peerUser, peerDevice, "test", channelAccount, Some(peerChannelAccount), safetyVerified = true, ContactConfirmation.Confirmed)
     val session = AppSession(ratchet, conversation.id, 1L)
     AppState.empty.copy(
       identity = Some(identity),
@@ -90,18 +97,45 @@ object AppTestSupport:
     val value = X25519Private.from(bytes).fold(error => throw new IllegalStateException(error.toString), identity)
     X25519KeyPair.fromSeed(value).fold(error => throw new IllegalStateException(error.toString), identity)
 
-  def sendFrames(identity: LocalIdentity, state: RatchetState, count: Int): (RatchetState, Vector[WireFrame]) =
+  def sendFrames(
+    identity: LocalIdentity,
+    state: RatchetState,
+    count: Int,
+    senderAccount: String = "@alice",
+    peerAccount: String = "@bob"
+  ): (RatchetState, Vector[WireFrame]) =
+    val payloadForSeq =
+      (seq: Long) =>
+        val binding =
+          if seq == 1L then
+            SafetyNumber
+              .derive(identity.user.publicKey, state.peerUserPub)
+              .toOption
+              .map(safety => DataBinding(senderAccount, peerAccount, safety.digits))
+          else None
+        (body: ByteVector) =>
+          DataPayload
+            .encode(DataPayload(binding, body))
+            .fold(error => throw new IllegalStateException(error.toString), Predef.identity)
     (1 to count).toVector.foldLeft((state, Vector.empty[WireFrame])) { case ((current, frames), index) =>
-      val nonce = TestKeys.nonce(index)
+      val nonce   = TestKeys.nonce(index)
+      val payload = payloadForSeq(index.toLong)(ByteVector.view(s"body-$index".getBytes("UTF-8")))
       Ratchet
-        .encryptUser(
-          current,
-          identity.device.publicKey,
-          identity.device.privateKey,
-          index.toLong,
-          nonce,
-          ByteVector.view(s"body-$index".getBytes("UTF-8"))
-        )
+        .encryptUser(current, identity.device.publicKey, identity.device.privateKey, index.toLong, nonce, payload)
         .fold(error => throw new IllegalStateException(error.toString), Predef.identity) match
         case (next, frame) => (next, frames :+ frame)
     }
+
+  def userPayload(state: AppState, seq: Long, body: ByteVector): Either[CoreError, ByteVector] =
+    for
+      identity <- state.identity.toRight(CoreError.InvalidState)
+      contact  <- state.contacts.values.headOption.toRight(CoreError.InvalidState)
+      binding  <-
+        if seq == 1L then
+          for
+            peer   <- contact.peerChannelAccount.toRight(CoreError.InvalidBinding)
+            safety <- SafetyNumber.derive(identity.user.publicKey, contact.userPub)
+          yield Some(DataBinding(contact.channelAccount, peer, safety.digits))
+        else Right(None)
+      payload  <- DataPayload.encode(DataPayload(binding, body))
+    yield payload

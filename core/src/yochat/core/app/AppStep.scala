@@ -7,6 +7,11 @@ import yochat.core.*
 /** Pure S1 application kernel. Time, random values, keys, and persistence results enter as events. */
 object Application:
 
+  def canSend(state: AppState, conversationId: ByteVector): Boolean =
+    state.lock.isUnlocked &&
+      state.identity.isDefined &&
+      activeSession(state, conversationId).exists(session => state.contacts.get(session.state.peerUserPub).exists(relationshipUsable))
+
   def step(state: AppState, event: AppEvent): (AppState, Vector[AppEffect]) =
     event match
       case AppEvent.Unlock(identity, nowMs, idleTimeoutMs)                                              =>
@@ -39,9 +44,12 @@ object Application:
             generation <- unlockedGeneration(state)
             session    <- activeSession(state, conversationId)
             contact    <- state.contacts.get(session.state.peerUserPub)
-            if contact.safetyVerified
+            if relationshipUsable(contact)
+            envelope   <- outboundPayload(identity, session, contact, body)
             encrypted  <-
-              Ratchet.encryptUser(session.state, identity.device.publicKey, identity.device.privateKey, session.nextSeq, nonce, body).toOption
+              Ratchet
+                .encryptUser(session.state, identity.device.publicKey, identity.device.privateKey, session.nextSeq, nonce, envelope)
+                .toOption
           yield
             val (nextRatchet, wire) = encrypted
             val outgoing            = OutgoingMessage(
@@ -217,11 +225,17 @@ object Application:
         (next, Vector(AppEffect.PersistInvitation(record)))
       case AppEvent.ReplyCreated(invitationId, conversationId, result, nowMs)                           =>
         state.invitations.get(invitationId) match
-          case None                                             => (state, Vector.empty)
-          case Some(invitation) if nowMs > invitation.expiresAt =>
+          case None                                                                                                            => (state, Vector.empty)
+          case Some(invitation) if nowMs > invitation.expiresAt                                                                =>
             val expired = invitation.copy(lifecycle = InvitationLifecycle.Expired)
             (state.copy(invitations = state.invitations.updated(invitationId, expired)), Vector(AppEffect.PersistInvitation(expired)))
-          case Some(invitation)                                 =>
+          case Some(_) if state.contacts.contains(result.state.peerUserPub) && state.sessions.contains(result.state.sessionId) =>
+            (state, Vector.empty)
+          case Some(_) if state.contacts.contains(result.state.peerUserPub)                                                    =>
+            val peer    = result.state.peerUserPub
+            val blocked = state.contacts(peer).copy(confirmation = ContactConfirmation.AccountMismatch)
+            (state.copy(contacts = state.contacts.updated(peer, blocked)), Vector(AppEffect.PersistContact(blocked)))
+          case Some(invitation)                                                                                                =>
             val peer         = result.state.peerUserPub
             val contact      = AppContact(
               userPub = peer,
@@ -266,12 +280,18 @@ object Application:
         if !state.lock.isUnlocked then (state, Vector.empty)
         else
           state.invitations.get(invitationId) match
-            case None                                             => (state, Vector.empty)
-            case Some(invitation) if nowMs > invitation.expiresAt =>
+            case None                                                                                                         => (state, Vector.empty)
+            case Some(invitation) if nowMs > invitation.expiresAt                                                             =>
               val expired = invitation.copy(lifecycle = InvitationLifecycle.Expired)
               (state.copy(invitations = state.invitations.updated(invitationId, expired)), Vector(AppEffect.PersistInvitation(expired)))
-            case Some(invitation)                                 =>
-              val mismatch     = expectedAccount.exists(account => account != result.fields.channelAccount)
+            case Some(_) if state.contacts.contains(result.fields.userPub) && state.sessions.contains(result.state.sessionId) =>
+              (state, Vector.empty)
+            case Some(_) if state.contacts.contains(result.fields.userPub)                                                    =>
+              val peer    = result.fields.userPub
+              val blocked = state.contacts(peer).copy(confirmation = ContactConfirmation.AccountMismatch)
+              (state.copy(contacts = state.contacts.updated(peer, blocked)), Vector(AppEffect.PersistContact(blocked)))
+            case Some(invitation)                                                                                             =>
+              val mismatch     = expectedAccount.exists(account => Reply.matchesAccount(result, account).isLeft)
               val peer         = result.fields.userPub
               val contact      = AppContact(
                 userPub = peer,
@@ -394,7 +414,15 @@ object Application:
                   case Right(result) =>
                     val oldSession = value.copy(state = result.state)
                     val newSession =
-                      result.newSession.map(state => AppSession(state, value.conversationId, value.nextSeq, retireOldOnFirstData = true))
+                      result.newSession.map(state =>
+                        AppSession(
+                          state,
+                          value.conversationId,
+                          value.nextSeq,
+                          retireOldOnFirstData = true,
+                          bindingEstablished = value.bindingEstablished
+                        )
+                      )
                     val sessions   = newSession.fold(state.sessions.updated(sessionId, oldSession))(session =>
                       state.sessions.updated(sessionId, oldSession).updated(session.state.sessionId, session)
                     )
@@ -425,7 +453,12 @@ object Application:
                           case Left(_)        => (state, Vector(AppEffect.Notify(Notification.RekeyFailed)))
                           case Right(confirm) =>
                             val oldSession = value.copy(state = complete.state)
-                            val newSession = AppSession(confirm.state, value.conversationId, value.nextSeq)
+                            val newSession = AppSession(
+                              confirm.state,
+                              value.conversationId,
+                              value.nextSeq,
+                              bindingEstablished = value.bindingEstablished
+                            )
                             val deadline   = saturatingAdd(nowMs, AppLimits.RekeyTimeoutMs)
                             val timer      = TimerId.Rekey(sessionId, RekeyTimerStage.Initiator)
                             val next       = state.copy(
@@ -535,10 +568,27 @@ object Application:
 
   private def activeSession(state: AppState, conversationId: ByteVector): Option[AppSession] =
     state.sessions.values
-      .filter(session => session.conversationId == conversationId && session.state.phase == SessionPhase.Active)
+      .filter(session => session.conversationId == conversationId && session.state.phase == SessionPhase.Active && session.bindingEstablished)
       .toVector
       .sortBy(_.state.sessionId.bytes.toHex)
       .headOption
+
+  private def outboundPayload(
+    identity: LocalIdentity,
+    session: AppSession,
+    contact: AppContact,
+    body: ByteVector
+  ): Option[ByteVector] =
+    val binding: Option[Option[DataBinding]] =
+      if session.nextSeq == 1L then
+        contact.peerChannelAccount.flatMap { peer =>
+          SafetyNumber
+            .derive(identity.user.publicKey, contact.userPub)
+            .toOption
+            .map(safety => Some(DataBinding(contact.channelAccount, peer, safety.digits)))
+        }
+      else Some(None)
+    binding.flatMap(value => DataPayload.encode(DataPayload(value, body)).toOption)
 
   private def matchOutgoing(
     state: AppState,
@@ -692,6 +742,48 @@ object Application:
     val (pumped, sends) = pump(reset, nowMs)
     (pumped, cancels ++ sends)
 
+  private def decodeInboundPayload(
+    state: AppState,
+    session: AppSession,
+    frame: WireFrame,
+    result: ReceiveResult
+  ): Either[CoreError, DataPayload] =
+    if !session.bindingEstablished then Left(CoreError.InvalidBinding)
+    else
+      DataPayload.decode(result.plaintext).flatMap { payload =>
+        validateRelationship(state, session).flatMap { case (identity, contact) =>
+          if frame.header.seq == 1L then
+            payload.binding match
+              case None          => Left(CoreError.InvalidBinding)
+              case Some(binding) => validateBinding(identity, contact, binding).map(_ => payload)
+          else if payload.binding.isDefined then Left(CoreError.InvalidBinding)
+          else Right(payload)
+        }
+      }
+
+  private def validateRelationship(state: AppState, session: AppSession): Either[CoreError, (LocalIdentity, AppContact)] =
+    for
+      identity <- state.identity.toRight(CoreError.InvalidBinding)
+      contact  <- state.contacts.get(session.state.peerUserPub).toRight(CoreError.InvalidBinding)
+      _        <- if relationshipUsable(contact) then Right(()) else Left(CoreError.InvalidBinding)
+    yield (identity, contact)
+
+  private def relationshipUsable(contact: AppContact): Boolean =
+    contact.safetyVerified &&
+      contact.confirmation != ContactConfirmation.AccountMismatch &&
+      contact.channelAccount.nonEmpty &&
+      contact.peerChannelAccount.exists(_.nonEmpty)
+
+  private def validateBinding(identity: LocalIdentity, contact: AppContact, binding: DataBinding): Either[CoreError, Unit] =
+    for
+      peer   <- contact.peerChannelAccount.toRight(CoreError.InvalidBinding)
+      safety <- SafetyNumber.derive(identity.user.publicKey, contact.userPub)
+      _      <- if binding.senderAccount == peer && binding.peerAccount == contact.channelAccount &&
+                  binding.safetyDigits == safety.digits
+                then Right(())
+                else Left(CoreError.InvalidBinding)
+    yield ()
+
   private def receiveSuccess(
     state: AppState,
     messageId: Long,
@@ -708,30 +800,35 @@ object Application:
     val active      = if firstData then nextSession.copy(retireOldOnFirstData = false) else nextSession
     frame.header.kind match
       case MessageKind.Data                                       =>
-        val message                        = BufferedMessage(messageId, session.state.peerUserPub, frame.header.devicePub, frame.header.seq, result.plaintext, frame)
-        val inbound                        = conversation.accept(message)
-        val (finalSession, controlEffects) =
-          controlResponse(state, sessionId, active, inbound.conversation, inbound.gap, responseNonce)
-        val withSession                    = state.copy(
-          sessions = state.sessions.updated(sessionId, finalSession),
-          conversations = state.conversations.updated(inbound.conversation.id, inbound.conversation)
-        )
-        val retired                        = if firstData then retirementCandidates(state, finalSession) else Vector.empty
-        val next                           = retired.foldLeft(withSession)((current, id) => current.copy(sessions = current.sessions - id))
-        val inboundEffects                 =
-          inbound.disposition match
-            case InboundDisposition.Applied   =>
-              if retired.nonEmpty then Vector(AppEffect.PersistInboundAndRetire(message, finalSession, retired))
-              else Vector(AppEffect.PersistInbound(message, finalSession))
-            case InboundDisposition.Buffered  => Vector(AppEffect.PersistInbound(message, finalSession), AppEffect.Notify(Notification.Waiting))
-            case InboundDisposition.Duplicate => Vector.empty
-            case InboundDisposition.Overflow  => Vector(AppEffect.Notify(Notification.InboundOverflow))
-        val sessionEffect                  =
-          inbound.disposition match
-            case InboundDisposition.Duplicate | InboundDisposition.Overflow =>
-              if finalSession != session then Vector(AppEffect.PersistSession(finalSession)) else Vector.empty
-            case _                                                          => Vector.empty
-        (next, inboundEffects ++ sessionEffect ++ controlEffects)
+        decodeInboundPayload(state, session, frame, result) match
+          case Left(_)        => (state, Vector.empty)
+          case Right(payload) =>
+            val message                        =
+              BufferedMessage(messageId, session.state.peerUserPub, frame.header.devicePub, frame.header.seq, payload.body, frame)
+            val inbound                        = conversation.accept(message)
+            val (finalSession, controlEffects) =
+              controlResponse(state, sessionId, active, inbound.conversation, inbound.gap, responseNonce)
+            val withSession                    = state.copy(
+              sessions = state.sessions.updated(sessionId, finalSession),
+              conversations = state.conversations.updated(inbound.conversation.id, inbound.conversation)
+            )
+            val retired                        = if firstData then retirementCandidates(state, finalSession) else Vector.empty
+            val next                           = retired.foldLeft(withSession)((current, id) => current.copy(sessions = current.sessions - id))
+            val inboundEffects                 =
+              inbound.disposition match
+                case InboundDisposition.Applied   =>
+                  if retired.nonEmpty then Vector(AppEffect.PersistInboundAndRetire(message, finalSession, retired))
+                  else Vector(AppEffect.PersistInbound(message, finalSession))
+                case InboundDisposition.Buffered  =>
+                  Vector(AppEffect.PersistInbound(message, finalSession), AppEffect.Notify(Notification.Waiting))
+                case InboundDisposition.Duplicate => Vector.empty
+                case InboundDisposition.Overflow  => Vector(AppEffect.Notify(Notification.InboundOverflow))
+            val sessionEffect                  =
+              inbound.disposition match
+                case InboundDisposition.Duplicate | InboundDisposition.Overflow =>
+                  if finalSession != session then Vector(AppEffect.PersistSession(finalSession)) else Vector.empty
+                case _                                                          => Vector.empty
+            (next, inboundEffects ++ sessionEffect ++ controlEffects)
       case MessageKind.DataAck                                    =>
         val withSession     = state.copy(sessions = state.sessions.updated(sessionId, active))
         val (next, effects) = acknowledge(withSession, sessionId, frame.header.seq, nowMs)

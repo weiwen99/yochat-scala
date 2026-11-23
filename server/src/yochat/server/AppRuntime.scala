@@ -74,6 +74,9 @@ final class AppRuntime private (
   def sendMessage(conversationId: ByteVector, body: String): IO[Long] =
     for
       _        <- ensureReady
+      current  <- AppRuntime.readRef(stateRef)
+      _        <- if Application.canSend(current, conversationId) then IO.unit
+                  else IO.raiseError(new RuntimeError("send-rejected"))
       id       <- messageIds.updateAndGet(AppRuntime.nextId)
       nonce    <- random.nonce
       accepted <- submit(
