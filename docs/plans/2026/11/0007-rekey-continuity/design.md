@@ -165,3 +165,51 @@
 ### 9.8 修订后 7A 验收
 
 E2E 必须让 **A 服务本身** 在自动 rekey 前 `sendMessage` 并消费序号 k；旧持久行在重绑定后仍为同一 row id，B 只显示一次原正文，A 收到 ACK 后 `Delivered`；随后 `sendMessage` k+1 也按序送达。仅观察 Active session、仅新正文、或注入帧都不算 7A 通过。
+
+## 10. Round 2 review 修订（最终实现契约）
+
+### 10.1 A2：终态 no-op 不发布候选
+
+重绑定事务在**任何 session 写之前**按旧五元键读取 message 的 `state`：
+
+- 行不存在：整笔失败，保留旧 pending，暴露 `rekey-failed`；
+- `Delivered`/`Failed`：返回 `RebindOutcome.Skipped`，**不写 session、不写 message、不写 high-water**；
+- `Pending`/`Sent`：继续 session 写和 message UPDATE；UPDATE 必须命中同一旧键和旧状态，否则整笔回滚并返回失败。
+
+`MessageRepository`/`Store` 返回 `RebindOutcome.Migrated` 或 `.Skipped`，不能只用 `Either[Unit]`；运行时只有 `.Migrated` 才把候选 session/message 发布到内存并发 `PersistOutboundSucceeded`，`.Skipped` 不发布、不消耗新 `ns`、不增加 attempts。测试用仍存在的终态行证明 row、版本、高水位和内存均不变，随后迁移另一行仍可解。
+
+### 10.2 A4：timer 实例 token
+
+`TimerId.Message`/`TimerFired` 增加启动时的 **timer instance token**（`sessionId + attemptSeq` 或等价随机 token，非持久数据）；`sendNow` 只接受与当前 outgoing 的 token 和 session 匹配的回调。cutover 取消旧 timer 后，已经入队的旧 `TimerFired` 也必须被 token 检查拒绝，不发送旧 wire、不增加 attempts；新 timer 使用新 token。测试先入队旧回调，再重绑定/安装新 timer。
+
+### 10.3 A6：恢复三态与退休重查
+
+`AppStateRestore` 不直接安装 timer；由 `Unlock`/重连后的 `rekeyTimers` 按持久 `RekeyState` 分三态：
+
+1. `phase=Requested` 且 `newSessionId=None`：安装 Initiator timeout；超时 `abortRekey` 回旧 Active，不删除任何新行；
+2. `phase=Accepted` 且目标新 session 为 `Pending`：安装 Initiator/Responder timeout；超时只 abort pending，保留旧记录；
+3. 目标新 session 已 `Active`：绝不安装会 abort 的旧 timer；收到旧 timer 只清 timer，不删新 session、不激活旧 session。
+
+`retirementCandidates` 不再只在“首条新 session Data”检查：`acknowledge` 移除旧 outgoing 后、ConfirmAck 到达后都要重查；只有目标新 session Active **且**旧 outgoing 为空才允许 retire。用 Request 提交后立即重启且不回 Accept 的用例验证有界 timeout。
+
+### 10.4 A7：Confirm/ConfirmAck 重试
+
+发起方在发出 Confirm 后进入 `Pending` 并安装 **Confirm retry timer**；timer 触发时：
+
+- 生成新 nonce/`n`，重新 `Rekey.confirm` 并持久化/发送，不推进应用消息 `seq`；
+- 由现有 `MaxRekeyAttempts`/`RekeyTimeoutMs` 限定次数与截止；耗尽后 `abortRekey`/`RekeyFailed`，保留旧记录，不伪造 `Delivered`；
+- 应答方已 Active 时收到重复 Confirm，按现有 `Rekey.acceptConfirm` 重发 ACK，不重新初始化。
+
+测试只丢首次 ConfirmAck、不额外发用户消息：重发 Confirm 后原行最终只送达一次；永久丢包时超时有界且 `rekey-failed` 可见。
+
+### 10.5 B1：idle lock 隐藏通知
+
+`/api/session` 以 `AppState.lock` 为准：只要 `!state.lock.isUnlocked`，即使 runtime 仍存在，也返回 locked JSON，`notification=null`；`/api/state` 在 locked 时仍返回 401。测试先产生 `rekey-failed`，再触发 idle timeout，不销毁 runtime，读取 `/api/session` 不返回旧码。
+
+### 10.6 C1：预算口径文字
+
+两份 spec 统一为：**新增的是本端发起预算**，复用 60s/3 数值；限制 `StartRekey`（自动/显式），不限制已认证的对端 `RekeyRequestReceived`，不扣本端发起计数。对端仍只受既有 per-session 认证/pending/epoch 状态约束。不声称全局、双方总计或不可绕过的配额。
+
+### 10.7 验收文字
+
+D:109 改为“E2E#1–#7、#9–#15 共 14 条通过；#8 不计入本计划”。7A 的真实发送者验收按 §9.8；不得用注入帧或仅 Active session 代签。

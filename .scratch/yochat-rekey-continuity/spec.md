@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 7A | Old pending messages become unusable after cutover | A real `sendMessage` before automatic rekey either is delivered by the old session while it remains read-only or is re-encrypted and updated in place under the new session; it appears once and ends `delivered`. A subsequent new message is delivered with the next sequence. |
 | 7B | Rebuild failure is invisible | A forced rekey timeout yields a production-readable `rekey-failed` value at the service/state boundary; no rekey starts silently. |
-| 7C | Rebuilds are unbounded across successful cutovers | Within one 60s window, successful and failed attempts count toward a cap of 3; the fourth attempt fails visibly; after 60s a new window is allowed. |
+| 7C | Local rebuild starts are unbounded across successful cutovers | Within one 60s runtime window, local (automatic or explicit) `StartRekey` attempts count toward a cap of 3; peer-initiated requests are not charged to this local budget; the fourth local start fails visibly; after 60s a new window is allowed. |
 | 7D | No new protocol surface | No new table, header field, wire kind, or config. The rebind uses the existing session/message rows and key derivation. |
 
 ## Sequence
@@ -27,4 +27,5 @@
 
 - No #8/10k, cold start, idle memory, UI DOM, or Electron automation.
 - No multi-device/history sync/revocation.
-- No new timeout, retry, or rekey quota beyond the existing 60s cooldown / 3 attempts.
+- No new timeout or retry beyond the existing 60s cooldown / 3 attempts; 7C only adds a local-start 60s/3 window.
+- 7C does not promise a global or bilateral quota; peer-initiated rebuilds are not charged to the local-start budget.
