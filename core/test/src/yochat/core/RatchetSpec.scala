@@ -165,6 +165,20 @@ class RatchetSpec extends munit.FunSuite:
     assert(StateCodec.encode(fourth.state).isRight)
   }
 
+  test("a forward gap AEAD failure does not count toward automatic rebuild") {
+    val f            = fixture()
+    val (a1, _)      = send(f.a, f.aDevice, 1L, 23, "one")
+    val (_, f2)      = send(a1, f.aDevice, 2L, 24, "two")
+    val badCt        = f2.ciphertext.update(0, (f2.ciphertext(0) ^ 1).toByte)
+    val sig          = Crypto
+      .sign(f.aDevice.privateKey, MessageDomain ++ f2.header.canonical ++ badCt)
+      .fold(error => fail(s"sign: $error"), identity)
+    val badFrame     = WireFrame.create(f2.header, badCt, sig).fold(error => fail(s"frame: $error"), identity)
+    val result       = receiveError(f.b, badFrame)
+    assertEquals(result.error, CoreError.InvalidCiphertext)
+    assertEquals(result.state.rekeyFailures, 0)
+  }
+
   test("a gap larger than MAX_SKIP_GAP is rejected without state advance") {
     val f = fixture()
     val (_, frames) = (1 to 66).foldLeft((f.a, List.empty[WireFrame])) { case ((state, collected), index) =>

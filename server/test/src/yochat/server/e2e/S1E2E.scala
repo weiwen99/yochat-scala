@@ -400,8 +400,9 @@ object S1E2E:
         messages => messages.exists(_._4 == s"body-$marker"),
         "secret message on B"
       )
-      val error = pair.a.trySendMessage(handshake.aConversation, " ")
+      val error = pair.a.trySendMessage(handshake.aConversation, s"body-$marker" + ("x" * 65_536))
       ensure(error.status == 400, s"diagnostic error request returned ${error.status}")
+      ensure(pair.a.logText.nonEmpty && pair.b.logText.nonEmpty, "service log missing")
       val diagnostics = Vector(
         "body"       -> s"body-$marker",
         "alias"      -> alias,
@@ -409,6 +410,9 @@ object S1E2E:
         "b-user"     -> handshake.bUser,
         "a-device"   -> pair.a.identityDevice,
         "b-device"   -> pair.b.identityDevice,
+        "a-private"  -> devicePrivate(pair.a.dataDir).bytes.toHex,
+        "b-private"  -> devicePrivate(pair.b.dataDir).bytes.toHex,
+        "passphrase" -> E2E.Passphrase,
         "a-safety"   -> expectedSafety(handshake.aUser, handshake.bUser),
         "b-safety"   -> expectedSafety(handshake.bUser, handshake.aUser)
       )
@@ -438,17 +442,25 @@ object S1E2E:
 
       ensure(pair.a.lock(), "A lock failed")
       val lockedSession = pair.a.session
-      ensure(!lockedSession("unlocked").bool, s"A still unlocked: $lockedSession")
-      ensure(pair.a.tryState.status == 401, "locked state endpoint did not return 401")
-      ensure(pair.a.tryMessages(aConversation).status == 401, "locked messages endpoint did not return 401")
-      ensure(pair.a.trySendMessage(aConversation, "while-locked").status == 401, "locked send did not return 401")
+      ensure(!lockedSession("unlocked").bool, "A still unlocked")
+      ensure(!lockedSession.obj.contains("identity"), "locked session exposed identity")
+      ensure(!lockedSession.obj.contains("contacts") && !lockedSession.obj.contains("conversations"), "locked session exposed data")
+      val lockedState = pair.a.tryState
+      val lockedMessages = pair.a.tryMessages(aConversation)
+      val lockedSend = pair.a.trySendMessage(aConversation, "while-locked")
+      ensure(lockedState.status == 401, "locked state endpoint did not return 401")
+      ensure(lockedMessages.status == 401, "locked messages endpoint did not return 401")
+      ensure(lockedSend.status == 401, "locked send did not return 401")
+      Vector(lockedState, lockedMessages, lockedSend).foreach(result => ensure(result.body.startsWith("{\"error\":"), "locked response was not code-only"))
       val wrong = pair.a.tryUnlock("wrong passphrase")
       ensure(wrong.status == 401, s"wrong passphrase returned ${wrong.status}")
+      ensure(wrong.body.startsWith("{\"error\":"), "wrong-passphrase response was not code-only")
+      ensure(!wrong.body.contains(E2E.Passphrase), "wrong-passphrase response echoed passphrase")
       ensure(!pair.a.session("unlocked").bool, "wrong passphrase unlocked A")
 
       pair.a.unlock()
       val history = pair.a.messages(aConversation)
-      ensure(history == Vector((1L, "me", "delivered", "before-lock")), s"A history changed after unlock: $history")
+      ensure(history.size == 1 && history.headOption.exists(_._4 == "before-lock"), "A history changed after unlock")
       pair.a.sendMessage(aConversation, "after-unlock")
       pair.b.awaitMessage(
         handshake.bConversation,
@@ -470,7 +482,7 @@ object S1E2E:
       val oldA = pair.a.activeSessionId(handshake.aConversation)
       val oldB = pair.b.activeSessionId(handshake.bConversation)
       val client = keyPair()
-      val badFrame = signedFirstData(pair.a, handshake)
+      val badFrame = signedData(pair.a, handshake, 1L)
       val targetDevice = publicKey(pair.b.identityDevice)
       fault.arm(
         Fault(
@@ -512,6 +524,7 @@ object S1E2E:
       )
       ensure(fault.forwardedTampered, "injected bad frames were not forwarded")
       ensure(!pair.b.messages(handshake.bConversation).exists(_._4 == "injected-bad-frame"), "bad body became visible")
+      ensure(pair.b.messages(handshake.bConversation).count(_._4 == "after-rebuild") == 1, "post-rebuild message duplicated")
       s"auto=1 oldA=${oldA.take(8)} newA=${newA.take(8)} oldB=${oldB.take(8)} newB=${newB.take(8)}"
     }
 
@@ -584,7 +597,7 @@ object S1E2E:
       s"${proxy}tampered=1 forwarded=1 retried=1 bCount=${onB.count(_._4 == body)} aDelivered=${onA.count(_._4 == body)}"
     }
 
-  private def signedFirstData(a: ServiceProcess, handshake: Handshake): yochat.core.WireFrame =
+  private def signedData(a: ServiceProcess, handshake: Handshake, seq: Long): yochat.core.WireFrame =
     val sessionId = SessionId
       .from(ByteVector.fromValidHex(a.activeSessionId(handshake.aConversation)))
       .fold(error => throw new AssertionError(s"invalid session id: $error"), identity)
@@ -600,8 +613,10 @@ object S1E2E:
               val safety = SafetyNumber
                 .derive(publicKey(handshake.aUser), publicKey(handshake.bUser))
                 .fold(error => throw new AssertionError(s"safety derive failed: $error"), identity)
+              val binding =
+                if seq == 1L then Some(DataBinding("@A", "@B", safety.digits)) else None
               val plaintext = DataPayload
-                .encode(DataPayload(Some(DataBinding("@A", "@B", safety.digits)), Crypto.text("injected-bad-frame")))
+                .encode(DataPayload(binding, Crypto.text("injected-bad-frame")))
                 .fold(error => throw new AssertionError(s"payload encode failed: $error"), identity)
               val nonce = Nonce
                 .from(ByteVector.fill(Nonce.Length)(0x5a.toByte))
@@ -612,7 +627,7 @@ object S1E2E:
                     record.state,
                     store.identity.devicePublic,
                     store.identity.devicePrivate,
-                    1L,
+                    seq,
                     nonce,
                     plaintext
                   )

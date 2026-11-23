@@ -2,7 +2,7 @@
 
 - Plan: 0006
 - Design record: `docs/plans/2026/11/0006-s1-privacy-lock-rebuild/`
-- Status: implemented (check green; Round 1 review closed)
+- Status: partially implemented (#12/#13 pass; #14 auto-rebuild pass, sequence-continuity #14 P1 open)
 - Baseline: `c21210b`
 - Review budget: 3 rounds.
 

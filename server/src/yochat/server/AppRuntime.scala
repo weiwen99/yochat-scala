@@ -463,12 +463,14 @@ object AppRuntime:
                   .flatMap(result => applyEvent(transport, result, queue, stateRef, random, executor, fatal, clock, onState))
               case AppEffect.StartRekey(sessionId)                           =>
                 for
-                  r1    <- random.x25519
-                  id    <- random.rekeyId
-                  nonce <- random.nonce
-                  _     <- queue.tryOffer(
-                             RuntimeCommand.App(AppEvent.StartRekey(sessionId, r1, id, nonce, clock.millis()))
-                           )
+                  r1       <- random.x25519
+                  id       <- random.rekeyId
+                  nonce    <- random.nonce
+                  accepted <- queue.tryOffer(
+                                RuntimeCommand.App(AppEvent.StartRekey(sessionId, r1, id, nonce, clock.millis()))
+                              )
+                  _        <- if accepted then IO.unit
+                              else fatal.set(Some(AppExecutionError.Unsupported("rekey-queue-full")))
                 yield ()
               case _                                                         =>
                 executor.execute(effect).flatMap {

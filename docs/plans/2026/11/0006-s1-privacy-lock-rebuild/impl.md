@@ -1,6 +1,6 @@
 # Plan 0006 implementation: S1 privacy, lock, and automatic rebuild
 
-- 状态: implemented（E2E#1–#7/#9–#15 全绿；check 全绿）
+- 状态: partially implemented（E2E 14 条全绿；#14 真实发送序号连续性 review P1 仍 open）
 - 日期: 2026-11-23
 - 分支: `feat/plan-0006-s1-privacy-lock-rebuild`
 - 基线: `c21210b`
@@ -33,8 +33,8 @@
 ### `./mill server.e2e`
 
 - 结果：`E2E_SUMMARY total=14 passed=14 failed=0`
-- 耗时：79s
-- receipt：`tmp/checks/1795422977342/s1-e2e.log`
+- 耗时：86s
+- receipt：`tmp/checks/1795424320236/s1-e2e.log`
 - 关键行：
   - `E2E#12 PASS body=clean alias=clean keys=clean safety=clean errors=clean`
   - `E2E#13 PASS locked=401 wrong=401 reopened=1 history=1`
@@ -43,19 +43,19 @@
 
 ### `./check.sh`
 
-- 结果：全绿（90.81s）；`core.test` 145、`store.test` 24、`transport.test` 7、`server.test` 7；Q1–Q6 `QUINT_CHECKS PASS`；spike 100 条 + reconnect `ok=true`。
-- 回执：`TENK_REPLAY messages=10000 elapsed_ms=12404 outgoing=0 next_seq=10001`；`STORE_THROUGHPUT inserts=1000 reads=1000 insert_ms=1653 read_ms=199 total_ms=1852`。
+- 结果：全绿（91.16s）；`core.test` 145、`store.test` 24、`transport.test` 7、`server.test` 7；Q1–Q6 `QUINT_CHECKS PASS`；spike 100 条 + reconnect `ok=true`。
+- 回执：`TENK_REPLAY messages=10000 elapsed_ms=12467 outgoing=0 next_seq=10001`；`STORE_THROUGHPUT inserts=1000 reads=1000 insert_ms=1772 read_ms=177 total_ms=1949`。
 - `server.e2e` 不在 `check.sh` 内，已独立运行。
 
 ## 未关闭与限制
 
 - E2E#13 只测手动锁；空闲自动锁由 `AppLockSpec` 注入时钟覆盖，不在 E2E 重复。
 - E2E#12 的“诊断”限定为服务日志和 HTTP 错误体；`/api/state` 是 UI 数据接口，仍包含 public key，不当作日志。
-- E2E#14 的注入帧使用测试进程读取的 A 持久身份/会话；不是生产后门。自动重建后旧 pending 的跨 session 重映射仍未实现；本契约只验证 AEAD 失败触发重建、新 session 可用、假正文不可见。
+- E2E#14 的注入帧使用测试进程读取的 A 持久身份/会话；不是生产后门。自动重建后旧 pending 的跨 session 重映射仍未实现；真实发送方先消费一个序号后继续发送的连续性未证明（review R2-1 open）。
 - `#14` 失败上限/冷却由既有 `RekeySpec`/`RekeyTimerSpec` 覆盖；E2E 只跑成功重建主路径。
 - `#8`/10k、冷启动/内存、UI DOM 自动化未做。
 - 外部密码学评审仍是发布门。
 
 ## Review
 
-- Round 1 的 R1-1–R1-6 已关闭；无剩余 BLOCKER/MAJOR。详见 `design-review-findings.md`。
+- Round 1 的 R1-1–R1-6 已关闭；Round 2 复查发现 R2-1（真实发送序号连续性）、R2-4（重建失败通知）、R2-5（跨 cutover 窗口上限）仍 open；详见 `design-review-findings.md`。

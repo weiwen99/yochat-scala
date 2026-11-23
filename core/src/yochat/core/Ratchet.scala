@@ -174,15 +174,15 @@ object Ratchet:
               val (nextChain, messageKey) = Crypto.kdfChain(chainKey)
               val candidate               = skippedState.copy(ckRecv = Some(nextChain), nr = header.n + 1L)
               Crypto.aeadOpen(messageKey, header.nonce, header.canonical, frame.ciphertext) match
-                case Right(plaintext)                                  =>
+                case Right(plaintext)                                                          =>
                   validateControlPayload(header, plaintext) match
                     case Left(error) => reject(state, error)
                     case Right(())   => Right(ReceiveResult(candidate.copy(rekeyFailures = 0), plaintext, header))
-                case Left(CoreError.InvalidCiphertext) if countFailure =>
+                case Left(CoreError.InvalidCiphertext) if countFailure && header.n == state.nr =>
                   val failures = math.min(state.rekeyFailures + 1, S1Limits.MaxRekeyFailures)
                   val error    = if failures >= S1Limits.MaxRekeyFailures then CoreError.RekeyRequired else CoreError.InvalidCiphertext
                   reject(state.copy(rekeyFailures = failures), error)
-                case Left(error)                                       => reject(state, error)
+                case Left(error)                                                               => reject(state, error)
 
   private def receiveNewRatchet(
     state: RatchetState,
