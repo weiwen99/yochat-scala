@@ -21,5 +21,6 @@
 
 - `./mill core.test`: 145 tests pass.
 - `./mill server.test`: 399 tests pass.
-- `./mill server.e2e`: 16 behavior contracts plus `PERF#10K` pass; E2E#17 covers pending rebind and post-cutover normal send.
+- At Plan 0007: `./mill server.e2e` 15/15 behavior contracts; E2E#17 covered pending rebind and post-cutover normal send.
+- Plan 0008 later adds E2E#8 and `PERF#10K`; the current stack receipt is 16 behavior contracts + `PERF#10K`.
 - `./check.sh`: see final command output for the repository gate.

@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const START_NS = process.hrtime.bigint();
+const START_EPOCH = Number(process.env.YOCHAT_START_EPOCH || 0);
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.YOCHAT_PORT || 8787);
 const BASE_URL = `http://${HOST}:${PORT}`;
@@ -130,9 +131,26 @@ function createWindow() {
 
   if (process.env.YOCHAT_START_METRIC) {
     mainWindow.webContents.once("did-finish-load", () => {
-      const elapsedMs = Number(process.hrtime.bigint() - START_NS) / 1_000_000;
-      fs.writeFileSync(process.env.YOCHAT_START_METRIC, JSON.stringify({ elapsedMs }) + "\n");
-      app.quit();
+      const deadline = Date.now() + 30000;
+      const waitForUi = () => {
+        mainWindow.webContents
+          .executeJavaScript("!document.querySelector('.loading-veil')")
+          .then((ready) => {
+            if (!ready && Date.now() < deadline) {
+              setTimeout(waitForUi, 25);
+              return;
+            }
+            const elapsedMs = START_EPOCH > 0 ? Date.now() - START_EPOCH : Number(process.hrtime.bigint() - START_NS) / 1_000_000;
+            fs.writeFileSync(process.env.YOCHAT_START_METRIC, JSON.stringify({ elapsedMs }) + "\n");
+            if (process.env.YOCHAT_START_METRIC_HOLD !== "1") app.quit();
+          })
+          .catch(() => {
+            const elapsedMs = START_EPOCH > 0 ? Date.now() - START_EPOCH : Number(process.hrtime.bigint() - START_NS) / 1_000_000;
+            fs.writeFileSync(process.env.YOCHAT_START_METRIC, JSON.stringify({ elapsedMs, ready: false }) + "\n");
+            if (process.env.YOCHAT_START_METRIC_HOLD !== "1") app.quit();
+          });
+      };
+      waitForUi();
     });
   }
 

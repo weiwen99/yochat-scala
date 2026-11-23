@@ -7,15 +7,15 @@
 
 ## Changes
 
-- `shell/main.js`: disabled-by-default `YOCHAT_START_METRIC` hook.
-- `shell/perf-start.js`: warmup + five cold-start samples + idle process-tree RSS receipt.
-- `check.sh`: syntax-checks the new script.
+- `shell/main.js`: disabled-by-default `YOCHAT_START_METRIC` hook; waits for the loading veil and uses the parent spawn epoch.
+- `shell/perf-start.js`: warmup + five cold-start samples on distinct ports, `--user-data-dir=<path>`, owned-JVM check, and 300s idle process-tree RSS receipt.
+- `check.sh`: runs `server.e2e`, builds `server.assembly`, and executes `perf-start.js` as a release gate.
 - `shell/package.json`: `perf:start` command.
 
 ## Receipt
 
-- `COLD_START p50_ms=1003.815 p95_ms=1034.079 idle_mb=719.3 verdict=PASS`
-- Receipt: `tmp/checks/desktop-1795441004134.json` (ignored by git).
+- `COLD_START p50_ms=1215.000 p95_ms=1227.000 idle_mb=737.1 verdict=PASS`
+- Receipt: `tmp/checks/desktop-1795443568497.json` (ignored by git).
 - Measured on the same machine with the existing user-data database; first-run creation was excluded by a warmup launch.
-- `did-finish-load` is the ready boundary; this is not a first-paint or Electron-first-screen measurement.
-- Idle sample is the Electron main/helper processes plus the spawned JVM, excluding the relay.
+- The ready boundary is `.loading-veil` removal after `did-finish-load`, not first paint.
+- Idle sample is 300s after readiness; it is the Electron main/helper processes plus the owned JVM, excluding the relay.

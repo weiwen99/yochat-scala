@@ -62,4 +62,4 @@
   - R2-1：E2E#17 先消费真实业务序号，cutover 后再发 `after-cutover`，B 一条、A `Delivered` 一条。
   - R2-4：Plan 0007 的 `notification` 只在解锁态经 `/api/state` 可见。
   - R2-5：Plan 0007 的 60s/3 本端 rekey 窗口，窗口后重置。
-- 剩余：`E2E#8` 已由 Plan 0008 加入；10k 两进程、冷启动/内存、UI 自动化与外部密码学评审仍未做。
+- 剩余：`E2E#8`、10k 两进程与冷启动/内存已由 Plan 0008/0009 完成；UI 自动化与外部密码学评审仍未做。

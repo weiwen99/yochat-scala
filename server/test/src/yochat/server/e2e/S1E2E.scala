@@ -4,7 +4,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, StandardOpenOption}
 import java.security.KeyPairGenerator
 import java.time.{Duration, Instant}
-import java.util.concurrent.CompletableFuture
+import java.util.concurrent.{CompletableFuture, TimeUnit}
 
 import scala.concurrent.duration.*
 import scala.util.control.NonFatal
@@ -344,7 +344,7 @@ object S1E2E:
       def send(bodies: Vector[String]): Unit =
         bodies.grouped(32).foreach { batch =>
           val sends = batch.map(body => pair.a.sendMessageAsync(handshake.aConversation, body))
-          CompletableFuture.allOf(sends*).join()
+          CompletableFuture.allOf(sends*).orTimeout(30, TimeUnit.SECONDS).join()
         }
 
       val warmup = (1 to 1000).map(number => f"w-$number%04d").toVector
@@ -777,7 +777,7 @@ object S1E2E:
       def send(bodies: Vector[String]): Unit =
         bodies.grouped(32).foreach { batch =>
           val sends = batch.map(body => pair.a.sendMessageAsync(handshake.aConversation, body))
-          CompletableFuture.allOf(sends*).join()
+          CompletableFuture.allOf(sends*).orTimeout(30, TimeUnit.SECONDS).join()
         }
 
       val warmup = (1 to 1000).map(number => f"w-$number%05d").toVector
@@ -820,11 +820,15 @@ object S1E2E:
       pair.b.awaitSafety(handshake.aUser, verified = true)
       val conversation = handshake.aConversation
       val sessionId    = pair.a.activeSession(conversation)
+      val oldB         = pair.b.activeSession(handshake.bConversation)
       fault.arm(Fault(FaultKind.Drop, pair.a.identityDevice, pair.b.identityDevice, Some(1L)))
       pair.a.sendMessage(conversation, "rebound")
       fault.awaitApplied()
       val response = pair.a.rekey(sessionId)
       ensure(response.status == 200, s"A rekey returned ${response.status}: ${response.body}")
+      val newA = pair.a.awaitActiveSessionChanged(conversation, sessionId, Duration.ofSeconds(20))
+      val newB = pair.b.awaitActiveSessionChanged(handshake.bConversation, oldB, Duration.ofSeconds(20))
+      ensure(newA != sessionId && newB != oldB, s"cutover did not change sessions oldA=$sessionId newA=$newA oldB=$oldB newB=$newB")
       val bob = pair.b.awaitMessage(handshake.bConversation, messages => messages.exists(_._4 == "rebound"), "rebound body")
       val alice = pair.a.awaitMessage(conversation, messages => messages.exists(value => value._3 == "delivered" && value._4 == "rebound"), "rebound delivered")
       ensure(bob.count(_._4 == "rebound") == 1, s"B body count: $bob")
@@ -843,7 +847,9 @@ object S1E2E:
       )
       ensure(bobAfter.count(_._4 == "after-cutover") == 1, s"B post-cutover body count: $bobAfter")
       ensure(aliceAfter.count(_._4 == "after-cutover") == 1, s"A post-cutover body count: $aliceAfter")
-      s"session=$sessionId rebound=1 afterCutover=1"
+      ensure(bobAfter.map(_._1).sorted == Vector(1L, 2L), s"B sequence continuity: $bobAfter")
+      ensure(aliceAfter.map(_._1).sorted == Vector(1L, 2L), s"A sequence continuity: $aliceAfter")
+      s"oldA=${sessionId.take(8)} newA=${newA.take(8)} oldB=${oldB.take(8)} newB=${newB.take(8)} seq=1,2"
     }
 
   private def ensure(condition: Boolean, message: => String): Unit =

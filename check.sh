@@ -27,6 +27,13 @@ node --check shell/main.js
 node --check shell/preload.js
 node --check shell/keychain-smoke.js
 node --check shell/perf-start.js
+./mill server.e2e
+./mill server.assembly
+if [ ! -x shell/node_modules/.bin/electron ]; then
+  echo "desktop gate requires shell/node_modules; run npm ci in shell" >&2
+  exit 1
+fi
+node shell/perf-start.js
 ./models/check.sh
 ./mill spike.checkFormat
 ./mill spike.fix --check
