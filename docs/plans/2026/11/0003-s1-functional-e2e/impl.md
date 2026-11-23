@@ -35,8 +35,8 @@
 ### `./mill server.e2e`
 
 - 结果：`E2E_SUMMARY total=7 passed=7 failed=0`
-- 耗时：33.43s（review 修复后一次完整运行）
-- receipt：`tmp/checks/1795412394010/s1-e2e.log`（被 `.gitignore` 覆盖；含 HEAD、Java 版本、每条耗时/计数）
+- 耗时：32.22s（committed HEAD 上运行）
+- receipt：`tmp/checks/1795412581757/s1-e2e.log`（被 `.gitignore` 覆盖；head=`da4b8d6`，含 Java 版本、每条耗时/计数）
 - 早期运行暴露并修复：A 重启后发送触发 `StoreFailed:StaleGeneration`；根因是 lock 只推进 meta，session 行仍为旧 generation。修复后 E2E#4/#5 以 `seq=2` 通过。
 
 ### `./mill store.test`
