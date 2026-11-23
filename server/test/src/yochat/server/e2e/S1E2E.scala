@@ -2,6 +2,7 @@ package yochat.server.e2e
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, StandardOpenOption}
+import java.security.KeyPairGenerator
 import java.time.{Duration, Instant}
 
 import scala.util.control.NonFatal
@@ -9,7 +10,7 @@ import scala.util.control.NonFatal
 import scodec.bits.ByteVector
 import ujson.Value
 
-import yochat.core.{Ed25519Public, SafetyNumber}
+import yochat.core.{Ed25519KeyPair, Ed25519Private, Ed25519Public, Invitation, SafetyNumber, X25519KeyPair, X25519Private}
 
 final case class Contract(id: String, description: String, run: () => String)
 
@@ -44,7 +45,11 @@ object S1E2E:
       Contract("E2E#4", "restart the sender, message remains", () => scenario4()),
       Contract("E2E#5", "restart the receiver, message remains", () => scenario5()),
       Contract("E2E#6", "disconnect and reconnect, pending message arrives", () => scenario6()),
-      Contract("E2E#7", "100 messages in order, no duplicates", () => scenario7())
+      Contract("E2E#7", "100 messages in order, no duplicates", () => scenario7()),
+      Contract("E2E#9", "wrong or expired invitation rejected", () => scenario9()),
+      Contract("E2E#10", "tampered ciphertext rejected", () => scenario10()),
+      Contract("E2E#11", "tampered signature rejected", () => scenario11()),
+      Contract("E2E#15", "dropped data frame recovered by Gap and resend", () => scenario15())
     )
     args.toList match
       case Nil         =>
@@ -67,8 +72,11 @@ object S1E2E:
       case NonFatal(error) =>
         val elapsed  = (System.nanoTime() - started) / 1_000_000L
         val location = failureLocation(error)
-        println(s"${contract.id} FAIL ${error.getClass.getSimpleName} at $location")
-        receipt.write(s"${contract.id} FAIL duration_ms=$elapsed failure=${error.getClass.getSimpleName} at=$location")
+        val detail   = Option(error.getMessage).getOrElse("").replace('\n', ' ').take(600)
+        println(s"${contract.id} FAIL ${error.getClass.getSimpleName} at $location: $detail")
+        receipt.write(
+          s"${contract.id} FAIL duration_ms=$elapsed failure=${error.getClass.getSimpleName} at=$location detail=$detail"
+        )
         false
 
   private def failureLocation(error: Throwable): String =
@@ -302,6 +310,165 @@ object S1E2E:
       ensure(onA == expectedA, s"A complete history count=${onA.size} firstSeq=${onA.headOption.map(_._1)} lastSeq=${onA.lastOption.map(_._1)}")
       s"bCount=${onB.size} aDelivered=${onA.size} firstSeq=1 lastSeq=100"
     }
+
+  private def scenario9(): String =
+    E2EEnvironment.withPair { pair =>
+      val handshake = E2EEnvironment.handshake(pair)
+      ensure(pair.a.contacts.contains(handshake.bUser), "valid invitation control was not accepted")
+    }
+    E2EEnvironment.withPair { pair =>
+      val (_, validText) = pair.a.createInvitation(Some("@B"))
+      val tamperedText   = corruptBase64(validText)
+      val tampered       = pair.b.tryReceiveInvitation(tamperedText, Some("@A"))
+      ensure(tampered.status == 400, s"tampered invitation returned ${tampered.status}: ${tampered.body}")
+      ensure(pair.b.contacts.isEmpty, s"tampered invitation created a contact: ${pair.b.state}")
+
+      val wrongId = pair.b.tryReceiveInvitation(validText, Some("@WRONG"))
+      ensure(wrongId.status == 200, s"wrong-account invitation receive returned ${wrongId.status}: ${wrongId.body}")
+      val wrongAccept = pair.b.tryAcceptInvitation(wrongId.json("id").str)
+      ensure(wrongAccept.status == 400, s"wrong-account invitation accept returned ${wrongAccept.status}: ${wrongAccept.body}")
+      ensure(pair.b.contacts.isEmpty, s"wrong-account invitation created a contact: ${pair.b.state}")
+
+      val expiredText    = expiredInvitationText()
+      val expiredReceive = pair.b.tryReceiveInvitation(expiredText, Some("@A"))
+      val rejected       =
+        if expiredReceive.status == 400 then true
+        else if expiredReceive.status == 200 then
+          pair.b.tryAcceptInvitation(expiredReceive.json("id").str).status == 400
+        else false
+      ensure(rejected, s"expired invitation was not rejected: receive=${expiredReceive.status} ${expiredReceive.body}")
+      ensure(pair.b.contacts.isEmpty, s"expired invitation created a contact: ${pair.b.state}")
+      s"valid=1 wrong=${wrongAccept.status} tampered=${tampered.status} expired=$rejected contacts=0"
+    }
+
+  private def scenario10(): String =
+    proxyFidelity()
+    tamperedData(FaultKind.TamperCiphertext, "ciphertext", proxyChecked = true)
+
+  private def proxyFidelity(): Unit =
+    E2EEnvironment.withFaultPair { (pair, _) =>
+      val handshake = E2EEnvironment.handshake(pair)
+      verifySafety(pair, handshake)
+      pair.a.sendMessage(handshake.aConversation, "proxy-fidelity")
+      pair.b.awaitMessage(
+        handshake.bConversation,
+        messages => messages.exists(_._4 == "proxy-fidelity"),
+        "proxy fidelity on B"
+      )
+      pair.a.awaitMessage(
+        handshake.aConversation,
+        messages => messages.exists(message => message._4 == "proxy-fidelity" && message._3 == "delivered"),
+        "proxy fidelity delivered"
+      )
+    }
+
+  private def scenario11(): String = tamperedData(FaultKind.TamperSignature, "signature")
+
+  private def scenario15(): String =
+    E2EEnvironment.withFaultPair { (pair, fault) =>
+      val handshake = E2EEnvironment.handshake(pair)
+      verifySafety(pair, handshake)
+      fault.arm(Fault(FaultKind.Drop, pair.a.identityDevice, pair.b.identityDevice, Some(1L)))
+
+      pair.a.sendMessage(handshake.aConversation, "one")
+      pair.a.sendMessage(handshake.aConversation, "two")
+      fault.awaitApplied()
+      fault.awaitGap()
+
+      val onB = pair.b.awaitMessage(
+        handshake.bConversation,
+        messages => messages.count(_._2 == "peer") >= 2,
+        "both messages after dropped seq=1",
+        Duration.ofSeconds(30)
+      )
+      val onA = pair.a.awaitMessage(
+        handshake.aConversation,
+        messages => messages.count(message => message._2 == "me" && message._3 == "delivered") >= 2,
+        "both messages delivered",
+        Duration.ofSeconds(30)
+      )
+      val expectedB: Vector[(Long, String, String, String)] =
+        Vector((1L, "peer", "received", "one"), (2L, "peer", "received", "two"))
+      val expectedA: Vector[(Long, String, String, String)] =
+        Vector((1L, "me", "delivered", "one"), (2L, "me", "delivered", "two"))
+      ensure(onB == expectedB, s"B did not recover the dropped frame in order: $onB")
+      ensure(onA == expectedA, s"A did not deliver both messages: $onA")
+      ensure(fault.retryMatchesOriginal, "A's retry was not byte-identical to the dropped Data")
+      ensure(fault.gapBeforeResend, "A resent before the Gap was forwarded")
+      ensure(
+        fault.gapToResendNanos > 0L && fault.gapToResendNanos < 1_800_000_000L,
+        s"retry was not Gap-driven; gap_to_resend_ns=${fault.gapToResendNanos}"
+      )
+      s"dropped=1 gap=1 retry_identical=1 gap_to_resend_ms=${fault.gapToResendNanos / 1_000_000L} bCount=${onB.size} aDelivered=${onA.size}"
+    }
+
+  private def tamperedData(kind: FaultKind, label: String, proxyChecked: Boolean = false): String =
+    E2EEnvironment.withFaultPair { (pair, fault) =>
+      val handshake = E2EEnvironment.handshake(pair)
+      verifySafety(pair, handshake)
+      val body      = s"tampered-$label"
+      fault.arm(Fault(kind, pair.a.identityDevice, pair.b.identityDevice, Some(1L)))
+
+      pair.a.sendMessage(handshake.aConversation, body)
+      fault.awaitApplied()
+      ensure(!pair.b.messages(handshake.bConversation).exists(_._4 == body), s"B applied tampered $label")
+
+      val onB = pair.b.awaitMessage(
+        handshake.bConversation,
+        messages => messages.exists(_._4 == body),
+        s"retried $label message",
+        Duration.ofSeconds(30)
+      )
+      val onA = pair.a.awaitMessage(
+        handshake.aConversation,
+        messages => messages.exists(message => message._4 == body && message._3 == "delivered"),
+        s"delivered $label message",
+        Duration.ofSeconds(30)
+      )
+      ensure(onB.count(_._4 == body) == 1, s"B saw $label body more than once: $onB")
+      ensure(onA.count(_._4 == body) == 1, s"A saw $label body more than once: $onA")
+      ensure(fault.forwardedTampered, s"proxy did not forward the tampered $label frame")
+      ensure(fault.retryMatchesOriginal, s"A's retry was not byte-identical to the original $label wire")
+      val proxy = if proxyChecked then "proxy_fidelity=1 " else ""
+      s"${proxy}tampered=1 forwarded=1 retried=1 bCount=${onB.count(_._4 == body)} aDelivered=${onA.count(_._4 == body)}"
+    }
+
+  private def expiredInvitationText(): String =
+    val ephemeral = x25519(0x11.toByte)
+    val ratchet   = x25519(0x22.toByte)
+    Invitation
+      .create(
+        keyPair(),
+        keyPair(),
+        ephemeral.publicKey,
+        ratchet.publicKey,
+        "test",
+        "@A",
+        System.currentTimeMillis() - 60_000L,
+        "expired"
+      )
+      .fold(error => throw new AssertionError(s"expired invitation generation failed: $error"), identity)
+      .text
+
+  private def keyPair(): Ed25519KeyPair =
+    val generated = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+    val privateKey = Ed25519Private
+      .from(ByteVector.view(generated.getPrivate.getEncoded).drop(16))
+      .fold(error => throw new AssertionError(s"invalid test private key: $error"), identity)
+    val publicKey = Ed25519Public
+      .from(ByteVector.view(generated.getPublic.getEncoded).takeRight(32))
+      .fold(error => throw new AssertionError(s"invalid test public key: $error"), identity)
+    Ed25519KeyPair(privateKey, publicKey)
+
+  private def x25519(seed: Byte): X25519KeyPair =
+    X25519Private
+      .from(ByteVector.fill(32)(seed))
+      .flatMap(X25519KeyPair.fromSeed)
+      .fold(error => throw new AssertionError(s"invalid test x25519 key: $error"), identity)
+
+  private def corruptBase64(value: String): String =
+    val last = value.lastOption.getOrElse('A')
+    value.dropRight(1) + (if last == 'A' then 'B' else 'A')
 
   private def verifySafety(pair: Pair, handshake: Handshake): Unit =
     pair.a.verifySafety(handshake.bUser)

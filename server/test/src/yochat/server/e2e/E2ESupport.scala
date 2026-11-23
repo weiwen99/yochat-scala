@@ -235,19 +235,22 @@ final class ServiceProcess(
     val json = response.json
     (json("id").str, json("text").str)
 
-  def receiveInvitation(text: String, expectedAccount: Option[String]): String =
-    val response = http.post(
+  def tryReceiveInvitation(text: String, expectedAccount: Option[String]): HttpResult =
+    http.post(
       s"$base/api/invitations/receive",
       ujson.Obj(
         "text"            -> text,
         "expectedAccount" -> expectedAccount.map(value => ujson.Str(value)).getOrElse(ujson.Null)
       )
     )
+
+  def receiveInvitation(text: String, expectedAccount: Option[String]): String =
+    val response = tryReceiveInvitation(text, expectedAccount)
     requireStatus(s"$name receive invitation", response, 200)
     response.json("id").str
 
-  def acceptInvitation(invitationId: String): String =
-    val response = http.post(
+  def tryAcceptInvitation(invitationId: String): HttpResult =
+    http.post(
       s"$base/api/invitations/$invitationId/accept",
       ujson.Obj(
         "channelLabel"   -> "test",
@@ -255,6 +258,9 @@ final class ServiceProcess(
         "note"           -> s"reply-$name"
       )
     )
+
+  def acceptInvitation(invitationId: String): String =
+    val response = tryAcceptInvitation(invitationId)
     requireStatus(s"$name accept invitation", response, 200)
     response.json("replyText").str
 
@@ -339,7 +345,7 @@ final class ServiceProcess(
     if response.status != expected then
       throw new AssertionError(s"$label returned ${response.status}: ${response.body}\n${logTail()}")
 
-final class RelayHandle:
+final class RelayHandle extends RelayControl:
   private val current = new AtomicReference[Option[(RelayServer, IO[Unit])]](None)
   private val portRef = new AtomicInteger(0)
 
@@ -355,7 +361,7 @@ final class RelayHandle:
   def stop(): Unit =
     current.getAndSet(None).foreach { case (_, release) => release.unsafeRunSync() }
 
-final case class Pair(a: ServiceProcess, b: ServiceProcess, relay: RelayHandle):
+final case class Pair(a: ServiceProcess, b: ServiceProcess, relay: RelayControl):
   def close(): Unit =
     try a.stop(assertLocked = false)
     catch case NonFatal(_) => ()
@@ -368,13 +374,22 @@ final case class Pair(a: ServiceProcess, b: ServiceProcess, relay: RelayHandle):
 
 object E2EEnvironment:
   def withPair[A](body: Pair => A): A =
-    val relay     = new RelayHandle
-    val relayPort = relay.start(0)
-    val dirA      = Files.createTempDirectory("yochat-e2e-a-")
-    val dirB      = Files.createTempDirectory("yochat-e2e-b-")
-    val a         = new ServiceProcess("A", E2E.freePort(), dirA, relayPort, dirA.resolve("server.log"))
-    val b         = new ServiceProcess("B", E2E.freePort(), dirB, relayPort, dirB.resolve("server.log"))
-    val pair      = Pair(a, b, relay)
+    val relay = new RelayHandle
+    relay.start(0)
+    try withProcesses(relay)(body)
+    finally relay.stop()
+
+  def withFaultPair[A](body: (Pair, FaultRelay) => A): A =
+    val fault = FaultRelay.start()
+    try withProcesses(fault)(pair => body(pair, fault))
+    finally fault.stop()
+
+  private def withProcesses[A](relay: RelayControl)(body: Pair => A): A =
+    val dirA = Files.createTempDirectory("yochat-e2e-a-")
+    val dirB = Files.createTempDirectory("yochat-e2e-b-")
+    val a    = new ServiceProcess("A", E2E.freePort(), dirA, relay.port, dirA.resolve("server.log"))
+    val b    = new ServiceProcess("B", E2E.freePort(), dirB, relay.port, dirB.resolve("server.log"))
+    val pair = Pair(a, b, relay)
     try
       a.start()
       b.start()
