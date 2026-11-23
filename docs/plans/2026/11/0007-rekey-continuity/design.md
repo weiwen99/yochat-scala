@@ -246,3 +246,36 @@ D:109 改为“E2E#1–#7、#9–#15 共 14 条通过；#8 不计入本计划”
 ### 11.4 验收文字
 
 真实发送者 7A 使用 A 服务在自动 rekey 前 `sendMessage`，保留同一 DB 行；B 只显示一次，A 收到新 session 的 ACK 后 `Delivered`，随后发送 k+1 成功。旧 DataAck、仅 Active session 和注入帧均不能代签。
+
+## 12. Round 4 review 修订
+
+### 12.1 R4-N1：Duplicate 也必须持久化退休
+
+目标新 session 的首个已认证 Data 若在 `Conversation.accept` 得到 `Duplicate`（旧正文已存在、旧 DataAck 丢失），也必须执行 `ResponderFirstData` 退休：
+
+- 不追加第二条 Received 行；
+- 在同一 durable 事务里持久化新 session 状态，并使用 `PersistHandshake` 的“新 session + retire 旧 session”组合提交退休；
+- 旧行和密钥删除后，重开不得再被 `AppStateRestore` 载入；
+- 旧 DataAck 仍不是退休证据；只有这个目标新 session 的认证 Data（即使业务消息 Duplicate）算证据。
+
+测试顺序：B 已保存 Data(k)，旧 ACK 丢失；A 重绑同 seq k；B 收到新密文得到 Duplicate；断言 B 仍只有一条正文、旧 session 持久删除、重开后仍不存在，A 获得新 ACK。
+
+### 12.2 A7：恢复后的首次 Confirm 必须立即补发
+
+`Initiator + Accepted + Pending` 在启动/重连恢复时：
+
+- 不等待一个新的完整 responder timeout；若本次握手仍在预算内，**立即**生成 fresh nonce/`n`、先持久化再发送一次 Confirm；
+- 随后按 ConfirmRetry 预算安装重试 timer；首次补发不调用 `Rekey.start`、不扣 7C 本端预算；
+- 若 responder 已放弃/ACK 永久丢失，则在同一握手有限次后公开失败，不承诺离线必达。
+
+双端虚拟时钟测试：B 原 pending 到期是第 5s；A 在第 1s 重开，无额外用户消息；B 在第 5s 前收到 A 的首次补发 Confirm 并回 ACK，原行最终 `Delivered` 一次。不得从恢复时刻再等 5s。
+
+### 12.3 R3-N1：批次结束后重新 drain
+
+`RebindPending` 的内联批次维护“仍有待迁移项”的状态；无论最后一项结果是 `Migrated` 还是 `Skipped`，批次结束都调用现有发送泵重新检查**其余 queued**：
+
+- `Skipped` 旧项被移除并取消 timer，但不产生成功反馈/`SendWire`；
+- 其他 `Migrated` 项已按 seq 排队；批次结束后的 pump 让最早的 queued 自行进入 delivery；
+- 不依赖用户 POST、重连、timer 或无关 ACK 才唤醒。
+
+固定测试顺序：同一 conversation `Migrated(k) → Skipped(Failed,k+1)`；两项完成后不进行额外操作，k 自行发出并获 ACK，k+1 不发送、不消耗 `ns`。
