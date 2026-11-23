@@ -123,10 +123,11 @@ final class AppService private (
   def stateJson: IO[Either[ServiceError, Value]] =
     withRunning { running =>
       for
-        appState <- running.runtime.state
-        fatal    <- running.runtime.fatalError
-        online   <- running.relay.isOnline
-        json     <- ApiJson.state(config, running.store, appState, online, fatal)
+        appState     <- running.runtime.state
+        fatal        <- running.runtime.fatalError
+        online       <- running.relay.isOnline
+        notification <- running.runtime.lastNotification
+        json         <- ApiJson.state(config, running.store, appState, online, fatal, notification)
       yield json
     }
 
@@ -137,10 +138,11 @@ final class AppService private (
         case None        => instanceExists.map(exists => ApiJson.locked(exists, config))
         case Some(value) =>
           for
-            appState <- value.runtime.state
-            fatal    <- value.runtime.fatalError
-            online   <- value.relay.isOnline
-            json     <- ApiJson.state(config, value.store, appState, online, fatal)
+            appState     <- value.runtime.state
+            fatal        <- value.runtime.fatalError
+            online       <- value.relay.isOnline
+            notification <- value.runtime.lastNotification
+            json         <- ApiJson.state(config, value.store, appState, online, fatal, notification)
           yield json
       }
       .handleErrorWith(error => IO.pure(ApiJson.error(ServiceError.RuntimeFailed(error.getClass.getSimpleName))))

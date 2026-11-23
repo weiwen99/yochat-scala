@@ -301,6 +301,46 @@ private[store] object MessageRepository:
 
     loop(None, limit, Vector.empty)
 
+  def rebindMessage(
+    runtime: StoreRuntime,
+    oldSessionId: SessionId,
+    newSessionId: SessionId,
+    conversationId: ByteVector,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    oldSeq: Long,
+    newSeq: Long,
+    body: ByteVector,
+    wire: ByteVector,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, Unit]] =
+    runtime.run {
+      for
+        _          <- Sql.checkLock(expectedLockGeneration)
+        nonce      <- FC.delay(StoreCrypto.randomNonceUnsafe())
+        sealedBody <- fromEither(
+                        StoreCrypto.seal(
+                          runtime.keys.messageKey(newSessionId),
+                          nonce,
+                          StoreCrypto.messageAad(
+                            conversationId,
+                            newSessionId.bytes,
+                            authorPub.bytes,
+                            devicePub.bytes,
+                            newSeq,
+                            StoreCrypto.wireHash(wire)
+                          ),
+                          body
+                        )
+                      )
+        changed    <- sql"""UPDATE messages
+                          |SET session_id = ${newSessionId.bytes.toArray}, seq = $newSeq, body = ${sealedBody.toArray}, wire = ${wire.toArray}
+                          |WHERE conversation_id = ${conversationId.toArray} AND session_id = ${oldSessionId.bytes.toArray}
+                          |  AND author_pub = ${authorPub.bytes.toArray} AND device_pub = ${devicePub.bytes.toArray} AND seq = $oldSeq""".stripMargin.update.run
+        _          <- Sql.changed(changed)
+      yield ()
+    }
+
   def setState(
     runtime: StoreRuntime,
     messageId: Long,

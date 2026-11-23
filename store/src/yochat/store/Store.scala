@@ -180,6 +180,32 @@ final class Store private[store] (
       expectedLockGeneration
     )
 
+  def rebindMessage(
+    oldSessionId: SessionId,
+    newSessionId: SessionId,
+    conversationId: ByteVector,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    oldSeq: Long,
+    newSeq: Long,
+    body: ByteVector,
+    wire: ByteVector,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, Unit]] =
+    MessageRepository.rebindMessage(
+      runtime,
+      oldSessionId,
+      newSessionId,
+      conversationId,
+      authorPub,
+      devicePub,
+      oldSeq,
+      newSeq,
+      body,
+      wire,
+      expectedLockGeneration
+    )
+
   def pendingCount(sessionId: SessionId): IO[Either[StorageError, Long]] =
     MessageRepository.pendingCount(runtime, sessionId)
 

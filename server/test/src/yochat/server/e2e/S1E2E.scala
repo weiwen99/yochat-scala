@@ -71,7 +71,8 @@ object S1E2E:
       Contract("E2E#12", "logs and diagnostics contain no secrets", () => scenario12()),
       Contract("E2E#13", "app lock and unlock", () => scenario13()),
       Contract("E2E#14", "undecryptable message triggers automatic rebuild", () => scenario14()),
-      Contract("E2E#15", "dropped data frame recovered by Gap and resend", () => scenario15())
+      Contract("E2E#15", "dropped data frame recovered by Gap and resend", () => scenario15()),
+      Contract("E2E#17", "pending message is rebound to the new session", () => scenario17())
     )
     args.toList match
       case Nil         =>
@@ -717,6 +718,27 @@ object S1E2E:
     state("contacts").arr.toVector
       .find(_.obj("userPub").str == userPub)
       .getOrElse(throw new AssertionError(s"contact $userPub missing: $state"))
+
+  private def scenario17(): String =
+    E2EEnvironment.withFaultPair { (pair, fault) =>
+      val handshake = E2EEnvironment.handshake(pair)
+      pair.a.verifySafety(handshake.bUser)
+      pair.b.verifySafety(handshake.aUser)
+      pair.a.awaitSafety(handshake.bUser, verified = true)
+      pair.b.awaitSafety(handshake.aUser, verified = true)
+      val conversation = handshake.aConversation
+      val sessionId    = pair.a.activeSession(conversation)
+      fault.arm(Fault(FaultKind.Drop, pair.a.identityDevice, pair.b.identityDevice, Some(1L)))
+      pair.a.sendMessage(conversation, "rebound")
+      fault.awaitApplied()
+      val response = pair.a.rekey(sessionId)
+      ensure(response.status == 200, s"A rekey returned ${response.status}: ${response.body}")
+      val bob = pair.b.awaitMessage(handshake.bConversation, messages => messages.exists(_._4 == "rebound"), "rebound body")
+      val alice = pair.a.awaitMessage(conversation, messages => messages.exists(value => value._3 == "delivered" && value._4 == "rebound"), "rebound delivered")
+      ensure(bob.count(_._4 == "rebound") == 1, s"B body count: $bob")
+      ensure(alice.count(_._4 == "rebound") == 1, s"A body count: $alice")
+      s"session=$sessionId body=rebound"
+    }
 
   private def ensure(condition: Boolean, message: => String): Unit =
     if !condition then throw new AssertionError(message)

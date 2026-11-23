@@ -1,10 +1,12 @@
 package yochat.server
 
+import cats.effect.IO
+import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import scodec.bits.ByteVector
 
 import yochat.core.{Ed25519Public, SessionId}
-import yochat.core.app.Conversation
+import yochat.core.app.{Conversation, LockState, Notification}
 import yochat.store.{MessageRecord, MessageState}
 
 class ApiJsonSpec extends FunSuite:
@@ -42,4 +44,19 @@ class ApiJsonSpec extends FunSuite:
     assert(ApiJson.visible(record(peer.publicKey, 1L), conversation, local.publicKey.bytes))
     assert(!ApiJson.visible(record(peer.publicKey, 2L), conversation, local.publicKey.bytes))
     assertEquals(ApiJson.ordered(List(record(peer.publicKey, 2L), record(peer.publicKey, 1L))).map(_.seq), List(1L, 2L))
+  }
+
+  test("last notification is visible only while unlocked") {
+    ExecutorTestSupport.withStore { store =>
+      val fixture = ExecutorTestSupport.fixture()
+      val state   = ExecutorTestSupport.appState(fixture)
+      val config  = ServiceConfig(0, java.nio.file.Path.of("."), "127.0.0.1", 1, 60_000L)
+      val visible = ApiJson.state(config, store, state, online = true, None, Some(Notification.RekeyFailed)).unsafeRunSync()
+      assertEquals(visible("notification").str, "rekey-failed")
+      val hidden = ApiJson
+        .state(config, store, state.copy(lock = LockState.Locked(0L)), online = true, None, Some(Notification.RekeyFailed))
+        .unsafeRunSync()
+      assert(hidden("notification").isNull)
+      IO.unit
+    }
   }

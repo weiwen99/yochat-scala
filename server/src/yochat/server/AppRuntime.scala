@@ -51,6 +51,7 @@ final class AppRuntime private (
   random: RuntimeRandom,
   messageIds: Ref[IO, Long],
   fatal: Ref[IO, Option[AppExecutionError]],
+  lastNotificationRef: Ref[IO, Option[Notification]],
   clock: Clock,
   loopFiber: FiberIO[Unit],
   inboundFiber: FiberIO[Unit],
@@ -58,6 +59,8 @@ final class AppRuntime private (
 ):
 
   def state: IO[AppState] = AppRuntime.readRef(stateRef)
+
+  def lastNotification: IO[Option[Notification]] = AppRuntime.readRef(lastNotificationRef)
 
   def submit(event: AppEvent): IO[Boolean] =
     AppRuntime.readRef(fatal).flatMap {
@@ -260,7 +263,8 @@ object AppRuntime:
     effect match
       case _: AppEffect.PersistOutbound | _: AppEffect.PersistInbound | _: AppEffect.PersistInboundAndRetire | _: AppEffect.PersistContact |
           _: AppEffect.PersistSession | _: AppEffect.PersistSafetyVerified | _: AppEffect.PersistInvitation | _: AppEffect.PersistHandshake |
-          _: AppEffect.PersistAttempt | _: AppEffect.PersistLockGeneration | _: AppEffect.DeleteInvitation | _: AppEffect.UpdateMessageState =>
+          _: AppEffect.PersistAttempt | _: AppEffect.PersistLockGeneration | _: AppEffect.DeleteInvitation | _: AppEffect.UpdateMessageState |
+          _: AppEffect.PersistRebound =>
         true
       case _ => false
 
@@ -283,56 +287,58 @@ object AppRuntime:
     onState: AppState => IO[Unit]
   ): IO[AppRuntime] =
     for
-      restored      <- AppStateRestore.load(store)
-      state         <- restored match
-                         case Left(error)  => IO.raiseError(new RuntimeError(s"restore-failed:${error.code}"))
-                         case Right(value) => IO.pure(value)
-      _             <- store.adoptLockGeneration(state.lock.value).flatMap {
-                         case Right(_)    => IO.unit
-                         case Left(error) => IO.raiseError(new RuntimeError(s"adopt-lock-failed:${error.code}"))
-                       }
-      identity      <- state.identity match
-                         case Some(value) => IO.pure(value)
-                         case None        => IO.raiseError(new RuntimeError("identity-missing"))
-      queue         <- Queue.bounded[IO, RuntimeCommand](math.max(16, queueCapacity))
-      stateRef      <- Ref.of[IO, AppState](state)
-      fatal         <- Ref.of[IO, Option[AppExecutionError]](None)
-      notifications <- Queue.bounded[IO, Notification](64)
-      messageIds    <- Ref.of[IO, Long](initialMessageId(state))
-      timers        <- TimerService.create(queue, stateRef, clock)
-      random         = new RuntimeRandom
-      transport      = new RelayAppTransport(relay, queue, notifications, clock, timers)
-      executor       = new AppEffectExecutor(store, identity, transport)
-      loop          <- eventLoop(transport, queue, stateRef, messageIds, random, executor, fatal, clock, onState).start
-      inbound       <- relay.incoming
-                         .flatMap(incoming => queue.tryOffer(RuntimeCommand.Inbound(incoming.from, incoming.payload)).void)
-                         .foreverM
-                         .void
-                         .start
-      updates       <- relay.updates
-                         .flatMap(online => queue.tryOffer(RuntimeCommand.Connection(online, clock.millis())).void)
-                         .foreverM
-                         .void
-                         .start
-      runtime        = new AppRuntime(
-                         identity,
-                         store,
-                         stateRef,
-                         queue,
-                         timers,
-                         notifications,
-                         random,
-                         messageIds,
-                         fatal,
-                         clock,
-                         loop,
-                         inbound,
-                         updates
-                       )
-      online        <- relay.isOnline
-      _             <- queue.tryOffer(RuntimeCommand.Connection(online, clock.millis()))
-      accepted      <- queue.tryOffer(RuntimeCommand.App(AppEvent.Unlock(identity, clock.millis(), idleTimeoutMs)))
-      _             <- if accepted then IO.unit else IO.raiseError(new RuntimeError("event-queue-full"))
+      restored        <- AppStateRestore.load(store)
+      state           <- restored match
+                           case Left(error)  => IO.raiseError(new RuntimeError(s"restore-failed:${error.code}"))
+                           case Right(value) => IO.pure(value)
+      _               <- store.adoptLockGeneration(state.lock.value).flatMap {
+                           case Right(_)    => IO.unit
+                           case Left(error) => IO.raiseError(new RuntimeError(s"adopt-lock-failed:${error.code}"))
+                         }
+      identity        <- state.identity match
+                           case Some(value) => IO.pure(value)
+                           case None        => IO.raiseError(new RuntimeError("identity-missing"))
+      queue           <- Queue.bounded[IO, RuntimeCommand](math.max(16, queueCapacity))
+      stateRef        <- Ref.of[IO, AppState](state)
+      fatal           <- Ref.of[IO, Option[AppExecutionError]](None)
+      notifications   <- Queue.bounded[IO, Notification](64)
+      messageIds      <- Ref.of[IO, Long](initialMessageId(state))
+      timers          <- TimerService.create(queue, stateRef, clock)
+      random           = new RuntimeRandom
+      notificationRef <- Ref.of[IO, Option[Notification]](None)
+      transport        = new RelayAppTransport(relay, queue, notifications, notificationRef, clock, timers)
+      executor         = new AppEffectExecutor(store, identity, transport)
+      loop            <- eventLoop(transport, queue, stateRef, messageIds, random, executor, fatal, clock, onState).start
+      inbound         <- relay.incoming
+                           .flatMap(incoming => queue.tryOffer(RuntimeCommand.Inbound(incoming.from, incoming.payload)).void)
+                           .foreverM
+                           .void
+                           .start
+      updates         <- relay.updates
+                           .flatMap(online => queue.tryOffer(RuntimeCommand.Connection(online, clock.millis())).void)
+                           .foreverM
+                           .void
+                           .start
+      runtime          = new AppRuntime(
+                           identity,
+                           store,
+                           stateRef,
+                           queue,
+                           timers,
+                           notifications,
+                           random,
+                           messageIds,
+                           fatal,
+                           notificationRef,
+                           clock,
+                           loop,
+                           inbound,
+                           updates
+                         )
+      online          <- relay.isOnline
+      _               <- queue.tryOffer(RuntimeCommand.Connection(online, clock.millis()))
+      accepted        <- queue.tryOffer(RuntimeCommand.App(AppEvent.Unlock(identity, clock.millis(), idleTimeoutMs)))
+      _               <- if accepted then IO.unit else IO.raiseError(new RuntimeError("event-queue-full"))
     yield runtime
 
   private def eventLoop(
@@ -375,11 +381,13 @@ object AppRuntime:
       case RuntimeCommand.App(event)             =>
         applyEvent(transport, event, queue, stateRef, random, executor, fatal, clock, onState) *>
           (event match
-            case AppEvent.Unlock(_, _, _) => resumeGaps(queue, stateRef, random, clock)
+            case AppEvent.Unlock(_, _, _) =>
+              resumeGaps(queue, stateRef, random, clock) *> queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRebinds)).void
             case _                        => IO.unit)
       case RuntimeCommand.Connection(on, now)    =>
         applyEvent(transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, random, executor, fatal, clock, onState) *>
-          (if on then resumeGaps(queue, stateRef, random, clock) else IO.unit)
+          (if on then resumeGaps(queue, stateRef, random, clock) *> queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRebinds)).void
+           else IO.unit)
       case RuntimeCommand.Inbound(from, payload) =>
         translateInbound(from, payload, messageIds, random, stateRef, clock).flatMap {
           case None        => IO.unit
@@ -472,6 +480,35 @@ object AppRuntime:
                   _        <- if accepted then IO.unit
                               else fatal.set(Some(AppExecutionError.Unsupported("rekey-queue-full")))
                 yield ()
+              case AppEffect.RebindPending(oldSessionId, newSessionId)       =>
+                def loop: IO[Unit] =
+                  AppRuntime.readRef(stateRef).flatMap { current =>
+                    current.outgoing.values
+                      .filter(message =>
+                        message.sessionId == oldSessionId &&
+                          Set(OutgoingState.Persisting, OutgoingState.Sent, OutgoingState.Queued, OutgoingState.InFlight)
+                            .contains(message.state)
+                      )
+                      .toVector
+                      .sortBy(_.id)
+                      .headOption match
+                      case None        => IO.unit
+                      case Some(value) =>
+                        random.nonce.flatMap { nonce =>
+                          applyEvent(
+                            transport,
+                            AppEvent.RebindOutgoing(value.id, newSessionId, nonce, clock.millis()),
+                            queue,
+                            stateRef,
+                            random,
+                            executor,
+                            fatal,
+                            clock,
+                            onState
+                          ) *> loop
+                        }
+                  }
+                loop
               case _                                                         =>
                 executor.execute(effect).flatMap {
                   case Right(_)                                => IO.unit
@@ -697,6 +734,7 @@ final private[server] class RelayAppTransport(
   relay: RelayClient,
   queue: Queue[IO, RuntimeCommand],
   notifications: Queue[IO, Notification],
+  lastNotification: Ref[IO, Option[Notification]],
   clock: Clock,
   timers: TimerService
 ) extends AppTransport:
@@ -744,7 +782,7 @@ final private[server] class RelayAppTransport(
     timers.cancel(timer)
 
   def notify(notification: Notification): IO[Unit] =
-    notifications.tryOffer(notification).void
+    lastNotification.set(Some(notification)) *> notifications.tryOffer(notification).void
 
   private def feedback(event: AppEvent): IO[Unit] =
     queue.tryOffer(RuntimeCommand.App(event)).void

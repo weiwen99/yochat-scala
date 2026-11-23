@@ -2,7 +2,7 @@
 
 - Plan: 0007
 - Date: 2026-11-23
-- Status: design
+- Status: implemented
 - Domain: protocol recovery, persistence, diagnostics
 - Summary: Close the remaining #14 gaps: 7A rebind unconfirmed outgoing messages from the old session to the newly active rekey session; 7B expose rebuild failure at a production-readable boundary and bound rebuilds across successful cutovers. Performance gates remain later.
 - Live spec: `.scratch/yochat-rekey-continuity/spec.md`

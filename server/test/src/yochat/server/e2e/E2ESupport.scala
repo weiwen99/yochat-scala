@@ -306,6 +306,15 @@ final class ServiceProcess(
     requireStatus(s"$name send message", response, 200)
     E2E.longValue(response.json("messageId"))
 
+  def activeSession(conversationId: String): String =
+    state("sessions").arr.toVector
+      .find(session => session.obj("conversationId").str == conversationId && session.obj("phase").str == "active")
+      .map(_.obj("id").str)
+      .getOrElse(throw new AssertionError(s"$name active session missing for $conversationId"))
+
+  def rekey(sessionId: String): HttpResult =
+    http.postEmpty(s"$base/api/rekey/$sessionId")
+
   def awaitContacts(peer: String, timeout: Duration = Duration.ofSeconds(20)): Value =
     E2E.await(s"$name contact $peer", timeout) {
       val current = state

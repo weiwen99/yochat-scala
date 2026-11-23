@@ -229,17 +229,19 @@ extension (message: BufferedMessage)
 
 object AppLimits:
 
-  val DeliveryTimeoutMs: Long = 5_000L
-  val RetryBackoffMs: Long    = 2_000L
-  val MaxSendAttempts: Int    = 3
-  val MaxBuffered: Int        = 256
-  val MaxInFlight: Int        = 32
-  val MaxOutgoing: Int        = 1_024
-  val MaxFailedRetained: Int  = 64
-  val MaxReplyAttempts: Int   = 3
-  val ReplyRetryMs: Long      = 2_000L
-  val RekeyTimeoutMs: Long    = 5_000L
-  val MaxReplyCandidates: Int = 8
+  val DeliveryTimeoutMs: Long     = 5_000L
+  val RetryBackoffMs: Long        = 2_000L
+  val RekeyWindowMs: Long         = 60_000L
+  val MaxRekeyWindowAttempts: Int = 3
+  val MaxSendAttempts: Int        = 3
+  val MaxBuffered: Int            = 256
+  val MaxInFlight: Int            = 32
+  val MaxOutgoing: Int            = 1_024
+  val MaxFailedRetained: Int      = 64
+  val MaxReplyAttempts: Int       = 3
+  val ReplyRetryMs: Long          = 2_000L
+  val RekeyTimeoutMs: Long        = 5_000L
+  val MaxReplyCandidates: Int     = 8
 
 final case class AppState(
   identity: Option[LocalIdentity] = None,
@@ -251,7 +253,9 @@ final case class AppState(
   invitations: Map[ByteVector, AppInvitation] = Map.empty,
   outgoing: Map[Long, OutgoingMessage] = Map.empty,
   timers: Map[TimerId, Long] = Map.empty,
-  connection: ConnectionState = ConnectionState.Offline
+  connection: ConnectionState = ConnectionState.Offline,
+  rekeyWindowStartedAtMs: Long = 0L,
+  rekeyWindowAttempts: Int = 0
 ):
 
   override def toString: String =

@@ -7,7 +7,7 @@ import scodec.bits.ByteVector
 import ujson.Value
 
 import yochat.core.{Invitation, SafetyNumber, SessionPhase}
-import yochat.core.app.{AppContact, AppLimits, AppState, ContactConfirmation, Conversation, InvitationLifecycle}
+import yochat.core.app.{AppContact, AppLimits, AppState, ContactConfirmation, Conversation, InvitationLifecycle, Notification}
 import yochat.store.{MessageRecord, MessageState, Store}
 
 object ApiJson:
@@ -25,7 +25,8 @@ object ApiJson:
     store: Store,
     state: AppState,
     online: Boolean,
-    fatal: Option[AppExecutionError]
+    fatal: Option[AppExecutionError],
+    lastNotification: Option[Notification]
   ): IO[Value] =
     val identity      = state.identity.map { value =>
       ujson.Obj(
@@ -43,6 +44,8 @@ object ApiJson:
       "identity"      -> identity.map(value => value).getOrElse(ujson.Null),
       "relay"         -> relayJson(config, online),
       "fatal"         -> fatal.map(error => ujson.Str(error.code)).getOrElse(ujson.Null),
+      "notification"  -> (if state.lock.isUnlocked then lastNotification.map(value => ujson.Str(notificationCode(value))).getOrElse(ujson.Null)
+                         else ujson.Null),
       "lock"          -> ujson.Obj(
         "locked"     -> !state.lock.isUnlocked,
         "generation" -> state.lock.value
@@ -226,6 +229,15 @@ object ApiJson:
       case MessageState.Received  => "received"
       case MessageState.Failed    => "failed"
       case MessageState.Delivered => "delivered"
+
+  private def notificationCode(notification: Notification): String =
+    notification match
+      case Notification.Waiting         => "waiting"
+      case Notification.RekeyRequired   => "rekey-required"
+      case Notification.RekeyFailed     => "rekey-failed"
+      case Notification.MessageFailed   => "message-failed"
+      case Notification.QueueFull       => "queue-full"
+      case Notification.InboundOverflow => "inbound-overflow"
 
   private def decodeBody(value: ByteVector): String =
     new String(value.toArray, StandardCharsets.UTF_8)

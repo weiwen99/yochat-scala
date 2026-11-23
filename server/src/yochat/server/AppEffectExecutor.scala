@@ -99,6 +99,10 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
     effect match
       case AppEffect.PersistOutbound(message, session)                                                                      =>
         persistOutbound(message, session)
+      case AppEffect.PersistRebound(message, session, oldSessionId, oldSeq, expectedVersion)                                =>
+        persistRebound(message, session, oldSessionId, oldSeq, expectedVersion)
+      case AppEffect.RebindPending(_, _)                                                                                    =>
+        IO.pure(Right(()))
       case AppEffect.PersistInbound(message, session)                                                                       =>
         persistInbound(message, session)
       case AppEffect.PersistInboundAndRetire(message, session, retire)                                                      =>
@@ -310,6 +314,42 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
       deletePendingSessions = deletePending
     )
     store.persistHandshake(write).map(mapStore)
+
+  private def persistRebound(
+    message: OutgoingMessage,
+    session: AppSession,
+    oldSessionId: yochat.core.SessionId,
+    oldSeq: Long,
+    expectedVersion: Long
+  ): IO[Either[AppExecutionError, Unit]] =
+    for
+      current <- store.loadSession(session.state.sessionId)
+      lock    <- lockGeneration
+      result  <- current match
+                   case Left(error)   => IO.pure(mapStore(Left(error)))
+                   case Right(record) =>
+                     if expectedVersion >= 0 && record.version != expectedVersion then
+                       IO.pure(mapStore(Left(StorageError.InvalidArgument("session-version"))))
+                     else
+                       store.updateSession(session.state, record.version, lock).flatMap {
+                         case Left(error) => IO.pure(mapStore(Left(error)))
+                         case Right(_)    =>
+                           store
+                             .rebindMessage(
+                               oldSessionId,
+                               session.state.sessionId,
+                               message.conversationId,
+                               message.authorPub,
+                               message.devicePub,
+                               oldSeq,
+                               message.seq,
+                               message.body,
+                               message.wire.bytes,
+                               lock
+                             )
+                             .map(mapStore)
+                       }
+    yield result
 
   private def persistAttempt(message: OutgoingMessage): IO[Either[AppExecutionError, Unit]] =
     for

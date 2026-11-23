@@ -24,6 +24,8 @@ enum AppEvent:
   case UserSend(messageId: Long, conversationId: ByteVector, body: ByteVector, nonce: Nonce, nowMs: Long)
   case PersistOutboundSucceeded(messageId: Long, generation: Long, nowMs: Long)
   case PersistOutboundFailed(messageId: Long, generation: Long, nowMs: Long)
+  case RebindOutgoing(messageId: Long, newSessionId: SessionId, nonce: Nonce, nowMs: Long)
+  case RecoverRebinds
   case SendSucceeded(messageId: Long, generation: Long)
   case SendFailed(messageId: Long, generation: Long, nowMs: Long)
   case TimerFired(timer: TimerId, generation: Long, nowMs: Long)
@@ -100,6 +102,8 @@ enum AppEffect:
     retire: Vector[(SessionId, SessionRetirement)],
     deletePendingSessions: Vector[SessionId]
   )
+  case RebindPending(oldSessionId: SessionId, newSessionId: SessionId)
+  case PersistRebound(message: OutgoingMessage, session: AppSession, oldSessionId: SessionId, oldSeq: Long, expectedSessionVersion: Long)
   case PersistAttempt(message: OutgoingMessage)
   case PersistLockGeneration(generation: Long)
   case DeleteInvitation(invitationId: ByteVector)
