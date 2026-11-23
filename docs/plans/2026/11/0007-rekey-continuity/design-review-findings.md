@@ -86,3 +86,20 @@ A1、A3、A5、A8、B2 的 Round 2 设计裁决不变。真实发送者仍按 D:
 | R5-N1 · **新增 P1：只在已解锁且在线时补发一次 Confirm** | D:265–268「启动/重连恢复时 … 立即 … 持久化再发送」；D:187 指定 `Unlock` / 重连两个入口 | 应用锁边界；7A 先存后发与同握手有限预算；R2/R5 | 以前两个入口都装同一 timer；现在每次调用都会分配新 `n` 并落盘，不能当成可重复安装的 timer。`AppStateRestore.scala:47–55` 初态 **Locked + Offline**；`AppRuntime.scala:332–335` 在启动时先投 `Connection(online)`、再投 `Unlock`。当 relay 已在线，`AppStep.scala:152–156` 会在仍锁定时调用 `rekeyTimers`，解锁又在同文件 17–30 调一次；只按 D:265 的握手三态匹配，ACK 尚未返回时便会持久化/发送两次。当 relay 离线，`Unlock` 也会调它，durable 更新后才遇到 `relay-offline`（`RelayClient.scala:26–29`），白耗本握手的补发机会。 | 把「立即」定义为同一握手进入 `Online && lock.isUnlocked` 可发状态的**第一次**；在锁态或离线不改 ratchet、不扣确认预算、不发 wire。沿用同一握手的 retry timer/预算处理其后事件，不另建队列。分别输入 `Connection(true) → Unlock` 和「离线 Unlock → Connection(true)」；延迟返回 ACK，检查刚就绪时仅一笔 durable Confirm、仅一帧，之前为零，且不等 5s、不扣 7C。 | 0.1–0.25 / 0 / 0 |
 
 7B 锁态不公开通知、7C 仅限本端发起及重建 runtime 清零，范围未变。已记录的长期离线不保证送达仍是约束，不另开 gate。仅静态核对，未改实现、未运行测试或 E2E；设计 CLOSED 不代签 #14。
+
+## Round 6：设计关闭，转实现验收
+
+冻结对象：`design.md` blob `cbdda328112772b3718ea5b68cfc2bb11d49bf8d`（D:1–305）、live spec blob `04e47590d2a4b6f79f439734a1f383678bb58502`（S:1–31）；对照实现 `647f785`。**R4-N1、R5-N1 均 CLOSED；无新增，剩余 BLOCKER / P1 / P2 为 0 / 0 / 0。可冻结本版设计进入实现，不需要为这两项开启第 7 轮设计评审。** 下列关闭的是反例在设计中的处理缺口，不是测试通过或 #14 已交付。
+
+| 裁决 | 原句与位置 | 规则 | 问题为何已关闭 | 可证伪的实现验收 | 剩余设计成本：人日 / 新表 / 新组件 |
+| --- | --- | --- | --- | --- | --- |
+| R4-N1 · **CLOSED** | D:287–294「不能直接走 `DuplicateSeq`」「认证成功后才允许进入『无正文退休』事务」 | ADR-0006 入站查重；ADR-0007 G12；7A | 修订落在 `InboundFrame` 入站处，而不是不可达的下游分支。对正在等 `ResponderFirstData` 的目标 session，旧业务 k 已存在不能跳过签名、AEAD 或 payload/binding 校验。`Ratchet.scala:138–151,164–180` 和 `AppStep.scala:745–758,799–815` 可依次承担密码和业务校验。成功后，现有 `PersistHandshake` 可把新 ratchet 与有角色证据的旧行退休提交在同一事务，无需第二条 `Received`（`HandshakeRepository.scala:19–24`、`SessionRepository.scala:82–88`）。旧 DataAck、`Left(DuplicateSeq)`、同 session 重放都不是退休证据。 | B 已保存 k、丢旧 ACK、A 重绑 k；B 无旧待发项。**不发 k+1**，仅凭这一次新 session 的认证 Data 取得新 ACK；重开 B 后旧 session 不存在，正文仍一条。分别验证 AEAD / 首条 binding 未通过时不退休，同 session 重放不重复追加或退休。不能只检查 A 的 `Delivered`。 | 0 / 0 / 0 |
+| R5-N1 · **CLOSED** | D:298–305「第一次满足 `Online && … isUnlocked`」「锁定或离线时不改 ratchet」 | 应用锁边界；7A 先存后发；R5 | `AppRuntime.scala:332–335` 先投连接状态再投解锁；`AppStep.scala:17–30,152–156` 两处均可能进入握手恢复。§13.2 给两个入口同一条件：本握手从不可发变为可发时才首次补发；锁定或离线不动棘轮、不占确认预算、不发帧。后续归原握手的 retry timer/预算，不再走首次补发，也不另起 `StartRekey`。 | 延迟 ACK，分别给出 `Connection(true) → Unlock` 和 `Unlock(离线) → Connection(true)`：就绪前 `ns`、session 版本、预算不变且零帧；刚就绪时恰好一笔 durable Confirm，提交后发一帧，不等完整 5s。永久丢响应时最终仍有界、公开报错，不消耗 7C 的发起计数。 | 0 / 0 / 0 |
+
+### 实现交付需要的回执（沿用现有 gate）
+
+- **7A / #14：** 真实 A 在自动 rekey 前发送 k。用旧业务五元键核对同一 SQLite row id 的重绑、`sessions → messages → meta` 写序和候选版本；版本冲突回滚、终态跳过均不消耗新棘轮或发旧 wire。完成上述“不发 k+1 即重开”的退休断言后，再验证真实 k+1 按序送达。保留 `Migrated(k) → Skipped(Failed,k+1)` 无额外唤醒、旧 timer 已排队和分段崩溃恢复用例。
+- **7B / 7C：** 用一次真实超时从生产 `/api/state` 读到 `rekey-failed`；idle lock 后 `/api/session.notification` 为 null、`/api/state` 为 401。跨成功 cutover 的第 4 次本端启动在 60s 内被拒且可见，59,999/60,000ms 两侧不同；已认证的对端请求不扣本端预算。
+- **签收边界：** 长期离线、对端已放弃或永久丢 ACK 只承诺有界失败；通知和本端窗口不承诺跨 runtime 持久。按 live spec S:20–24、D:215 记录核心/存储/服务、真实发送者 #14、现有 14 个 E2E 及 `./check.sh` 的实际结果；#8 不在本计划。0006 R2-1/R2-4/R2-5 须凭实现回执关闭，本记录不替代安全评审或发布签收。
+
+本轮只做静态复审，未改代码，未运行测试、模型或 E2E。
