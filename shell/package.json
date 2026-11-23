@@ -8,10 +8,12 @@
   "scripts": {
     "start": "electron .",
     "perf:start": "node perf-start.js",
-    "check": "node --check main.js && node --check preload.js && node --check keychain-smoke.js && node --check perf-start.js",
+    "ui:smoke": "node ui-smoke.js",
+    "check": "node --check main.js && node --check preload.js && node --check keychain-smoke.js && node --check perf-start.js && node --check ui-smoke.js",
     "check:keychain": "electron keychain-smoke.js"
   },
   "devDependencies": {
-    "electron": "45.4.1"
+    "electron": "45.4.1",
+    "playwright": "^1.65.1"
   }
 }

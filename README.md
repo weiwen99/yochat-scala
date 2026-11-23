@@ -6,7 +6,7 @@ A no-account-server, end-to-end-encrypted, friend-to-friend messenger. S1 uses o
 
 M5 is in progress on `main`. Plans 0002–0007 close M3 structural hardening, first-message binding, functional E2E, privacy/lock/automatic rebuild, and rekey continuity. `core/` contains the protocol core and pure application kernel; `models/` contains Q1–Q6 finite models with Apalache/TLC receipts; `store/` is doobie + SQLite + application-layer AEAD; `transport/` has the relay and reconnecting client; `server/` has the single-writer runtime and HTTP service; `ui/` and `shell/` provide the Laminar and Electron surfaces.
 
-Functional E2E now covers 16 behavior contracts plus `PERF#10K`: 1,000 measured messages under the 5s gate and 10,000 measured messages under the 60s gate, after explicit warmup. Cold-start/idle-memory gates are measured by `shell/perf-start.js`; remaining release work is UI automation and external cryptography review.
+Functional E2E now covers 16 behavior contracts plus `PERF#10K`: 1,000 measured messages under the 5s gate and 10,000 measured messages under the 60s gate, after explicit warmup. Cold-start/idle-memory gates are measured by `shell/perf-start.js`. The two-device web UI smoke (`shell/ui-smoke.js`) drives a directed invite/reply, blocks pre-safety sending, and sends 100 messages in each direction through the rendered UI. Remaining release work is Electron-window automation, final T1 parity sign-off, and external cryptography review.
 
 ## Read first
 
@@ -44,7 +44,15 @@ Writes 10,000 inbound messages to a real SQLite store, then reports per-message 
 ./mill server.e2e
 ```
 
-Starts one real relay and two real server JVMs with temporary data directories, then runs the S1 behavior contracts, including invite/reply, contacts, safety gate, restart, reconnect, 100 ordered messages, tamper/rejection paths, lock, automatic rebuild, Gap recovery, pending rebind after cutover, and the 1,000-message throughput gate. It also runs `PERF#10K`, the 10,000-message two-process gate. It writes a redacted receipt under `tmp/checks/`.
+Run `npm ci` in `shell` first; `check.sh` uses Electron and Playwright. The service E2E starts one real relay and two real server JVMs with temporary data directories, then runs the S1 behavior contracts, including invite/reply, contacts, safety gate, restart, reconnect, 100 ordered messages, tamper/rejection paths, lock, automatic rebuild, Gap recovery, pending rebind after cutover, and the 1,000-message throughput gate. It also runs `PERF#10K`, the 10,000-message two-process gate. It writes a redacted receipt under `tmp/checks/`.
+
+Run the two-device rendered-UI smoke:
+
+```sh
+node shell/ui-smoke.js
+```
+
+It starts a relay and two server JVMs, opens two Chrome contexts, creates both identities, exchanges an invitation, verifies both safety numbers, and sends/receives 100 messages.
 
 ## Run the Electron shell
 
