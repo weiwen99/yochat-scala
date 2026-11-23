@@ -301,44 +301,66 @@ private[store] object MessageRepository:
 
     loop(None, limit, Vector.empty)
 
-  def rebindMessage(
+  def rebindOutbound(
     runtime: StoreRuntime,
+    state: yochat.core.RatchetState,
+    expectedVersion: Long,
+    expectedLockGeneration: Long,
     oldSessionId: SessionId,
-    newSessionId: SessionId,
     conversationId: ByteVector,
     authorPub: Ed25519Public,
     devicePub: Ed25519Public,
     oldSeq: Long,
-    newSeq: Long,
+    seq: Long,
     body: ByteVector,
-    wire: ByteVector,
-    expectedLockGeneration: Long
-  ): IO[Either[StorageError, Unit]] =
+    wire: ByteVector
+  ): IO[Either[StorageError, RebindOutcome]] =
     runtime.run {
       for
-        _          <- Sql.checkLock(expectedLockGeneration)
-        nonce      <- FC.delay(StoreCrypto.randomNonceUnsafe())
-        sealedBody <- fromEither(
-                        StoreCrypto.seal(
-                          runtime.keys.messageKey(newSessionId),
-                          nonce,
-                          StoreCrypto.messageAad(
-                            conversationId,
-                            newSessionId.bytes,
-                            authorPub.bytes,
-                            devicePub.bytes,
-                            newSeq,
-                            StoreCrypto.wireHash(wire)
-                          ),
-                          body
-                        )
-                      )
-        changed    <- sql"""UPDATE messages
-                          |SET session_id = ${newSessionId.bytes.toArray}, seq = $newSeq, body = ${sealedBody.toArray}, wire = ${wire.toArray}
-                          |WHERE conversation_id = ${conversationId.toArray} AND session_id = ${oldSessionId.bytes.toArray}
-                          |  AND author_pub = ${authorPub.bytes.toArray} AND device_pub = ${devicePub.bytes.toArray} AND seq = $oldSeq""".stripMargin.update.run
-        _          <- Sql.changed(changed)
-      yield ()
+        _            <- Sql.checkLock(expectedLockGeneration)
+        current      <- SessionRepository.loadProgram(runtime, state.sessionId)
+        _            <- if current.version == expectedVersion then FC.unit else Sql.abort(StorageError.StaleGeneration)
+        _            <- if current.generation == expectedLockGeneration then FC.unit else Sql.abort(StorageError.StaleGeneration)
+        _            <- SessionRepository.checkSafety(runtime, state)
+        now          <- FC.delay(runtime.clock.millis())
+        messageState <- sql"""SELECT state FROM messages
+                             |WHERE conversation_id = ${conversationId.toArray} AND session_id = ${oldSessionId.bytes.toArray}
+                             |  AND author_pub = ${authorPub.bytes.toArray} AND device_pub = ${devicePub.bytes.toArray}
+                             |  AND seq = $oldSeq""".stripMargin.query[Int].option
+        result       <- messageState match
+                          case None                                                                                                              => Sql.abort(StorageError.NotFound("message"))
+                          case Some(code) if code == MessageState.code(MessageState.Delivered) || code == MessageState.code(MessageState.Failed) =>
+                            FC.pure(RebindOutcome.Skipped)
+                          case Some(_)                                                                                                           =>
+                            for
+                              _          <- validateMessage(conversationId, state.sessionId, devicePub, seq, body, wire)
+                              prepared   <- SessionRepository.prepareUpdate(runtime, current, state, expectedLockGeneration, now)
+                              _          <- SessionRepository.writeRow(prepared)
+                              nonce      <- FC.delay(StoreCrypto.randomNonceUnsafe())
+                              sealedBody <- fromEither(
+                                              StoreCrypto.seal(
+                                                runtime.keys.messageKey(state.sessionId),
+                                                nonce,
+                                                StoreCrypto.messageAad(
+                                                  conversationId,
+                                                  state.sessionId.bytes,
+                                                  authorPub.bytes,
+                                                  devicePub.bytes,
+                                                  seq,
+                                                  StoreCrypto.wireHash(wire)
+                                                ),
+                                                body
+                                              )
+                                            )
+                              changed    <- sql"""UPDATE messages
+                                               |SET session_id = ${state.sessionId.bytes.toArray}, seq = $seq, body = ${sealedBody.toArray}, wire = ${wire.toArray}
+                                               |WHERE conversation_id = ${conversationId.toArray} AND session_id = ${oldSessionId.bytes.toArray}
+                                               |  AND author_pub = ${authorPub.bytes.toArray} AND device_pub = ${devicePub.bytes.toArray}
+                                               |  AND seq = $oldSeq""".stripMargin.update.run
+                              _          <- Sql.changed(changed)
+                              _          <- SessionRepository.writeHighWater(prepared)
+                            yield RebindOutcome.Migrated
+      yield result
     }
 
   def setState(

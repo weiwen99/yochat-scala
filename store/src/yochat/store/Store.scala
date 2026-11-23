@@ -13,6 +13,9 @@ import scodec.bits.ByteVector
 
 import yochat.core.{Ed25519Public, RatchetState, SessionId}
 
+enum RebindOutcome:
+  case Migrated, Skipped
+
 /** The production store boundary. Every public operation returns a stable error code, never a JDBC message. */
 final class Store private[store] (
   private[store] val runtime: StoreRuntime,
@@ -180,30 +183,32 @@ final class Store private[store] (
       expectedLockGeneration
     )
 
-  def rebindMessage(
+  def rebindOutbound(
+    state: RatchetState,
+    expectedVersion: Long,
+    expectedLockGeneration: Long,
     oldSessionId: SessionId,
-    newSessionId: SessionId,
     conversationId: ByteVector,
     authorPub: Ed25519Public,
     devicePub: Ed25519Public,
     oldSeq: Long,
-    newSeq: Long,
+    seq: Long,
     body: ByteVector,
-    wire: ByteVector,
-    expectedLockGeneration: Long
-  ): IO[Either[StorageError, Unit]] =
-    MessageRepository.rebindMessage(
+    wire: ByteVector
+  ): IO[Either[StorageError, RebindOutcome]] =
+    MessageRepository.rebindOutbound(
       runtime,
+      state,
+      expectedVersion,
+      expectedLockGeneration,
       oldSessionId,
-      newSessionId,
       conversationId,
       authorPub,
       devicePub,
       oldSeq,
-      newSeq,
+      seq,
       body,
-      wire,
-      expectedLockGeneration
+      wire
     )
 
   def pendingCount(sessionId: SessionId): IO[Either[StorageError, Long]] =

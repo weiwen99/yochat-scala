@@ -331,24 +331,22 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
                      if expectedVersion >= 0 && record.version != expectedVersion then
                        IO.pure(mapStore(Left(StorageError.InvalidArgument("session-version"))))
                      else
-                       store.updateSession(session.state, record.version, lock).flatMap {
-                         case Left(error) => IO.pure(mapStore(Left(error)))
-                         case Right(_)    =>
-                           store
-                             .rebindMessage(
-                               oldSessionId,
-                               session.state.sessionId,
-                               message.conversationId,
-                               message.authorPub,
-                               message.devicePub,
-                               oldSeq,
-                               message.seq,
-                               message.body,
-                               message.wire.bytes,
-                               lock
-                             )
-                             .map(mapStore)
-                       }
+                       store
+                         .rebindOutbound(
+                           session.state,
+                           record.version,
+                           lock,
+                           oldSessionId,
+                           message.conversationId,
+                           message.authorPub,
+                           message.devicePub,
+                           oldSeq,
+                           message.seq,
+                           message.body,
+                           message.wire.bytes
+                         )
+                         .map(_.map(_ => ()))
+                         .map(mapStore)
     yield result
 
   private def persistAttempt(message: OutgoingMessage): IO[Either[AppExecutionError, Unit]] =
