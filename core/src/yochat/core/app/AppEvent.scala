@@ -120,6 +120,7 @@ enum AppEffect:
   case SendRekeyAccept(sessionId: SessionId, toDevice: Ed25519Public, accept: RekeyAccept)
   case SendRekeyConfirm(newSessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame)
   case SendRekeyConfirmAck(newSessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame)
+  case StartRekey(sessionId: SessionId)
   case StartTimer(timer: TimerId, deadlineMs: Long)
   case CancelTimer(timer: TimerId)
   case Notify(notification: Notification)

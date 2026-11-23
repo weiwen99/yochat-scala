@@ -262,8 +262,10 @@ final class AppService private (
   private def open(passphrase: Array[Char]): IO[Either[ServiceError, Running]] =
     val storeConfig = StoreConfig.default(config.dataDir, KeySource.KeyFile(passphrase))
     Store.open(storeConfig).allocated.flatMap {
-      case (Left(error), releaseStore)  => releaseStore.as(Left(ServiceError.StoreFailed(error.code)))
-      case (Right(store), releaseStore) =>
+      case (Left(yochat.store.StorageError.UnlockFailed), releaseStore) =>
+        releaseStore.as(Left(ServiceError.UnlockFailed))
+      case (Left(error), releaseStore)                                  => releaseStore.as(Left(ServiceError.StoreFailed(error.code)))
+      case (Right(store), releaseStore)                                 =>
         RelayClient.connect(config.relayHost, config.relayPort, store.identity.devicePublic).allocated.flatMap { case (relay, releaseRelay) =>
           AppRuntime
             .start(

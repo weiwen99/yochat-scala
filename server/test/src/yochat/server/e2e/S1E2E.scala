@@ -5,12 +5,31 @@ import java.nio.file.{Files, Path, StandardOpenOption}
 import java.security.KeyPairGenerator
 import java.time.{Duration, Instant}
 
+import scala.concurrent.duration.*
 import scala.util.control.NonFatal
 
+import cats.effect.IO
+import cats.effect.unsafe.implicits.global
 import scodec.bits.ByteVector
 import ujson.Value
 
-import yochat.core.{Ed25519KeyPair, Ed25519Private, Ed25519Public, Invitation, SafetyNumber, X25519KeyPair, X25519Private}
+import yochat.core.{
+  Crypto,
+  DataBinding,
+  DataPayload,
+  Ed25519KeyPair,
+  Ed25519Private,
+  Ed25519Public,
+  Invitation,
+  Nonce,
+  Ratchet,
+  SafetyNumber,
+  SessionId,
+  X25519KeyPair,
+  X25519Private
+}
+import yochat.store.{IdentityFile, KeyFile, KeySource, Store, StoreConfig, StoreKeys, StorePaths}
+import yochat.transport.{RelayClient, RelayPayload}
 
 final case class Contract(id: String, description: String, run: () => String)
 
@@ -49,6 +68,9 @@ object S1E2E:
       Contract("E2E#9", "wrong or expired invitation rejected", () => scenario9()),
       Contract("E2E#10", "tampered ciphertext rejected", () => scenario10()),
       Contract("E2E#11", "tampered signature rejected", () => scenario11()),
+      Contract("E2E#12", "logs and diagnostics contain no secrets", () => scenario12()),
+      Contract("E2E#13", "app lock and unlock", () => scenario13()),
+      Contract("E2E#14", "undecryptable message triggers automatic rebuild", () => scenario14()),
       Contract("E2E#15", "dropped data frame recovered by Gap and resend", () => scenario15())
     )
     args.toList match
@@ -364,6 +386,135 @@ object S1E2E:
 
   private def scenario11(): String = tamperedData(FaultKind.TamperSignature, "signature")
 
+  private def scenario12(): String =
+    E2EEnvironment.withPair { pair =>
+      val handshake = E2EEnvironment.handshake(pair)
+      verifySafety(pair, handshake)
+      val marker = s"log-secret-${System.nanoTime()}"
+      val alias  = s"alias-secret-${System.nanoTime()}"
+      pair.a.setAlias(handshake.bUser, alias)
+      pair.b.setAlias(handshake.aUser, alias)
+      pair.a.sendMessage(handshake.aConversation, s"body-$marker")
+      pair.b.awaitMessage(
+        handshake.bConversation,
+        messages => messages.exists(_._4 == s"body-$marker"),
+        "secret message on B"
+      )
+      val error = pair.a.trySendMessage(handshake.aConversation, " ")
+      ensure(error.status == 400, s"diagnostic error request returned ${error.status}")
+      val diagnostics = Vector(
+        "body"       -> s"body-$marker",
+        "alias"      -> alias,
+        "a-user"     -> handshake.aUser,
+        "b-user"     -> handshake.bUser,
+        "a-device"   -> pair.a.identityDevice,
+        "b-device"   -> pair.b.identityDevice,
+        "a-safety"   -> expectedSafety(handshake.aUser, handshake.bUser),
+        "b-safety"   -> expectedSafety(handshake.bUser, handshake.aUser)
+      )
+      val logs = pair.a.logText + "\n" + pair.b.logText + "\n" + error.body
+      diagnostics.foreach { case (label, value) =>
+        ensure(!logs.contains(value), s"diagnostics leaked $label")
+      }
+      s"body=clean alias=clean keys=clean safety=clean errors=clean"
+    }
+
+  private def scenario13(): String =
+    E2EEnvironment.withPair { pair =>
+      val handshake = E2EEnvironment.handshake(pair)
+      verifySafety(pair, handshake)
+      val aConversation = pair.a.conversationId(handshake.bUser)
+      pair.a.sendMessage(aConversation, "before-lock")
+      pair.b.awaitMessage(
+        handshake.bConversation,
+        messages => messages.exists(_._4 == "before-lock"),
+        "pre-lock message on B"
+      )
+      pair.a.awaitMessage(
+        aConversation,
+        messages => messages.exists(message => message._4 == "before-lock" && message._3 == "delivered"),
+        "pre-lock message delivered"
+      )
+
+      ensure(pair.a.lock(), "A lock failed")
+      val lockedSession = pair.a.session
+      ensure(!lockedSession("unlocked").bool, s"A still unlocked: $lockedSession")
+      ensure(pair.a.tryState.status == 401, "locked state endpoint did not return 401")
+      ensure(pair.a.tryMessages(aConversation).status == 401, "locked messages endpoint did not return 401")
+      ensure(pair.a.trySendMessage(aConversation, "while-locked").status == 401, "locked send did not return 401")
+      val wrong = pair.a.tryUnlock("wrong passphrase")
+      ensure(wrong.status == 401, s"wrong passphrase returned ${wrong.status}")
+      ensure(!pair.a.session("unlocked").bool, "wrong passphrase unlocked A")
+
+      pair.a.unlock()
+      val history = pair.a.messages(aConversation)
+      ensure(history == Vector((1L, "me", "delivered", "before-lock")), s"A history changed after unlock: $history")
+      pair.a.sendMessage(aConversation, "after-unlock")
+      pair.b.awaitMessage(
+        handshake.bConversation,
+        messages => messages.exists(_._4 == "after-unlock"),
+        "post-unlock message on B"
+      )
+      pair.a.awaitMessage(
+        aConversation,
+        messages => messages.exists(message => message._4 == "after-unlock" && message._3 == "delivered"),
+        "post-unlock message delivered"
+      )
+      s"locked=401 wrong=401 reopened=1 history=1"
+    }
+
+  private def scenario14(): String =
+    E2EEnvironment.withFaultPair { (pair, fault) =>
+      val handshake = E2EEnvironment.handshake(pair)
+      verifySafety(pair, handshake)
+      val oldA = pair.a.activeSessionId(handshake.aConversation)
+      val oldB = pair.b.activeSessionId(handshake.bConversation)
+      val client = keyPair()
+      val badFrame = signedFirstData(pair.a, handshake)
+      val targetDevice = publicKey(pair.b.identityDevice)
+      fault.arm(
+        Fault(
+          FaultKind.TamperCiphertextSigned,
+          client.publicKey.bytes.toHex,
+          pair.b.identityDevice,
+          Some(1L),
+          count = 3,
+          signingKey = Some(devicePrivate(pair.a.dataDir))
+        )
+      )
+      RelayClient
+        .connect("127.0.0.1", pair.relay.port, client.publicKey)
+        .use(relay =>
+          relay.awaitOnline(5.seconds).flatMap { online =>
+            if !online then IO.raiseError(new AssertionError("test relay client did not register"))
+            else
+              (1 to 3).toList.foldLeft(IO.unit) { (acc, _) =>
+                acc *> relay.send(targetDevice, RelayPayload.Wire(badFrame.bytes))
+              }
+          }
+        )
+        .unsafeRunSync()
+      fault.awaitApplied(3, 60)
+      val newA = pair.a.awaitActiveSessionChanged(handshake.aConversation, oldA, Duration.ofSeconds(60))
+      val newB = pair.b.awaitActiveSessionChanged(handshake.bConversation, oldB, Duration.ofSeconds(60))
+      ensure(newA != oldA && newB != oldB, s"session did not rebuild oldA=$oldA newA=$newA oldB=$oldB newB=$newB")
+
+      pair.a.sendMessage(handshake.aConversation, "after-rebuild")
+      pair.b.awaitMessage(
+        handshake.bConversation,
+        messages => messages.exists(_._4 == "after-rebuild"),
+        "post-rebuild message on B"
+      )
+      pair.a.awaitMessage(
+        handshake.aConversation,
+        messages => messages.exists(message => message._4 == "after-rebuild" && message._3 == "delivered"),
+        "post-rebuild message delivered"
+      )
+      ensure(fault.forwardedTampered, "injected bad frames were not forwarded")
+      ensure(!pair.b.messages(handshake.bConversation).exists(_._4 == "injected-bad-frame"), "bad body became visible")
+      s"auto=1 oldA=${oldA.take(8)} newA=${newA.take(8)} oldB=${oldB.take(8)} newB=${newB.take(8)}"
+    }
+
   private def scenario15(): String =
     E2EEnvironment.withFaultPair { (pair, fault) =>
       val handshake = E2EEnvironment.handshake(pair)
@@ -432,6 +583,58 @@ object S1E2E:
       val proxy = if proxyChecked then "proxy_fidelity=1 " else ""
       s"${proxy}tampered=1 forwarded=1 retried=1 bCount=${onB.count(_._4 == body)} aDelivered=${onA.count(_._4 == body)}"
     }
+
+  private def signedFirstData(a: ServiceProcess, handshake: Handshake): yochat.core.WireFrame =
+    val sessionId = SessionId
+      .from(ByteVector.fromValidHex(a.activeSessionId(handshake.aConversation)))
+      .fold(error => throw new AssertionError(s"invalid session id: $error"), identity)
+    val config = StoreConfig.default(a.dataDir, KeySource.KeyFile(E2E.Passphrase.toCharArray))
+    Store
+      .open(config)
+      .use {
+        case Left(error)  => IO.raiseError(new AssertionError(s"test store open failed: $error"))
+        case Right(store) =>
+          store.loadSession(sessionId).flatMap {
+            case Left(error)  => IO.raiseError(new AssertionError(s"test session load failed: $error"))
+            case Right(record) =>
+              val safety = SafetyNumber
+                .derive(publicKey(handshake.aUser), publicKey(handshake.bUser))
+                .fold(error => throw new AssertionError(s"safety derive failed: $error"), identity)
+              val plaintext = DataPayload
+                .encode(DataPayload(Some(DataBinding("@A", "@B", safety.digits)), Crypto.text("injected-bad-frame")))
+                .fold(error => throw new AssertionError(s"payload encode failed: $error"), identity)
+              val nonce = Nonce
+                .from(ByteVector.fill(Nonce.Length)(0x5a.toByte))
+                .fold(error => throw new AssertionError(s"nonce failed: $error"), identity)
+              IO.fromEither(
+                Ratchet
+                  .encryptUser(
+                    record.state,
+                    store.identity.devicePublic,
+                    store.identity.devicePrivate,
+                    1L,
+                    nonce,
+                    plaintext
+                  )
+                  .left
+                  .map(error => new AssertionError(s"test frame encrypt failed: $error"))
+              ).map(_._2)
+          }
+      }
+      .unsafeRunSync()
+
+  private def devicePrivate(directory: java.nio.file.Path): Ed25519Private =
+    val paths = StorePaths.under(directory)
+    val master = KeyFile
+      .unlock(paths.keyFile, E2E.Passphrase.toCharArray)
+      .unsafeRunSync()
+      .fold(error => throw new AssertionError(s"test identity unlock failed: $error"), identity)
+    val keys = StoreKeys.from(master)
+    IdentityFile
+      .load(paths.identityFile, keys.identityKey)
+      .unsafeRunSync()
+      .fold(error => throw new AssertionError(s"test identity load failed: $error"), identity)
+      .devicePrivate
 
   private def expiredInvitationText(): String =
     val ephemeral = x25519(0x11.toByte)

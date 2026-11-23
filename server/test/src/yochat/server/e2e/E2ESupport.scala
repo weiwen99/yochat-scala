@@ -189,8 +189,11 @@ final class ServiceProcess(
       throw new AssertionError(s"$name identity changed across restart")
     awaitOnline(online = true)
 
+  def tryUnlock(passphrase: String): HttpResult =
+    http.post(s"$base/api/unlock", ujson.Obj("passphrase" -> passphrase))
+
   def unlock(): Unit =
-    val response = http.post(s"$base/api/unlock", ujson.Obj("passphrase" -> E2E.Passphrase))
+    val response = tryUnlock(E2E.Passphrase)
     requireStatus(s"$name unlock", response, 200)
     val state = session
     if !state("unlocked").bool then throw new AssertionError(s"$name did not unlock: $state")
@@ -204,6 +207,33 @@ final class ServiceProcess(
   def session: Value = getJson("/api/session")
 
   def state: Value = getJson("/api/state")
+
+  def tryState: HttpResult = http.get(s"$base/api/state")
+
+  def tryMessages(conversationId: String, limit: Int = 200): HttpResult =
+    http.get(s"$base/api/conversations/$conversationId/messages?limit=$limit")
+
+  def activeSessionIds(conversationId: String): Vector[String] =
+    state("sessions").arr.toVector
+      .filter(session => session.obj("conversationId").str == conversationId && session.obj("phase").str == "active")
+      .map(_.obj("id").str)
+
+  def activeSessionId(conversationId: String): String =
+    activeSessionIds(conversationId).headOption.getOrElse(
+      throw new AssertionError(s"$name missing active session for $conversationId")
+    )
+
+  def awaitActiveSessionChanged(conversationId: String, previous: String, timeout: Duration = Duration.ofSeconds(30)): String =
+    E2E.await(s"$name active session changed", timeout) {
+      activeSessionIds(conversationId).find(_ != previous)
+    }
+
+  def setAlias(userPub: String, alias: String): Unit =
+    val response = http.post(
+      s"$base/api/contacts/$userPub/alias",
+      ujson.Obj("alias" -> alias)
+    )
+    requireStatus(s"$name set alias", response, 200)
 
   def identityUser: String = session("identity")("userId").str
 
@@ -305,6 +335,9 @@ final class ServiceProcess(
       val current = messages(conversationId)
       if predicate(current) then Some(current) else None
     }
+
+  def logText: String =
+    if Files.exists(log) then Files.readAllLines(log).asScala.mkString("\n") else ""
 
   def logTail(lines: Int = 200): String =
     if Files.exists(log) then

@@ -9,7 +9,7 @@ import scala.util.control.NonFatal
 
 import scodec.bits.ByteVector
 
-import yochat.core.{MessageKind, Signature, WireFrame}
+import yochat.core.{Crypto, Ed25519Private, MessageKind, Signature, WireFrame}
 import yochat.transport.{RelayPayload, RelayWire}
 
 /** Test-only relay proxy. It forwards the real relay protocol unchanged unless one armed fault matches a Data frame. It never inspects
@@ -21,9 +21,16 @@ trait RelayControl:
   def stop(): Unit
 
 enum FaultKind:
-  case Drop, TamperCiphertext, TamperSignature
+  case Drop, TamperCiphertext, TamperSignature, TamperCiphertextSigned
 
-final case class Fault(kind: FaultKind, sourceDevice: String, targetDevice: String, seq: Option[Long])
+final case class Fault(
+  kind: FaultKind,
+  sourceDevice: String,
+  targetDevice: String,
+  seq: Option[Long],
+  count: Int = 1,
+  signingKey: Option[Ed25519Private] = None
+)
 
 final class FaultRelay private (
   upstream: RelayHandle,
@@ -33,7 +40,7 @@ final class FaultRelay private (
 
   private val sockets        = ConcurrentHashMap.newKeySet[Socket]()
   private val fault          = new AtomicReference[Option[Fault]](None)
-  private val applied        = new AtomicBoolean(false)
+  private val appliedCount   = new java.util.concurrent.atomic.AtomicInteger(0)
   private val gapSeen        = new AtomicBoolean(false)
   private val badForwarded   = new AtomicBoolean(false)
   private val retryMatched   = new AtomicBoolean(false)
@@ -49,8 +56,8 @@ final class FaultRelay private (
   def arm(value: Fault): Unit =
     if !fault.compareAndSet(None, Some(value)) then throw new AssertionError("fault already armed")
 
-  def awaitApplied(timeoutSeconds: Long = 20L): Unit =
-    E2E.awaitTrue("fault applied", java.time.Duration.ofSeconds(timeoutSeconds))(applied.get())
+  def awaitApplied(count: Int = 1, timeoutSeconds: Long = 20L): Unit =
+    E2E.awaitTrue(s"fault applied $count", java.time.Duration.ofSeconds(timeoutSeconds))(appliedCount.get() >= count)
 
   def awaitGap(timeoutSeconds: Long = 20L): Unit =
     E2E.awaitTrue("relay observed Gap", java.time.Duration.ofSeconds(timeoutSeconds))(gapSeen.get())
@@ -144,11 +151,13 @@ final class FaultRelay private (
                 }
                 matched match
                   case Some(value) =>
-                    original.set(Some(frame.bytes))
-                    applied.set(true)
-                    applyFault(value.kind, frame, target, out)
+                    original.compareAndSet(None, Some(frame.bytes))
+                    applyFault(value, frame, target, out)
+                    appliedCount.incrementAndGet()
+                    val remaining = value.count - 1
+                    fault.set(if remaining > 0 then Some(value.copy(count = remaining)) else None)
                   case None        =>
-                    if applied.get() && frame.header.kind == MessageKind.Data && frame.header.seq == 1L then
+                    if appliedCount.get() > 0 && frame.header.kind == MessageKind.Data && frame.header.seq == 1L then
                       original.get().filter(_ == frame.bytes).foreach { _ =>
                         retryMatched.set(true)
                         resendAt.compareAndSet(None, Some(System.nanoTime()))
@@ -157,14 +166,22 @@ final class FaultRelay private (
               case Left(_) => writeData(out, body)
           case _                         => writeData(out, body)
 
-  private def applyFault(kind: FaultKind, frame: WireFrame, target: yochat.core.Ed25519Public, out: DataOutputStream): Unit =
-    kind match
-      case FaultKind.Drop             => ()
-      case FaultKind.TamperCiphertext =>
+  private def applyFault(value: Fault, frame: WireFrame, target: yochat.core.Ed25519Public, out: DataOutputStream): Unit =
+    value.kind match
+      case FaultKind.Drop                => ()
+      case FaultKind.TamperCiphertext    =>
         val tampered = WireFrame(frame.header, flipLast(frame.ciphertext), frame.signature)
         writePayload(out, target, RelayPayload.Wire(tampered.bytes))
         badForwarded.set(true)
-      case FaultKind.TamperSignature  =>
+      case FaultKind.TamperCiphertextSigned =>
+        val key = value.signingKey.getOrElse(throw new AssertionError("signed ciphertext tamper needs a key"))
+        val ciphertext = flipLast(frame.ciphertext)
+        val signature = Crypto
+          .sign(key, Crypto.ascii("yochat-s1-msg") ++ frame.header.canonical ++ ciphertext)
+          .fold(error => throw new AssertionError(s"ciphertext re-sign failed: $error"), identity)
+        writePayload(out, target, RelayPayload.Wire(WireFrame(frame.header, ciphertext, signature).bytes))
+        badForwarded.set(true)
+      case FaultKind.TamperSignature     =>
         val signature = Signature
           .from(flipFirst(frame.signature.bytes))
           .fold(error => throw new AssertionError(s"signature tamper failed: $error"), identity)

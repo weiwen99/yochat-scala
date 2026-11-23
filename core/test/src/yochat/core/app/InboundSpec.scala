@@ -42,7 +42,7 @@ class InboundSpec extends FunSuite:
     assertEquals(lateEffects, Vector.empty)
   }
 
-  test("Q4: a failed decrypt persists the failure counter and reports rekey at the threshold") {
+  test("Q4: a failed decrypt persists the failure counter and starts automatic rekey at the threshold") {
     val peers                         = AppTestSupport.connected
     val frames                        = AppTestSupport.sendFrames(peers.alice, peers.aliceState.sessions.values.head.state, 1)._2
     val sessionId                     = peers.bobState.sessions.keys.head
@@ -62,5 +62,5 @@ class InboundSpec extends FunSuite:
       AppEvent.InboundFrame(2L, sessionId, tampered, None, TestKeys.nonce(2), 0L)
     )
     assertEquals(threshold.sessions(sessionId).state.rekeyFailures, 3)
-    assert(thresholdEffects.exists { case AppEffect.Notify(Notification.RekeyRequired) => true; case _ => false })
+    assert(thresholdEffects.exists { case AppEffect.StartRekey(`sessionId`) => true; case _ => false })
   }

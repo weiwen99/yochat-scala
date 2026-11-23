@@ -373,17 +373,17 @@ object AppRuntime:
   ): IO[Unit] =
     command match
       case RuntimeCommand.App(event)             =>
-        applyEvent(transport, event, queue, stateRef, executor, fatal, clock, onState) *>
+        applyEvent(transport, event, queue, stateRef, random, executor, fatal, clock, onState) *>
           (event match
             case AppEvent.Unlock(_, _, _) => resumeGaps(queue, stateRef, random, clock)
             case _                        => IO.unit)
       case RuntimeCommand.Connection(on, now)    =>
-        applyEvent(transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, executor, fatal, clock, onState) *>
+        applyEvent(transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, random, executor, fatal, clock, onState) *>
           (if on then resumeGaps(queue, stateRef, random, clock) else IO.unit)
       case RuntimeCommand.Inbound(from, payload) =>
         translateInbound(from, payload, messageIds, random, stateRef, clock).flatMap {
           case None        => IO.unit
-          case Some(event) => applyEvent(transport, event, queue, stateRef, executor, fatal, clock, onState)
+          case Some(event) => applyEvent(transport, event, queue, stateRef, random, executor, fatal, clock, onState)
         }
 
   private def applyEvent(
@@ -391,6 +391,7 @@ object AppRuntime:
     event: AppEvent,
     queue: Queue[IO, RuntimeCommand],
     stateRef: Ref[IO, AppState],
+    random: RuntimeRandom,
     executor: AppEffectExecutor,
     fatal: Ref[IO, Option[AppExecutionError]],
     clock: Clock,
@@ -406,8 +407,8 @@ object AppRuntime:
                           case Left(error) => fatal.set(Some(error))
                           case Right(_)    =>
                             stateRef.set(next) *> onState(next) *>
-                              feedPersisted(durable, transport, queue, stateRef, executor, fatal, clock, onState) *>
-                              executeExternal(external, transport, queue, stateRef, executor, fatal, clock, onState)
+                              feedPersisted(durable, transport, queue, stateRef, random, executor, fatal, clock, onState) *>
+                              executeExternal(external, transport, queue, stateRef, random, executor, fatal, clock, onState)
     yield ()
 
   private def feedPersisted(
@@ -415,6 +416,7 @@ object AppRuntime:
     transport: RelayAppTransport,
     queue: Queue[IO, RuntimeCommand],
     stateRef: Ref[IO, AppState],
+    random: RuntimeRandom,
     executor: AppEffectExecutor,
     fatal: Ref[IO, Option[AppExecutionError]],
     clock: Clock,
@@ -426,6 +428,7 @@ object AppRuntime:
         AppEvent.PersistOutboundSucceeded(message.id, message.generation, clock.millis()),
         queue,
         stateRef,
+        random,
         executor,
         fatal,
         clock,
@@ -438,6 +441,7 @@ object AppRuntime:
     transport: RelayAppTransport,
     queue: Queue[IO, RuntimeCommand],
     stateRef: Ref[IO, AppState],
+    random: RuntimeRandom,
     executor: AppEffectExecutor,
     fatal: Ref[IO, Option[AppExecutionError]],
     clock: Clock,
@@ -452,11 +456,20 @@ object AppRuntime:
               case AppEffect.SendWire(toDevice, messageId, generation, wire) =>
                 transport
                   .sendWireResult(toDevice, messageId, generation, wire)
-                  .flatMap(result => applyEvent(transport, result, queue, stateRef, executor, fatal, clock, onState))
+                  .flatMap(result => applyEvent(transport, result, queue, stateRef, random, executor, fatal, clock, onState))
               case AppEffect.SendReply(invitationId, toDevice, text)         =>
                 transport
                   .sendReplyResult(invitationId, toDevice, text)
-                  .flatMap(result => applyEvent(transport, result, queue, stateRef, executor, fatal, clock, onState))
+                  .flatMap(result => applyEvent(transport, result, queue, stateRef, random, executor, fatal, clock, onState))
+              case AppEffect.StartRekey(sessionId)                           =>
+                for
+                  r1    <- random.x25519
+                  id    <- random.rekeyId
+                  nonce <- random.nonce
+                  _     <- queue.tryOffer(
+                             RuntimeCommand.App(AppEvent.StartRekey(sessionId, r1, id, nonce, clock.millis()))
+                           )
+                yield ()
               case _                                                         =>
                 executor.execute(effect).flatMap {
                   case Right(_)                                => IO.unit

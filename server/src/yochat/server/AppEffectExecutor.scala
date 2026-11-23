@@ -137,6 +137,8 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
         transportOnly(transport.sendRekeyConfirm(newSessionId, toDevice, frame))
       case AppEffect.SendRekeyConfirmAck(newSessionId, toDevice, frame)                                                     =>
         transportOnly(transport.sendRekeyConfirmAck(newSessionId, toDevice, frame))
+      case AppEffect.StartRekey(_)                                                                                          =>
+        IO.pure(Left(AppExecutionError.Unsupported("StartRekey")))
       case AppEffect.StartTimer(timer, deadlineMs)                                                                          =>
         transportOnly(transport.startTimer(timer, deadlineMs))
       case AppEffect.CancelTimer(timer)                                                                                     =>

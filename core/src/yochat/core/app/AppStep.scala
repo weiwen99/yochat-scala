@@ -885,7 +885,7 @@ object Application:
       if nextSession == session then Vector.empty
       else
         Vector(AppEffect.PersistSession(nextSession)) ++
-          (if error.error == CoreError.RekeyRequired then Vector(AppEffect.Notify(Notification.RekeyRequired)) else Vector.empty)
+          (if error.error == CoreError.RekeyRequired then Vector(AppEffect.StartRekey(sessionId)) else Vector.empty)
     (state.copy(sessions = state.sessions.updated(sessionId, nextSession)), effects)
 
   private def idleTimers(state: AppState): Vector[AppEffect] =
