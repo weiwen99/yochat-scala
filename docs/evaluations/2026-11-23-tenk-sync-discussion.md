@@ -16,7 +16,7 @@
 
 ## 来源与口径
 
-- 读取路径：0x1 PostgreSQL 镜像 `wechat_message`、`wechat_conversation`，只读；m1 上的 `0x1-cli wechat read/search/ocr`。不读微信原始库，不修改镜像。
+- 读取路径：0x1 PostgreSQL 镜像 `wechat_message`、`wechat_conversation`，只读；本会话在 w7 上用 `0x1-cli wechat read/search/ocr` 取消息与图片文字。不读微信原始库，不修改镜像。
 - 群：`AI体验营`。消息 id 对应 `wechat_message.id`，本地时间为 Asia/Shanghai。
 - 三类数字分开：
   - 本仓实测：`SERVER_BENCH`（2026-11-23 12:07 与 12:08，m1，单进程，测试夹具，小消息、顺序入站）、`TENK_REPLAY`、`STORE_THROUGHPUT`，均来自本仓命令回执。复现命令与完整回执见文末。
@@ -49,7 +49,7 @@
 | 口径 | 数值 | 对象与条件 | 能不能当门 |
 | --- | --- | --- | --- |
 | 本仓 10k store 写入 | 4,343 ms / 4,507 ms（两次） | 单进程、真实 SQLite、测试夹具、小消息、顺序入站 | 不能；是 bench，不是 E2E |
-| 本仓 10k store 恢复 | p50 55–56 ms，p95 60–70 ms | 同上；独立 warmup 5 次、测量 20 次 | 不能；只覆盖 `AppStateRestore.load` |
+| 本仓 10k store 恢复 | p50 55–56 ms，p95 约 60–70 ms | 同上；独立 warmup 5 次、测量 20 次 | 不能；只覆盖 `AppStateRestore.load` |
 | 本仓 10k 协议回放 | 11.5–12.3s | 真实 `Application.step`，无 SQLite、无 transport | 是；<50s 门 |
 | 本仓 1k store 写+读 | 1.55–1.56s | 1,000 次插入与 1,000 次点查 | 是；G7 <2s |
 | D 旧实现 1w E2E | 半小时 | 两节点、真实限流 600 frame/min、签名与验签 | 不能；限流主导 |
