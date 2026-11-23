@@ -20,6 +20,12 @@ fi
 ./mill server.checkFormat
 ./mill server.fix --check
 ./mill server.test
+./mill ui.checkFormat
+./mill ui.fix --check
+./mill ui.fastLinkJS
+node --check shell/main.js
+node --check shell/preload.js
+node --check shell/keychain-smoke.js
 ./models/check.sh
 ./mill spike.checkFormat
 ./mill spike.fix --check

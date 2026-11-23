@@ -75,7 +75,8 @@ object AppStateRestore:
       confirmation = data.confirmationState match
         case yochat.store.ContactConfirmation.Pending         => ContactConfirmation.Pending
         case yochat.store.ContactConfirmation.Confirmed       => ContactConfirmation.Confirmed
-        case yochat.store.ContactConfirmation.AccountMismatch => ContactConfirmation.AccountMismatch
+        case yochat.store.ContactConfirmation.AccountMismatch => ContactConfirmation.AccountMismatch,
+      alias = data.alias
     )
 
   private def conversationsFrom(snapshot: StoreSnapshot): Either[StorageError, Map[ByteVector, Conversation]] =

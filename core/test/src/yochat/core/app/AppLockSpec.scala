@@ -102,6 +102,17 @@ class AppLockSpec extends FunSuite:
     assertEquals(connectionEffects, Vector.empty)
   }
 
+  test("a local contact alias is normalized and persisted") {
+    val peers           = AppTestSupport.connected
+    val peer            = peers.bob.user.publicKey
+    val (next, effects) = Application.step(peers.aliceState, AppEvent.SetContactAlias(peer, Some("  陈默  ")))
+    assertEquals(next.contacts(peer).alias, Some("陈默"))
+    assert(effects.exists {
+      case AppEffect.PersistContact(contact) => contact.userPub == peer && contact.alias.contains("陈默")
+      case _                                => false
+    })
+  }
+
   test("idle timeout locks exactly at the injected deadline and unlock installs it") {
     val peers                 = AppTestSupport.connected
     val (unlocked, _)         = Application.step(

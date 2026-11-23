@@ -38,6 +38,7 @@ enum AppEvent:
     nowMs: Long
   )
   case SafetyVerified(userPub: Ed25519Public, nowMs: Long)
+  case SetContactAlias(userPub: Ed25519Public, alias: Option[String])
 
   case InvitationCreated(
     invitation: Invitation,

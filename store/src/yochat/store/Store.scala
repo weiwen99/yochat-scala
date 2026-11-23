@@ -235,6 +235,9 @@ final class Store private[store] (
   def listConversations: IO[Either[StorageError, List[ConversationRecord]]] =
     ConversationRepository.list(runtime)
 
+  def listRecentMessages(conversationId: ByteVector, limit: Int): IO[Either[StorageError, List[MessageRecord]]] =
+    MessageRepository.listRecent(runtime, conversationId, limit)
+
   def listAllMessages(conversationId: ByteVector): IO[Either[StorageError, List[MessageRecord]]] =
     MessageRepository.listAll(runtime, conversationId, 100_000)
 

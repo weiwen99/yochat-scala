@@ -365,7 +365,7 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
       channelLabel = contact.channelLabel,
       channelAccount = contact.channelAccount,
       peerChannelAccount = contact.peerChannelAccount,
-      alias = None,
+      alias = contact.alias,
       note = None,
       safetyVerified = contact.safetyVerified,
       confirmationState = contact.confirmation match

@@ -158,6 +158,25 @@ private[store] object MessageRepository:
           })
       }
 
+  def listRecent(
+    runtime: StoreRuntime,
+    conversationId: ByteVector,
+    limit: Int
+  ): IO[Either[StorageError, List[MessageRecord]]] =
+    if limit <= 0 || limit > MaxListLimit then IO.pure(Left(StorageError.InvalidArgument("limit")))
+    else
+      runtime.run {
+        sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at
+             |FROM messages
+             |WHERE conversation_id = ${conversationId.toArray}
+             |ORDER BY id DESC LIMIT $limit""".stripMargin
+          .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long)]
+          .to[List]
+          .flatMap(_.foldLeft(FC.pure(List.empty[MessageRecord])) { (acc, tuple) =>
+            acc.flatMap(values => decode(runtime, toRow(tuple)).map(values :+ _))
+          }.map(_.reverse))
+      }
+
   def listAll(
     runtime: StoreRuntime,
     conversationId: ByteVector,

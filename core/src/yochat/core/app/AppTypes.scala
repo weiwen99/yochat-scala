@@ -32,7 +32,8 @@ final case class AppContact(
   channelAccount: String,
   peerChannelAccount: Option[String],
   safetyVerified: Boolean,
-  confirmation: ContactConfirmation
+  confirmation: ContactConfirmation,
+  alias: Option[String] = None
 ):
 
   override def toString: String = s"AppContact(confirmation=$confirmation, safetyVerified=$safetyVerified)"

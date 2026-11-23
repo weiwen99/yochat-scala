@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-23T09:50:00Z",
+  "title": "Design System: YoChat",
+  "extensions": {
+    "colorMeta": {
+      "paper": { "role": "neutral", "displayName": "Score Paper", "canonical": "#f3f2ed" },
+      "paper-2": { "role": "neutral", "displayName": "Paper Shadow", "canonical": "#e9e7df" },
+      "sheet": { "role": "neutral", "displayName": "Sheet", "canonical": "#faf9f5" },
+      "ink": { "role": "primary", "displayName": "Ink", "canonical": "#18191b" },
+      "accent": { "role": "primary", "displayName": "Cinnabar", "canonical": "#b94732" },
+      "green": { "role": "secondary", "displayName": "Verified Green", "canonical": "#2f6b55" },
+      "rail": { "role": "neutral", "displayName": "Rail Ink", "canonical": "#1b1c1e" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Story Display", "purpose": "Unlock story headline only." },
+      "body": { "displayName": "Working Sans", "purpose": "Messages, controls, and prose." },
+      "label": { "displayName": "Measurement Mono", "purpose": "Safety codes, timestamps, route labels, delivery states." }
+    },
+    "shadows": [
+      { "name": "float", "value": "0 18px 50px rgba(24, 25, 27, 0.14)", "purpose": "Unlock card, add-contact modal, and toast; never rows or messages." }
+    ],
+    "motion": [
+      { "name": "state", "value": "180ms ease-out", "purpose": "Delivery mark fill, route dot, focus, and button state." }
+    ],
+    "breakpoints": [
+      { "name": "ledger-collapse", "value": "1180px" },
+      { "name": "list-switch", "value": "860px" },
+      { "name": "unlock-single-column", "value": "700px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Delivery Score",
+      "kind": "custom",
+      "description": "A message gutter whose square fill encodes delivery certainty.",
+      "html": "<div class=\"message own delivered\"><div class=\"score\"><span class=\"score-mark\"></span></div><div class=\"message-content\"><div class=\"bubble\">Message</div><div class=\"message-state\">已送达</div></div></div>",
+      "css": ".message{display:grid;grid-template-columns:24px minmax(0,1fr);gap:14px}.message.own{grid-template-columns:minmax(0,1fr) 24px}.score{position:relative;display:flex;justify-content:center;padding-top:7px}.score:before{content:'';position:absolute;inset:0 auto -17px 50%;width:1px;background:var(--line)}.score-mark{position:relative;z-index:1;width:9px;height:9px;border:1px solid var(--ink);background:var(--paper)}.delivered .score-mark{background:var(--ink)}.sent .score-mark{background:linear-gradient(90deg,var(--ink) 0 50%,var(--paper) 50%)}.pending .score-mark{border-style:dotted}"
+    },
+    {
+      "name": "Communication Ledger",
+      "kind": "custom",
+      "description": "Route, safety code, delivery legend, and local-device footer at the right of the chat.",
+      "html": "<aside class=\"ledger\"><section class=\"ledger-section\"><h3>这次通信</h3><div class=\"route-card\">本机 → 中继 → 对方</div></section></aside>",
+      "css": ".ledger{border-left:1px solid var(--line);background:var(--sheet);overflow-y:auto}.ledger-section h3{margin:0 0 10px;color:var(--muted);font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase}.route-card{padding:12px;border:1px solid var(--line);background:var(--paper)}"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Single decisive action; ink until hover.",
+      "html": "<button class=\"ds-btn-primary\">创建并进入</button>",
+      "css": ".ds-btn-primary{min-height:34px;padding:7px 13px;border:1px solid #18191b;border-radius:2px;background:#18191b;color:#f3f2ed;font-weight:600}.ds-btn-primary:hover{background:#b94732;border-color:#b94732;color:#fff8f4}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Correspondence Score",
+    "overview": "A private correspondence desk where paper and ink carry the conversation and a single cinnabar signal marks action. The delivery score makes the difference between local write, relay handoff, and peer acknowledgement visible at a glance.",
+    "keyCharacteristics": ["paper and ink", "one cinnabar accent", "hairline rules", "square delivery marks", "tabular safety numbers", "restrained state motion"],
+    "rules": [
+      { "name": "The One Signal Rule", "body": "Cinnabar never fills a passive surface.", "section": "colors" },
+      { "name": "The Honest Fill Rule", "body": "Solid means peer acknowledged; half means relay accepted; dotted means local waiting.", "section": "components" },
+      { "name": "The Flat Rows Rule", "body": "Rows, messages, route cards, and ledger sections never carry a shadow.", "section": "elevation" }
+    ],
+    "dos": ["Do keep message text selectable.", "Do use mono for measurements.", "Do distinguish relay handoff from delivery."],
+    "donts": ["Don't fill a mark for a relay handoff.", "Don't add nested cards or colored side bars.", "Don't turn the route into a second navigation model."]
+  }
+}

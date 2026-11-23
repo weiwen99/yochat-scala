@@ -157,6 +157,13 @@ object Application:
               sessions = updated.foldLeft(state.sessions)((map, session) => map.updated(session.state.sessionId, session))
             )
             (next, Vector(AppEffect.PersistSafetyVerified(userPub, verified = true)))
+      case AppEvent.SetContactAlias(userPub, alias)                                                     =>
+        state.contacts.get(userPub) match
+          case None          => (state, Vector.empty)
+          case Some(contact) =>
+            val normalized = alias.flatMap(value => Text.normalize(value.trim, "contact_alias").toOption).filter(_.nonEmpty)
+            val updated    = contact.copy(alias = normalized)
+            (state.copy(contacts = state.contacts.updated(userPub, updated)), Vector(AppEffect.PersistContact(updated)))
       case AppEvent.InvitationCreated(invitation, ephemeralPrivate, ratchetPrivate, expectedAccount, _) =>
         val id     = invitation.fields.ephPub.bytes
         val record = AppInvitation(

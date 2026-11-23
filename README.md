@@ -4,7 +4,7 @@ A no-account-server, end-to-end-encrypted, friend-to-friend messenger. S1 uses o
 
 ## Status
 
-Plan 0001 is at the M3/M4 boundary. `core/` contains the protocol core and a pure application kernel (`yochat.core.app`: lock, invitations/safety, write-before-send, ordering, reconnect, rekey); `models/` contains the six finite Q1–Q6 Quint models with Apalache/TLC receipts; the production `store/` (doobie + SQLite + application-layer AEAD) exists; `transport/` has the minimal relay, bounded framing, and a reconnecting relay client; and `server/` has a single-writer runtime that feeds transport/timer results back into `Application.step`. Received invitations are persisted, and `AppState` is rebuilt from the store on startup. A two-runtime integration test covers invitation/reply, message ACK, rekey, reconnect, and restore using real SQLite and a TCP relay. Still missing: UI/shell, the 15 E2E contracts, and the two-process 1k/10k receipts. The storage gates G8–G12/G15/G16 pass in `store/`; G10 keychain shell, G14 launcher, G13 E2E, and external cryptographic review remain open.
+Plan 0001 is at the M4/M5 boundary, not merged. `core/` contains the protocol core and a pure application kernel (`yochat.core.app`: lock, invitations/safety, write-before-send, ordering, reconnect, rekey); `models/` contains the six finite Q1–Q6 Quint models with Apalache/TLC receipts; `store/` is doobie + SQLite + application-layer AEAD; `transport/` has the minimal relay, bounded framing, and a reconnecting client; `server/` has the single-writer runtime and a Pekko HTTP/WebSocket local service; `ui/` is the ScalaJS/Laminar surface; and `shell/` is the Electron desktop shell. Web and Electron share one interface; Electron adds hidden-inset window chrome, single-instance lifecycle, native notifications, and an OS-encrypted passphrase cache when the platform exposes `safeStorage`. Received invitations are persisted, and `AppState` is rebuilt from the store on startup. Still missing: the 15 E2E behavior contracts, two-process 1k/10k receipts, cold-start/memory receipts, and the external cryptography review.
 
 ## Read first
 
@@ -16,6 +16,27 @@ Plan 0001 is at the M3/M4 boundary. `core/` contains the protocol core and a pur
 - `docs/evaluations/` — the two 2026-11-20 postmortems that shaped the rules.
 - `docs/references/2026-11-20-flw-yochat-diagrams/` — flw's complete notes package (six diagrams, glossary, offline reading page) and the prompts that produced them.
 - `docs/references/2026-11-20-yochat-reference-study/` — our reading notes on the old implementation: status, requirement batching, contradictions, hard parts, glossary, and an offline reading page.
+
+## Run the web surface
+
+```sh
+./mill server.assembly
+java -jar out/transport/assembly.dest/out.jar 7654
+java -jar out/server/assembly.dest/out.jar --port 8787 --data-dir "$HOME/.yochat" --relay 127.0.0.1:7654
+open http://127.0.0.1:8787/
+```
+
+The first visit asks for a local passphrase and creates the device identity; later visits unlock the existing SQLite database. The server binds loopback only. `GET /api/session` reports the locked/unlocked bootstrap state, and `/api/events` is the pushed state channel used by the UI.
+
+## Run the Electron shell
+
+```sh
+cd shell
+npm install
+npm start
+```
+
+The shell finds `../out/server/assembly.dest/out.jar`, starts it with the OS user-data directory, waits for the local service, and stops it on quit. Set `YOCHAT_SERVER_JAR` for another location and `YOCHAT_RELAY` for a different relay endpoint. If the platform exposes Electron `safeStorage`, the unlock panel offers to keep the local passphrase encrypted by the OS; otherwise it stays in the unlock form only.
 
 ## v1 scope (S1)
 

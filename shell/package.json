@@ -1,0 +1,16 @@
+{
+  "name": "yochat-shell",
+  "private": true,
+  "version": "0.1.0",
+  "description": "YoChat Electron shell: native window, single instance, local service lifecycle, notifications.",
+  "type": "commonjs",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check keychain-smoke.js",
+    "check:keychain": "electron keychain-smoke.js"
+  },
+  "devDependencies": {
+    "electron": "45.4.1"
+  }
+}

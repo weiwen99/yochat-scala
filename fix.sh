@@ -9,5 +9,7 @@ cd "$(dirname "$0")"
 ./mill store.reformat
 ./mill server.fix
 ./mill server.reformat
+./mill ui.fix
+./mill ui.reformat
 ./mill spike.fix
 ./mill spike.reformat

@@ -10,6 +10,7 @@
 
 # Dependencies
 /node_modules
+/shell/node_modules
 /vendor/
 
 # Worktrees and the shared personal workspace
@@ -27,6 +28,9 @@
 
 # OS / editor
 .DS_Store
+
+# Transient design exploration
+/.impeccable/mocks/
 
 # Coding-agent local settings
 .agents/

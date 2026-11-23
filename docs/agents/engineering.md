@@ -5,7 +5,7 @@ Project-specific Scala and build rules. Read the `scala-best-practices` skill fi
 ## Toolchain
 
 - Scala 3.10.x, Mill 1.3.x, JDK 25. Exact pins live in `build.mill` and the supported lock/config files; do not upgrade by memory.
-- Pekko 1.7.x and Pekko HTTP 1.4.x for the local service; ScalaJS + Laminar for the UI; Electron for the shell.
+- Pekko 1.6.x and Pekko HTTP 1.3.x for the local service; ScalaJS + Laminar for the UI; Electron for the shell.
 - scalafmt and scalafix follow CFA: `maxColumn = 144`, `align.preset = most`, sorted imports; `ExplicitResultTypes`, `RemoveUnused`, `DisableSyntax` (`noVars`, `noNulls`, `noReturns`, `noWhileLoops`, `noAsInstanceOf`, `noIsInstanceOf`, `no-sealed-trait`) in main sources. Test sources may relax framework conventions only.
 - `-Werror`; warnings are build failures. Unused imports/locals/params are failures.
 - Gate entry: `./check.sh` (unicode safety, format, scalafix, compile, tests, performance). Auto-fix: `./fix.sh`. `just` recipes, if added, must call the same gates; no second gate list.

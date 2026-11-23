@@ -221,16 +221,18 @@ object AppRuntime:
     relay: RelayClient,
     idleTimeoutMs: Long = 24L * 60L * 60L * 1_000L,
     queueCapacity: Int = 4_096,
-    clock: Clock = Clock.systemUTC()
+    clock: Clock = Clock.systemUTC(),
+    onState: AppState => IO[Unit] = _ => IO.unit
   ): Resource[IO, AppRuntime] =
-    Resource.make(create(store, relay, idleTimeoutMs, queueCapacity, clock))(_.close)
+    Resource.make(create(store, relay, idleTimeoutMs, queueCapacity, clock, onState))(_.close)
 
   private def create(
     store: Store,
     relay: RelayClient,
     idleTimeoutMs: Long,
     queueCapacity: Int,
-    clock: Clock
+    clock: Clock,
+    onState: AppState => IO[Unit]
   ): IO[AppRuntime] =
     for
       restored      <- AppStateRestore.load(store)
@@ -249,7 +251,7 @@ object AppRuntime:
       random         = new RuntimeRandom
       transport      = new RelayAppTransport(relay, queue, notifications, clock, timers)
       executor       = new AppEffectExecutor(store, identity, transport)
-      loop          <- eventLoop(store, transport, queue, stateRef, messageIds, random, executor, fatal, clock).start
+      loop          <- eventLoop(store, transport, queue, stateRef, messageIds, random, executor, fatal, clock, onState).start
       inbound       <- relay.incoming
                          .flatMap(incoming => queue.tryOffer(RuntimeCommand.Inbound(incoming.from, incoming.payload)).void)
                          .foreverM
@@ -289,16 +291,17 @@ object AppRuntime:
     random: RuntimeRandom,
     executor: AppEffectExecutor,
     fatal: Ref[IO, Option[AppExecutionError]],
-    clock: Clock
+    clock: Clock,
+    onState: AppState => IO[Unit]
   ): IO[Unit] =
     AppRuntime.readRef(fatal).flatMap {
       case Some(_) => IO.unit
       case None    =>
         queue.take
-          .flatMap(command => handle(store, transport, command, queue, stateRef, messageIds, random, executor, fatal, clock))
+          .flatMap(command => handle(store, transport, command, queue, stateRef, messageIds, random, executor, fatal, clock, onState))
           .attempt
           .flatMap {
-            case Right(_)    => eventLoop(store, transport, queue, stateRef, messageIds, random, executor, fatal, clock)
+            case Right(_)    => eventLoop(store, transport, queue, stateRef, messageIds, random, executor, fatal, clock, onState)
             case Left(error) =>
               fatal.set(Some(AppExecutionError.Unsupported(s"runtime-loop:${error.getClass.getSimpleName}")))
           }
@@ -314,16 +317,17 @@ object AppRuntime:
     random: RuntimeRandom,
     executor: AppEffectExecutor,
     fatal: Ref[IO, Option[AppExecutionError]],
-    clock: Clock
+    clock: Clock,
+    onState: AppState => IO[Unit]
   ): IO[Unit] =
     command match
-      case RuntimeCommand.App(event)             => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock)
+      case RuntimeCommand.App(event)             => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock, onState)
       case RuntimeCommand.Connection(on, now)    =>
-        applyEvent(store, transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, executor, fatal, clock)
+        applyEvent(store, transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, executor, fatal, clock, onState)
       case RuntimeCommand.Inbound(from, payload) =>
         translateInbound(from, payload, messageIds, random, stateRef, clock).flatMap {
           case None        => IO.unit
-          case Some(event) => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock)
+          case Some(event) => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock, onState)
         }
 
   private def applyEvent(
@@ -334,13 +338,15 @@ object AppRuntime:
     stateRef: Ref[IO, AppState],
     executor: AppEffectExecutor,
     fatal: Ref[IO, Option[AppExecutionError]],
-    clock: Clock
+    clock: Clock,
+    onState: AppState => IO[Unit]
   ): IO[Unit] =
     for
       current        <- AppRuntime.readRef(stateRef)
       (next, effects) = Application.step(current, event)
       _              <- stateRef.set(next)
-      _              <- executeEffects(store, transport, effects, queue, stateRef, executor, fatal, clock)
+      _              <- onState(next)
+      _              <- executeEffects(store, transport, effects, queue, stateRef, executor, fatal, clock, onState)
     yield ()
 
   private def executeEffects(
@@ -351,7 +357,8 @@ object AppRuntime:
     stateRef: Ref[IO, AppState],
     executor: AppEffectExecutor,
     fatal: Ref[IO, Option[AppExecutionError]],
-    clock: Clock
+    clock: Clock,
+    onState: AppState => IO[Unit]
   ): IO[Unit] =
     effects.foldLeft(IO.unit) { (acc, effect) =>
       acc.flatMap { _ =>
@@ -362,7 +369,7 @@ object AppRuntime:
               case AppEffect.SendWire(toDevice, messageId, generation, wire) =>
                 transport
                   .sendWireResult(toDevice, messageId, generation, wire)
-                  .flatMap(event => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock))
+                  .flatMap(event => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock, onState))
               case _                                                         =>
                 executor.execute(effect).flatMap {
                   case Right(_)                                =>
@@ -376,23 +383,36 @@ object AppRuntime:
                           stateRef,
                           executor,
                           fatal,
-                          clock
+                          clock,
+                          onState
                         )
-                      case _                                     => IO.unit
+                      case _                                     => publishPersisted(effect, stateRef, onState)
                   case Left(AppExecutionError.TransportFailed) =>
                     effect match
                       case AppEffect.SendReply(_, _, _) => fatal.set(Some(AppExecutionError.TransportFailed))
                       case _                            => IO.unit
                   case Left(error)                             =>
-                    recoverState(store, stateRef).flatMap(_ => fatal.set(Some(error)))
+                    recoverState(store, stateRef, onState).flatMap(_ => fatal.set(Some(error)))
                 }
         }
       }
     }
 
-  private def recoverState(store: Store, stateRef: Ref[IO, AppState]): IO[Unit] =
+  private def publishPersisted(
+    effect: AppEffect,
+    stateRef: Ref[IO, AppState],
+    onState: AppState => IO[Unit]
+  ): IO[Unit] =
+    effect match
+      case AppEffect.PersistInbound(_, _) | AppEffect.PersistContact(_) | AppEffect.PersistSession(_) | AppEffect.PersistSafetyVerified(_, _) |
+          AppEffect.PersistInvitation(_) | AppEffect.DeleteInvitation(_) | AppEffect.DeleteSession(_, _) |
+          AppEffect.UpdateMessageState(_, _, _, _, _, _) =>
+        AppRuntime.readRef(stateRef).flatMap(onState)
+      case _ => IO.unit
+
+  private def recoverState(store: Store, stateRef: Ref[IO, AppState], onState: AppState => IO[Unit]): IO[Unit] =
     AppStateRestore.load(store).flatMap {
-      case Right(state) => stateRef.set(state)
+      case Right(state) => stateRef.set(state) *> onState(state)
       case Left(_)      => IO.unit
     }
 
