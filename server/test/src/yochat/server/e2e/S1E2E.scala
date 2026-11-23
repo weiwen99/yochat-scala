@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, StandardOpenOption}
 import java.security.KeyPairGenerator
 import java.time.{Duration, Instant}
+import java.util.concurrent.CompletableFuture
 
 import scala.concurrent.duration.*
 import scala.util.control.NonFatal
@@ -65,6 +66,7 @@ object S1E2E:
       Contract("E2E#5", "restart the receiver, message remains", () => scenario5()),
       Contract("E2E#6", "disconnect and reconnect, pending message arrives", () => scenario6()),
       Contract("E2E#7", "100 messages in order, no duplicates", () => scenario7()),
+      Contract("E2E#8", "1000 messages end-to-end under 5s", () => scenario8()),
       Contract("E2E#9", "wrong or expired invitation rejected", () => scenario9()),
       Contract("E2E#10", "tampered ciphertext rejected", () => scenario10()),
       Contract("E2E#11", "tampered signature rejected", () => scenario11()),
@@ -72,7 +74,8 @@ object S1E2E:
       Contract("E2E#13", "app lock and unlock", () => scenario13()),
       Contract("E2E#14", "undecryptable message triggers automatic rebuild", () => scenario14()),
       Contract("E2E#15", "dropped data frame recovered by Gap and resend", () => scenario15()),
-      Contract("E2E#17", "pending message is rebound to the new session", () => scenario17())
+      Contract("E2E#17", "pending message is rebound to the new session", () => scenario17()),
+      Contract("PERF#10K", "10000 messages end-to-end under 60s", () => scenario10k())
     )
     args.toList match
       case Nil         =>
@@ -332,6 +335,54 @@ object S1E2E:
       ensure(onB == expectedB, s"B complete history count=${onB.size} firstSeq=${onB.headOption.map(_._1)} lastSeq=${onB.lastOption.map(_._1)}")
       ensure(onA == expectedA, s"A complete history count=${onA.size} firstSeq=${onA.headOption.map(_._1)} lastSeq=${onA.lastOption.map(_._1)}")
       s"bCount=${onB.size} aDelivered=${onA.size} firstSeq=1 lastSeq=100"
+    }
+
+  private def scenario8(): String =
+    E2EEnvironment.withPair { pair =>
+      val handshake = E2EEnvironment.handshake(pair)
+      verifySafety(pair, handshake)
+      def send(bodies: Vector[String]): Unit =
+        bodies.grouped(32).foreach { batch =>
+          val sends = batch.map(body => pair.a.sendMessageAsync(handshake.aConversation, body))
+          CompletableFuture.allOf(sends*).join()
+        }
+
+      val warmup = (1 to 1000).map(number => f"w-$number%04d").toVector
+      send(warmup)
+      E2E.await("B warmup messages", Duration.ofSeconds(30), Duration.ofMillis(10)) {
+        val messages = pair.b.messages(handshake.bConversation, limit = 1000)
+        if messages.count(_._2 == "peer") >= 1000 then Some(messages) else None
+      }
+      E2E.await("A warmup delivered", Duration.ofSeconds(30), Duration.ofMillis(10)) {
+        val messages = pair.a.messages(handshake.aConversation, limit = 1000)
+        if messages.count(message => message._2 == "me" && message._3 == "delivered") >= 1000 then Some(messages) else None
+      }
+
+      val bodies  = (1 to 1000).map(number => f"p-$number%04d").toVector
+      val started = System.nanoTime()
+      send(bodies)
+      E2E.await("B 1000 messages", Duration.ofSeconds(30), Duration.ofMillis(10)) {
+        val messages = pair.b.messages(handshake.bConversation, limit = 1000)
+        if messages.count(_._2 == "peer") >= 1000 && messages.map(_._4).toSet == bodies.toSet then Some(messages) else None
+      }
+      E2E.await("A 1000 delivered", Duration.ofSeconds(30), Duration.ofMillis(10)) {
+        val messages = pair.a.messages(handshake.aConversation, limit = 1000)
+        if messages.count(message => message._2 == "me" && message._3 == "delivered") >= 1000 &&
+          messages.map(_._4).toSet == bodies.toSet
+        then Some(messages)
+        else None
+      }
+      val elapsedMs = (System.nanoTime() - started) / 1_000_000L
+      val onB       = pair.b.messages(handshake.bConversation, limit = 1000)
+      val onA       = pair.a.messages(handshake.aConversation, limit = 1000)
+      ensure(onB.size == 1000, s"B count=${onB.size}")
+      ensure(onA.size == 1000, s"A count=${onA.size}")
+      ensure(onB.map(_._4).toSet == bodies.toSet, "B bodies differ")
+      ensure(onA.map(_._4).toSet == bodies.toSet, "A bodies differ")
+      ensure(onB.map(_._4).distinct.size == 1000, "B duplicate body")
+      ensure(onA.map(_._4).distinct.size == 1000, "A duplicate body")
+      ensure(elapsedMs < 5_000L, s"1000 messages took ${elapsedMs}ms after warmup")
+      s"elapsed_ms=$elapsedMs warmup=1000 bCount=${onB.size} aDelivered=${onA.size}"
     }
 
   private def scenario9(): String =
@@ -719,6 +770,47 @@ object S1E2E:
       .find(_.obj("userPub").str == userPub)
       .getOrElse(throw new AssertionError(s"contact $userPub missing: $state"))
 
+  private def scenario10k(): String =
+    E2EEnvironment.withPair { pair =>
+      val handshake = E2EEnvironment.handshake(pair)
+      verifySafety(pair, handshake)
+      def send(bodies: Vector[String]): Unit =
+        bodies.grouped(32).foreach { batch =>
+          val sends = batch.map(body => pair.a.sendMessageAsync(handshake.aConversation, body))
+          CompletableFuture.allOf(sends*).join()
+        }
+
+      val warmup = (1 to 1000).map(number => f"w-$number%05d").toVector
+      send(warmup)
+      E2E.await("B 10k warmup", Duration.ofSeconds(30), Duration.ofMillis(10)) {
+        if pair.b.countMessages(handshake.bConversation, state = 3) >= 1000 then Some(()) else None
+      }
+      E2E.await("A 10k warmup delivered", Duration.ofSeconds(30), Duration.ofMillis(10)) {
+        if pair.a.countMessages(handshake.aConversation, state = 5) >= 1000 then Some(()) else None
+      }
+
+      val bodies  = (1 to 10000).map(number => f"q-$number%05d").toVector
+      val started = System.nanoTime()
+      var sent    = 0
+      bodies.grouped(512).foreach { batch =>
+        send(batch)
+        sent += batch.size
+        E2E.await(s"B $sent received", Duration.ofSeconds(60), Duration.ofMillis(25)) {
+          if pair.b.countMessages(handshake.bConversation, state = 3, minSeq = 1000L) >= sent then Some(()) else None
+        }
+      }
+      E2E.await("A 10000 delivered", Duration.ofSeconds(60), Duration.ofMillis(10)) {
+        if pair.a.countMessages(handshake.aConversation, state = 5, minSeq = 1000L) >= 10000 then Some(()) else None
+      }
+      val elapsedMs = (System.nanoTime() - started) / 1_000_000L
+      val onB       = pair.b.countMessages(handshake.bConversation, state = 3, minSeq = 1000L)
+      val onA       = pair.a.countMessages(handshake.aConversation, state = 5, minSeq = 1000L)
+      ensure(onB == 10000L, s"B measured count=$onB")
+      ensure(onA == 10000L, s"A measured delivered=$onA")
+      ensure(elapsedMs < 60_000L, s"10000 messages took ${elapsedMs}ms after warmup")
+      s"elapsed_ms=$elapsedMs warmup=1000 bCount=$onB aDelivered=$onA"
+    }
+
   private def scenario17(): String =
     E2EEnvironment.withFaultPair { (pair, fault) =>
       val handshake = E2EEnvironment.handshake(pair)
@@ -737,7 +829,21 @@ object S1E2E:
       val alice = pair.a.awaitMessage(conversation, messages => messages.exists(value => value._3 == "delivered" && value._4 == "rebound"), "rebound delivered")
       ensure(bob.count(_._4 == "rebound") == 1, s"B body count: $bob")
       ensure(alice.count(_._4 == "rebound") == 1, s"A body count: $alice")
-      s"session=$sessionId body=rebound"
+
+      pair.a.sendMessage(conversation, "after-cutover")
+      val bobAfter = pair.b.awaitMessage(
+        handshake.bConversation,
+        messages => messages.exists(_._4 == "after-cutover"),
+        "post-cutover body"
+      )
+      val aliceAfter = pair.a.awaitMessage(
+        conversation,
+        messages => messages.exists(message => message._4 == "after-cutover" && message._3 == "delivered"),
+        "post-cutover delivered"
+      )
+      ensure(bobAfter.count(_._4 == "after-cutover") == 1, s"B post-cutover body count: $bobAfter")
+      ensure(aliceAfter.count(_._4 == "after-cutover") == 1, s"A post-cutover body count: $aliceAfter")
+      s"session=$sessionId rebound=1 afterCutover=1"
     }
 
   private def ensure(condition: Boolean, message: => String): Unit =

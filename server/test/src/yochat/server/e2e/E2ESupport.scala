@@ -1,12 +1,13 @@
 package yochat.server.e2e
 
 import java.net.{InetAddress, ServerSocket, URI}
+import java.sql.DriverManager
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import java.time.Duration
 import java.util.Comparator
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{CompletableFuture, TimeUnit}
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 
 import scala.jdk.CollectionConverters.*
@@ -36,22 +37,33 @@ final class Http:
 
   def postEmpty(url: String): HttpResult = send("POST", url, Some("{}"))
 
+  def postAsync(url: String, body: Value): CompletableFuture[HttpResult] =
+    val request = requestBuilder("POST", url, Some(ujson.write(body))).build()
+    client
+      .sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+      .thenApply(response => HttpResult(response.statusCode(), response.body()))
+
   private def send(method: String, url: String, body: Option[String]): HttpResult =
     try
-      val builder = HttpRequest
-        .newBuilder(URI.create(url))
-        .timeout(Duration.ofSeconds(10))
-        .header("Content-Type", "application/json")
-      val request = body match
-        case Some(value) => builder.method(method, HttpRequest.BodyPublishers.ofString(value)).build()
-        case None        => builder.method(method, HttpRequest.BodyPublishers.noBody()).build()
-      val response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+      val response = client.send(
+        requestBuilder(method, url, body).build(),
+        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+      )
       HttpResult(response.statusCode(), response.body())
     catch
       case _: InterruptedException =>
         Thread.currentThread().interrupt()
         HttpResult(0, "interrupted")
       case error: Exception        => HttpResult(0, s"${error.getClass.getSimpleName}: ${Option(error.getMessage).getOrElse("")}")
+
+  private def requestBuilder(method: String, url: String, body: Option[String]): HttpRequest.Builder =
+    val builder = HttpRequest
+      .newBuilder(URI.create(url))
+      .timeout(Duration.ofSeconds(10))
+      .header("Content-Type", "application/json")
+    body match
+      case Some(value) => builder.method(method, HttpRequest.BodyPublishers.ofString(value))
+      case None        => builder.method(method, HttpRequest.BodyPublishers.noBody())
 
 object E2E:
   val Passphrase: String = "correct horse battery staple"
@@ -306,6 +318,15 @@ final class ServiceProcess(
     requireStatus(s"$name send message", response, 200)
     E2E.longValue(response.json("messageId"))
 
+  def sendMessageAsync(conversationId: String, body: String): CompletableFuture[Long] =
+    http
+      .postAsync(s"$base/api/conversations/$conversationId/messages", ujson.Obj("body" -> body))
+      .thenApply { response =>
+        if response.status != 200 then
+          throw new AssertionError(s"$name send message returned ${response.status}: ${response.body}")
+        E2E.longValue(response.json("messageId"))
+      }
+
   def activeSession(conversationId: String): String =
     state("sessions").arr.toVector
       .find(session => session.obj("conversationId").str == conversationId && session.obj("phase").str == "active")
@@ -343,6 +364,21 @@ final class ServiceProcess(
     E2E.await(s"$name $label", timeout) {
       val current = messages(conversationId)
       if predicate(current) then Some(current) else None
+    }
+
+  def countMessages(conversationId: String, state: Int, minSeq: Long = 0L): Long =
+    Using.resource(DriverManager.getConnection(s"jdbc:sqlite:${dataDir.resolve("data.db")}")) { connection =>
+      Using.resource(connection.prepareStatement(
+        "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND state = ? AND seq > ?"
+      )) { statement =>
+        statement.setBytes(1, scodec.bits.ByteVector.fromValidHex(conversationId).toArray)
+        statement.setInt(2, state)
+        statement.setLong(3, minSeq)
+        Using.resource(statement.executeQuery()) { result =>
+          result.next()
+          result.getLong(1)
+        }
+      }
     }
 
   def logText: String =

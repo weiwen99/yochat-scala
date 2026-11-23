@@ -1,6 +1,6 @@
 # Plan 0006 implementation: S1 privacy, lock, and automatic rebuild
 
-- 状态: partially implemented（E2E 14 条全绿；#14 真实发送序号连续性 review P1 仍 open）
+- 状态: implemented（E2E 全绿；#14 真实发送序号连续性由 Plan 0007 + E2E#17 关闭）
 - 日期: 2026-11-23
 - 分支: `feat/plan-0006-s1-privacy-lock-rebuild`
 - 基线: `c21210b`
@@ -58,4 +58,8 @@
 
 ## Review
 
-- Round 1 的 R1-1–R1-6 已关闭；Round 2 复查发现 R2-1（真实发送序号连续性）、R2-4（重建失败通知）、R2-5（跨 cutover 窗口上限）仍 open；详见 `design-review-findings.md`。
+- Round 1 的 R1-1–R1-6 已关闭；Round 2 的 R2-1、R2-4、R2-5 由 Plan 0007 与 E2E#17 关闭：
+  - R2-1：E2E#17 先消费真实业务序号，cutover 后再发 `after-cutover`，B 一条、A `Delivered` 一条。
+  - R2-4：Plan 0007 的 `notification` 只在解锁态经 `/api/state` 可见。
+  - R2-5：Plan 0007 的 60s/3 本端 rekey 窗口，窗口后重置。
+- 剩余：`E2E#8` 已由 Plan 0008 加入；10k 两进程、冷启动/内存、UI 自动化与外部密码学评审仍未做。

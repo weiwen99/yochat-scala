@@ -4,7 +4,9 @@ A no-account-server, end-to-end-encrypted, friend-to-friend messenger. S1 uses o
 
 ## Status
 
-Plan 0001 is at the M4/M5 boundary, not merged. Plan 0002 closes the M3 structural review residuals (atomic handshakes, commit-before-publish, durable reply retries, rekey timeouts, bounded restore, Gap/attempt restore, bounded reply candidates, timer cleanup, idle/Lock generation); see `docs/plans/2026/11/0002-m3-structural-hardening/impl.md`. `core/` contains the protocol core and a pure application kernel (`yochat.core.app`: lock, invitations/safety, write-before-send, ordering, reconnect, rekey); `models/` contains the six finite Q1–Q6 Quint models with Apalache/TLC receipts; `store/` is doobie + SQLite + application-layer AEAD; `transport/` has the minimal relay, bounded framing, and a reconnecting client; `server/` has the single-writer runtime and a Pekko HTTP/WebSocket local service; `ui/` is the ScalaJS/Laminar surface; and `shell/` is the Electron desktop shell. Web and Electron share one interface; Electron adds hidden-inset window chrome, single-instance lifecycle, native notifications, and an OS-encrypted passphrase cache when the platform exposes `safeStorage`. Received invitations are persisted, and `AppState` is rebuilt from the store on startup. Still missing: the 15 E2E behavior contracts, two-process 1k/10k receipts, cold-start/memory receipts, and the external cryptography review.
+M5 is in progress on `main`. Plans 0002–0007 close M3 structural hardening, first-message binding, functional E2E, privacy/lock/automatic rebuild, and rekey continuity. `core/` contains the protocol core and pure application kernel; `models/` contains Q1–Q6 finite models with Apalache/TLC receipts; `store/` is doobie + SQLite + application-layer AEAD; `transport/` has the relay and reconnecting client; `server/` has the single-writer runtime and HTTP service; `ui/` and `shell/` provide the Laminar and Electron surfaces.
+
+Functional E2E now covers 16 behavior contracts plus `PERF#10K`: 1,000 measured messages under the 5s gate and 10,000 measured messages under the 60s gate, after explicit warmup. Remaining release work is cold-start/idle-memory gates, UI automation, and external cryptography review.
 
 ## Read first
 
@@ -34,7 +36,7 @@ The first visit asks for a local passphrase and creates the device identity; lat
 ./mill server.bench
 ```
 
-Writes 10,000 inbound messages to a real SQLite store, then reports per-message append p50/p95 and full `AppStateRestore.load` p50/p95 after a separate warmup. This is a benchmark command, not part of `./check.sh`; the two-process 1k/10k E2E gates remain M5.
+Writes 10,000 inbound messages to a real SQLite store, then reports per-message append p50/p95 and full `AppStateRestore.load` p50/p95 after a separate warmup. This is a benchmark command, not part of `./check.sh`; the two-process 1k/10k gates live in `server.e2e`.
 
 ## Run the functional E2E contracts
 
@@ -42,7 +44,7 @@ Writes 10,000 inbound messages to a real SQLite store, then reports per-message 
 ./mill server.e2e
 ```
 
-Starts one real relay and two real server JVMs with temporary data directories, then runs service-level S1 contracts #1–#7: invite/reply, contacts, safety gate, one message, sender/receiver restart, relay reconnect, and 100 ordered messages. It writes a redacted receipt under `tmp/checks/`; it is not a performance/load test. `E2E#1/#2` still need the ADR-0006 §3.3 first-message account/safety binding before their security contracts can close.
+Starts one real relay and two real server JVMs with temporary data directories, then runs the S1 behavior contracts, including invite/reply, contacts, safety gate, restart, reconnect, 100 ordered messages, tamper/rejection paths, lock, automatic rebuild, Gap recovery, pending rebind after cutover, and the 1,000-message throughput gate. It also runs `PERF#10K`, the 10,000-message two-process gate. It writes a redacted receipt under `tmp/checks/`.
 
 ## Run the Electron shell
 
