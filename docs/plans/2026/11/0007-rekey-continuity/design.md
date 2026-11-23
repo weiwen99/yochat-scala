@@ -279,3 +279,27 @@ D:109 改为“E2E#1–#7、#9–#15 共 14 条通过；#8 不计入本计划”
 - 不依赖用户 POST、重连、timer 或无关 ACK 才唤醒。
 
 固定测试顺序：同一 conversation `Migrated(k) → Skipped(Failed,k+1)`；两项完成后不进行额外操作，k 自行发出并获 ACK，k+1 不发送、不消耗 `ns`。
+
+## 13. Round 5 review 修订
+
+### 13.1 R4-N1：DuplicateSeq 不能绕过新 session 认证
+
+`InboundFrame` 的 `seqSeen` 只表示**业务键已存在**，不表示“同一 session 已收过该帧”。在目标新 session 的首次新密文上：
+
+- 旧 session 已收过业务 k 时，不能直接走 `DuplicateSeq` 返回；必须以 `seqSeen=false` 进行签名/AEAD/binding 认证；
+- 认证成功后才允许进入“无正文退休”事务：更新新 session ratchet，使用 `PersistHandshake` 退休旧 session，不追加 Received 行；
+- 认证失败、payload/binding 失败或同 session 重放仍走原拒绝/去重路径，不退休；
+- 不能把 `Left(DuplicateSeq)` 本身当退休证据。
+
+实现上使用目标新 session 的 `retireOldOnFirstData`（或等价 cutover 标记）区分“新 session 首次认证数据”和“同一 session 重放”，并保留旧 session 的 AAD/key 边界。测试：旧 ACK 丢失、旧业务 k 在新 session 重现，**不发 k+1** 即重开 B；旧 session 不载入、正文仍一条、A 收到新 ACK；拼接篡改/错误 binding 不退休。
+
+### 13.2 R5-N1：首次 Confirm 只在可发状态补发一次
+
+`Initiator + Accepted + Pending` 的立即补发条件：
+
+- 只在同一握手第一次满足 `state.connection == Online && state.lock.isUnlocked` 时执行；
+- 锁定或离线时不改 ratchet、不写 wire、不扣确认预算；
+- 启动的 `Connection(true)`/`Unlock` 顺序不会造成两次补发；后续同握手的 retry 由 timer/预算路径处理，不另建队列；
+- 首次补发仍先持久化 fresh `n` 再发，失败只按同一握手预算处理，不重新 `StartRekey`。
+
+测试两种顺序：`在线 → 解锁` 与 `离线解锁 → 在线`；ACK 延迟返回，断言刚就绪时仅一笔 durable Confirm/一帧，之前为零，且不等满 5s。
