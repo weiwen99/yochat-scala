@@ -15,7 +15,11 @@ class OutboxSpec extends FunSuite:
     assertEquals(sent.outgoing(1L).state, OutgoingState.InFlight)
     val (offline, offlineEffects) = Application.step(sent, AppEvent.ConnectionChanged(online = false, nowMs = 2L))
     assert(offlineEffects.exists { case AppEffect.CancelTimer(_) => true; case _ => false })
-    assertEquals(offline.timers, Map.empty)
+    assert(!offline.timers.keys.exists {
+      case TimerId.Message(_, _) => true
+      case _                     => false
+    })
+    assert(offline.timers.contains(TimerId.Idle))
     assertEquals(offline.outgoing(1L).state, OutgoingState.Queued)
     val (online, onlineEffects)   = Application.step(offline, AppEvent.ConnectionChanged(online = true, nowMs = 3L))
     assert(onlineEffects.exists { case AppEffect.SendWire(_, 1L, _, _) => true; case _ => false })

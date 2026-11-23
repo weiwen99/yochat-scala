@@ -18,7 +18,10 @@ class RekeyAppSpec extends FunSuite:
       AppEvent.StartRekey(oldSessionId, r1, rekeyId, TestKeys.nonce(10), 0L)
     )
     val request                      = startEffects.collectFirst { case AppEffect.SendRekeyRequest(_, _, value) => value }.getOrElse(fail("missing request"))
-    assert(startEffects.exists { case AppEffect.PersistSession(_) => true; case _ => false })
+    assert(startEffects.exists {
+      case AppEffect.PersistHandshake(_, _, sessions, _, _, _, _) => sessions.exists(_.state.sessionId == oldSessionId)
+      case _                                                      => false
+    })
 
     val (bobStarted, bobStartEffects) = Application.step(
       peers.bobState,
@@ -49,7 +52,11 @@ class RekeyAppSpec extends FunSuite:
     )
     assertEquals(aliceAcked.sessions(newSessionId).state.phase, yochat.core.SessionPhase.Active)
     assert(!aliceAcked.sessions.contains(oldSessionId))
-    assert(ackEffects.exists { case AppEffect.DeleteSession(`oldSessionId`, _) => true; case _ => false })
+    assert(ackEffects.exists {
+      case AppEffect.PersistHandshake(_, _, sessions, _, _, retire, _) =>
+        sessions.exists(_.state.sessionId == newSessionId) && retire.exists(_._1 == oldSessionId)
+      case _ => false
+    })
 
     val aliceNew                    = aliceAcked.sessions(newSessionId)
     val (_, frame)                  = Ratchet
@@ -70,6 +77,12 @@ class RekeyAppSpec extends FunSuite:
     )
     assertEquals(bobConfirmed.sessions(newSessionId).retireOldOnFirstData, true)
     assertEquals(bobConfirmed.sessions(oldSessionId).state.phase, yochat.core.SessionPhase.ReadOnly)
-    assert(dataEffects.exists { case AppEffect.DeleteSession(`oldSessionId`, _) => true; case _ => false }, dataEffects.toString)
+    assert(
+      dataEffects.exists {
+        case AppEffect.PersistInboundAndRetire(_, _, retired) => retired.contains(oldSessionId)
+        case _                                                => false
+      },
+      dataEffects.toString
+    )
     assert(!bobAfterData.sessions.contains(oldSessionId))
   }

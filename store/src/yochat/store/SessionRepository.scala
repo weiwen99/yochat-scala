@@ -39,6 +39,59 @@ private[store] object SessionRepository:
   def load(runtime: StoreRuntime, sessionId: SessionId): IO[Either[StorageError, SessionRecord]] =
     runtime.run(loadProgram(runtime, sessionId))
 
+  def writeProgram(runtime: StoreRuntime, state: RatchetState, lock: Long, now: Long): ConnectionIO[SessionRecord] =
+    loadOptionProgram(runtime, state.sessionId).flatMap {
+      case Some(current) =>
+        if current.generation == lock then
+          for
+            _    <- checkStateShape(state)
+            _    <- checkSafety(runtime, state)
+            next <- updateProgram(runtime, current, state, lock, now)
+          yield next
+        else Sql.abort(StorageError.StaleGeneration)
+      case None          =>
+        for
+          _      <- checkStateShape(state)
+          _      <- checkSafety(runtime, state)
+          record <- writeNew(runtime, state, lock, now)
+        yield record
+    }
+
+  def deletePendingProgram(runtime: StoreRuntime, sessionId: SessionId, lock: Long): ConnectionIO[Unit] =
+    loadOptionProgram(runtime, sessionId).flatMap {
+      case None          => FC.unit
+      case Some(current) =>
+        for
+          _       <- if current.generation == lock then FC.unit else Sql.abort(StorageError.StaleGeneration)
+          pending <- pendingCountProgram(sessionId)
+          _       <- if pending == 0L then FC.unit else Sql.abort(StorageError.PendingMessages)
+          deleted <- sql"DELETE FROM sessions WHERE id = ${sessionId.bytes.toArray} AND state_version = ${current.version}".update.run
+          _       <- Sql.changed(deleted)
+          next    <- Sql.nextVersion(current.version)
+          _       <- Sql.writeMeta(Sql.sessionVersionKey(sessionId), next)
+        yield ()
+    }
+
+  def retireProgram(
+    runtime: StoreRuntime,
+    sessionId: SessionId,
+    lock: Long,
+    role: CutoverRole,
+    evidence: CutoverEvidence
+  ): ConnectionIO[Unit] =
+    loadProgram(runtime, sessionId).flatMap { current =>
+      for
+        pending <- pendingCountProgram(sessionId)
+        _       <- if pending == 0L then FC.unit else Sql.abort(StorageError.PendingMessages)
+        _       <- cutoverReady(role, evidence)
+        _       <- checkGeneration(current, lock)
+        deleted <- sql"DELETE FROM sessions WHERE id = ${sessionId.bytes.toArray} AND state_version = ${current.version}".update.run
+        _       <- Sql.changed(deleted)
+        next    <- Sql.nextVersion(current.version)
+        _       <- Sql.writeMeta(Sql.sessionVersionKey(sessionId), next)
+      yield ()
+    }
+
   def list(runtime: StoreRuntime): IO[Either[StorageError, List[SessionRecord]]] =
     runtime.run {
       sql"SELECT id FROM sessions ORDER BY id".query[Array[Byte]].to[List].flatMap { ids =>
@@ -96,29 +149,37 @@ private[store] object SessionRepository:
     }
 
   private[store] def loadProgram(runtime: StoreRuntime, sessionId: SessionId): ConnectionIO[SessionRecord] =
-    for
-      row      <- row(sessionId)
-      current  <- requireRow(row)
-      _        <- Sql.checkHighWater(Sql.sessionVersionKey(sessionId), current.version)
-      peerUser <- Sql.eitherCore(Ed25519Public.from(ByteVector.view(current.peerUserPub)))
-      peerDev  <- Sql.eitherCore(Ed25519Public.from(ByteVector.view(current.peerDevicePub)))
-      stateRaw <- fromEither(
-                    StoreCrypto.open(
-                      runtime.keys.stateKey(sessionId),
-                      StoreCrypto.stateAad(
-                        sessionId.bytes,
-                        ByteVector.view(current.peerUserPub),
-                        ByteVector.view(current.peerDevicePub),
-                        current.generation,
-                        current.version
-                      ),
-                      current.state
-                    )
-                  )
-      state    <- fromEitherDecode(StateCodec.decode(stateRaw))
-      _        <- checkBinding(sessionId, peerUser, peerDev, state)
-      _        <- checkSafety(runtime, state)
-    yield SessionRecord(state, current.version, current.generation, current.updatedAt)
+    loadOptionProgram(runtime, sessionId).flatMap {
+      case Some(record) => FC.pure(record)
+      case None         => Sql.abort(StorageError.NotFound("session"))
+    }
+
+  private[store] def loadOptionProgram(runtime: StoreRuntime, sessionId: SessionId): ConnectionIO[Option[SessionRecord]] =
+    row(sessionId).flatMap {
+      case None          => FC.pure(None)
+      case Some(current) =>
+        for
+          _        <- Sql.checkHighWater(Sql.sessionVersionKey(sessionId), current.version)
+          peerUser <- Sql.eitherCore(Ed25519Public.from(ByteVector.view(current.peerUserPub)))
+          peerDev  <- Sql.eitherCore(Ed25519Public.from(ByteVector.view(current.peerDevicePub)))
+          stateRaw <- fromEither(
+                        StoreCrypto.open(
+                          runtime.keys.stateKey(sessionId),
+                          StoreCrypto.stateAad(
+                            sessionId.bytes,
+                            ByteVector.view(current.peerUserPub),
+                            ByteVector.view(current.peerDevicePub),
+                            current.generation,
+                            current.version
+                          ),
+                          current.state
+                        )
+                      )
+          state    <- fromEitherDecode(StateCodec.decode(stateRaw))
+          _        <- checkBinding(sessionId, peerUser, peerDev, state)
+          _        <- checkSafety(runtime, state)
+        yield Some(SessionRecord(state, current.version, current.generation, current.updatedAt))
+    }
 
   private[store] def checkSafety(runtime: StoreRuntime, state: RatchetState): ConnectionIO[Unit] =
     ContactRepository.loadOptionProgram(runtime, state.peerUserPub).flatMap {
@@ -230,11 +291,6 @@ private[store] object SessionRepository:
       .map(_.map { case (id, user, device, state, version, generation, updatedAt) =>
         Row(id, user, device, state, version, generation, updatedAt)
       })
-
-  private def requireRow(value: Option[Row]): ConnectionIO[Row] =
-    value match
-      case Some(row) => FC.pure(row)
-      case None      => Sql.abort(StorageError.NotFound("session"))
 
   private def checkBinding(
     sessionId: SessionId,

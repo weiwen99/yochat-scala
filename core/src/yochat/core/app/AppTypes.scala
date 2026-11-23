@@ -39,7 +39,7 @@ final case class AppContact(
   override def toString: String = s"AppContact(confirmation=$confirmation, safetyVerified=$safetyVerified)"
 
 enum InvitationLifecycle:
-  case Issued, AwaitingReply, Accepted, Expired
+  case Issued, AwaitingReply, PendingReply, Accepted, Expired
 
 final case class AppInvitation(
   id: ByteVector,
@@ -48,7 +48,9 @@ final case class AppInvitation(
   ratchetPrivate: Option[X25519Private],
   expectedAccount: Option[String],
   lifecycle: InvitationLifecycle,
-  expiresAt: Long
+  expiresAt: Long,
+  replyText: Option[String] = None,
+  replyAttempts: Int = 0
 ):
 
   override def toString: String = s"AppInvitation(lifecycle=$lifecycle, expiresAt=$expiresAt)"
@@ -88,7 +90,33 @@ enum ConnectionState:
 enum TimerKind:
   case Delivery, Retry
 
-final case class TimerId(kind: TimerKind, messageId: Long)
+enum RekeyTimerStage:
+  case Initiator, Responder
+
+enum TimerId:
+  case Message(timerKind: TimerKind, outgoingId: Long)
+  case Reply(invitationId: ByteVector)
+  case Rekey(sessionId: SessionId, stage: RekeyTimerStage)
+  case Idle
+
+  def kind: TimerKind =
+    this match
+      case TimerId.Message(value, _) => value
+      case _                         => TimerKind.Delivery
+
+  def messageId: Long =
+    this match
+      case TimerId.Message(_, value) => value
+      case _                         => 0L
+
+object TimerId:
+
+  def apply(kind: TimerKind, messageId: Long): TimerId = TimerId.Message(kind, messageId)
+
+  def unapply(value: TimerId): Option[(TimerKind, Long)] =
+    value match
+      case TimerId.Message(kind, messageId) => Some((kind, messageId))
+      case _                                => None
 
 enum Notification:
   case Waiting, MessageFailed, QueueFull, InboundOverflow, RekeyRequired, RekeyFailed
@@ -206,6 +234,10 @@ object AppLimits:
   val MaxInFlight: Int        = 32
   val MaxOutgoing: Int        = 1_024
   val MaxFailedRetained: Int  = 64
+  val MaxReplyAttempts: Int   = 3
+  val ReplyRetryMs: Long      = 2_000L
+  val RekeyTimeoutMs: Long    = 5_000L
+  val MaxReplyCandidates: Int = 8
 
 final case class AppState(
   identity: Option[LocalIdentity] = None,

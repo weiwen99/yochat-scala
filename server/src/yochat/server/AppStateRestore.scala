@@ -190,7 +190,7 @@ object AppStateRestore:
                     wire = wire,
                     generation = generation,
                     state = if state == MessageState.Failed then OutgoingState.Failed else OutgoingState.Queued,
-                    attempts = if state == MessageState.Failed then AppLimits.MaxSendAttempts else 0
+                    attempts = record.attempts
                   )
                 )
               }
@@ -220,9 +220,12 @@ object AppStateRestore:
               case InvitationState.Pending                             =>
                 if data.ephemeralPrivate.isDefined || data.ratchetPrivate.isDefined then InvitationLifecycle.Issued
                 else InvitationLifecycle.AwaitingReply
+              case InvitationState.PendingReply                        => InvitationLifecycle.PendingReply
               case InvitationState.Accepted | InvitationState.Consumed => InvitationLifecycle.Accepted
               case InvitationState.Declined | InvitationState.Expired  => InvitationLifecycle.Expired,
-            expiresAt = data.expiresAt
+            expiresAt = data.expiresAt,
+            replyText = data.replyText,
+            replyAttempts = data.replyAttempts
           )
         )
 

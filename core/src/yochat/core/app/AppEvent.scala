@@ -57,6 +57,9 @@ enum AppEvent:
     expectedAccount: Option[String],
     nowMs: Long
   )
+  case ReplySent(invitationId: ByteVector)
+  case ReplySendFailed(invitationId: ByteVector, nowMs: Long)
+  case ResumeGap(conversationId: ByteVector, nonce: Nonce, nowMs: Long)
   case RejectInvitation(invitationId: ByteVector)
   case StartRekey(sessionId: SessionId, r1: X25519KeyPair, rekeyId: RekeyId, nonce: Nonce, nowMs: Long)
 
@@ -65,9 +68,10 @@ enum AppEvent:
     request: RekeyRequest,
     r2: X25519KeyPair,
     r2Next: X25519KeyPair,
-    nonce: Nonce
+    nonce: Nonce,
+    nowMs: Long = 0L
   )
-  case RekeyAcceptReceived(sessionId: SessionId, accept: RekeyAccept, confirmNonce: Nonce)
+  case RekeyAcceptReceived(sessionId: SessionId, accept: RekeyAccept, confirmNonce: Nonce, nowMs: Long = 0L)
 
   case RekeyConfirmReceived(
     newSessionId: SessionId,
@@ -81,12 +85,24 @@ enum AppEvent:
 enum AppEffect:
   case PersistOutbound(message: OutgoingMessage, session: AppSession)
   case PersistInbound(message: BufferedMessage, session: AppSession)
+  case PersistInboundAndRetire(message: BufferedMessage, session: AppSession, retire: Vector[SessionId])
   case PersistContact(contact: AppContact)
   case PersistSession(session: AppSession)
   case PersistSafetyVerified(userPub: Ed25519Public, verified: Boolean)
   case PersistInvitation(invitation: AppInvitation)
+
+  case PersistHandshake(
+    contact: Option[AppContact],
+    conversation: Option[Conversation],
+    sessions: Vector[AppSession],
+    invitation: Option[AppInvitation],
+    deleteInvitation: Option[ByteVector],
+    retire: Vector[(SessionId, SessionRetirement)],
+    deletePendingSessions: Vector[SessionId]
+  )
+  case PersistAttempt(message: OutgoingMessage)
+  case PersistLockGeneration(generation: Long)
   case DeleteInvitation(invitationId: ByteVector)
-  case DeleteSession(sessionId: SessionId, retirement: SessionRetirement)
 
   case UpdateMessageState(
     conversationId: ByteVector,

@@ -28,6 +28,26 @@ private[store] object ConversationRepository:
       }
     }
 
+  def ensureProgram(
+    id: ByteVector,
+    peerUserPub: Ed25519Public,
+    expectedLockGeneration: Long,
+    now: Long
+  ): ConnectionIO[ConversationRecord] =
+    for
+      _       <- checkId(id)
+      _       <- Sql.checkLock(expectedLockGeneration)
+      current <- row(id)
+      record  <- current match
+                   case Some(value) => FC.pure(value)
+                   case None        =>
+                     for
+                       changed <-
+                         sql"INSERT INTO conversations(id, peer_user_pub, created_at, last_applied_seq) VALUES (${id.toArray}, ${peerUserPub.bytes.toArray}, $now, 0)".update.run
+                       _       <- Sql.changed(changed)
+                     yield ConversationRecord(id, peerUserPub, now, 0L)
+    yield record
+
   def load(runtime: StoreRuntime, id: ByteVector): IO[Either[StorageError, ConversationRecord]] =
     runtime.run {
       row(id).flatMap {
@@ -49,6 +69,9 @@ private[store] object ConversationRepository:
         }
       }
     }
+
+  private[store] def loadOptionProgram(id: ByteVector): ConnectionIO[Option[ConversationRecord]] =
+    row(id)
 
   def advance(
     runtime: StoreRuntime,
@@ -87,6 +110,19 @@ private[store] object ConversationRepository:
     if id.size == 32L then FC.unit else Sql.abort(StorageError.InvalidArgument("conversation_id"))
 
 private[store] object MetaRepository:
+
+  def advanceLockGeneration(runtime: StoreRuntime, target: Long): IO[Either[StorageError, Long]] =
+    runtime.run {
+      for
+        current <- Sql.lockGeneration
+        next    <- if current >= target then FC.pure(current)
+                   else if target > 0L then FC.pure(target)
+                   else Sql.abort(StorageError.InvalidArgument("lock_generation"))
+        changed <- if next == current then FC.pure(0)
+                   else sql"UPDATE meta SET value = $next WHERE key = 'lock-generation' AND value = $current".update.run
+        _       <- if next == current then FC.unit else Sql.changed(changed)
+      yield next
+    }
 
   def bumpLockGeneration(runtime: StoreRuntime, expected: Long): IO[Either[StorageError, Long]] =
     runtime.run {

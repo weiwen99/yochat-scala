@@ -107,7 +107,10 @@ final class AppService private (
     mutex.permit.use { _ =>
       sessionRef.getAndSet(None).flatMap {
         case None        => IO.unit
-        case Some(value) => value.close *> IO.delay(hub.publish("state"))
+        case Some(value) =>
+          value.runtime.submit(AppEvent.Lock) *>
+            value.runtime.awaitState(!_.lock.isUnlocked, 2.seconds).attempt.void *>
+            value.close *> IO.delay(hub.publish("state"))
       }
     }
 

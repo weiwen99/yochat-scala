@@ -204,7 +204,10 @@ class ReplayModelsSpec extends FunSuite:
       bob1,
       AppEvent.InboundFrame(1L, newSession, frame, Some(AppTestSupport.xpair(65)), TestKeys.nonce(6), 6L)
     )
-    assert(dataEffects.exists { case AppEffect.DeleteSession(`oldSession`, SessionRetirement.ResponderFirstData) => true; case _ => false })
+    assert(dataEffects.exists {
+      case AppEffect.PersistInboundAndRetire(_, _, retired) => retired.contains(oldSession)
+      case _                                                => false
+    })
     assert(!bob2.sessions.contains(oldSession))
     assertEquals(alice2.sessions(newSession).state.phase, yochat.core.SessionPhase.Active)
     assertEquals(bob2.sessions(newSession).state.phase, yochat.core.SessionPhase.Active)

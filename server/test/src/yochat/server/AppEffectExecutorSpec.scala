@@ -173,33 +173,6 @@ class AppEffectExecutorSpec extends FunSuite:
     }
   }
 
-  test("executes DeleteSession with the initiator-ACK cutover proof") {
-    ExecutorTestSupport.withStore { store =>
-      val fixture = ExecutorTestSupport.fixture()
-      val app     = ExecutorTestSupport.appState(fixture)
-      for
-        _         <- ExecutorTestSupport.initialize(fixture, store)
-        sent      <- IO.pure(
-                       Application.step(
-                         app,
-                         AppEvent.UserSend(2L, fixture.conversationId, ExecutorTestSupport.body("delete"), ExecutorTestSupport.nonce(2), 0L)
-                       )
-                     )
-        ref       <- Ref.of[IO, Vector[String]](Vector.empty)
-        executor   = new AppEffectExecutor(store, fixture.identity, new RecordingTransport(ref))
-        persisted <- executor.executeAll(sent._2)
-        _         <- IO.fromEither(persisted.left.map(error => new AssertionError(error.code)))
-        loaded    <-
-          store.loadMessage(fixture.conversationId, fixture.sessionId, fixture.identity.user.publicKey, fixture.identity.device.publicKey, 1L)
-        message   <- IO.fromEither(loaded.left.map(error => new AssertionError(error.code)))
-        _         <- store.setMessageState(message.id, MessageState.Pending, MessageState.Sent, 0L)
-        deleted   <- executor.execute(AppEffect.DeleteSession(fixture.sessionId, SessionRetirement.InitiatorAck))
-        _         <- IO.fromEither(deleted.left.map(error => new AssertionError(error.code)))
-        gone      <- store.loadSession(fixture.sessionId)
-      yield assertEquals(gone.left.map(_.code), Left("NotFound"))
-    }
-  }
-
   test("persists a locally-created invitation with its ephemeral private key") {
     ExecutorTestSupport.withStore { store =>
       val fixture    = ExecutorTestSupport.fixture()

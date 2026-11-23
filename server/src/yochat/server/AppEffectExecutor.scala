@@ -13,6 +13,7 @@ import yochat.store.{
   ConversationRecord,
   CutoverEvidence,
   CutoverRole,
+  HandshakeWrite,
   InvitationData,
   InvitationState,
   MessageState,
@@ -96,45 +97,51 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
 
   private def executeEffect(effect: AppEffect): IO[Either[AppExecutionError, Unit]] =
     effect match
-      case AppEffect.PersistOutbound(message, session)                                                    =>
+      case AppEffect.PersistOutbound(message, session)                                                                      =>
         persistOutbound(message, session)
-      case AppEffect.PersistInbound(message, session)                                                     =>
+      case AppEffect.PersistInbound(message, session)                                                                       =>
         persistInbound(message, session)
-      case AppEffect.PersistContact(contact)                                                              =>
+      case AppEffect.PersistInboundAndRetire(message, session, retire)                                                      =>
+        persistInbound(message, session, retire)
+      case AppEffect.PersistContact(contact)                                                                                =>
         persistContact(contact)
-      case AppEffect.PersistSession(session)                                                              =>
+      case AppEffect.PersistSession(session)                                                                                =>
         persistSession(session)
-      case AppEffect.PersistSafetyVerified(userPub, verified)                                             =>
+      case AppEffect.PersistSafetyVerified(userPub, verified)                                                               =>
         persistSafetyVerified(userPub, verified)
-      case AppEffect.PersistInvitation(invitation)                                                        =>
+      case AppEffect.PersistInvitation(invitation)                                                                          =>
         persistInvitation(invitation)
-      case AppEffect.DeleteInvitation(invitationId)                                                       =>
+      case AppEffect.PersistHandshake(contact, conversation, sessions, invitation, deleteInvitation, retire, deletePending) =>
+        persistHandshake(contact, conversation, sessions, invitation, deleteInvitation, retire, deletePending)
+      case AppEffect.PersistAttempt(message)                                                                                =>
+        persistAttempt(message)
+      case AppEffect.PersistLockGeneration(generation)                                                                      =>
+        persistLockGeneration(generation)
+      case AppEffect.DeleteInvitation(invitationId)                                                                         =>
         deleteInvitation(invitationId)
-      case AppEffect.DeleteSession(sessionId, retirement)                                                 =>
-        deleteSession(sessionId, retirement)
-      case AppEffect.UpdateMessageState(conversationId, sessionId, authorPub, devicePub, seq, transition) =>
+      case AppEffect.UpdateMessageState(conversationId, sessionId, authorPub, devicePub, seq, transition)                   =>
         updateMessageState(conversationId, sessionId, authorPub, devicePub, seq, transition)
-      case AppEffect.SendWire(toDevice, messageId, generation, wire)                                      =>
+      case AppEffect.SendWire(toDevice, messageId, generation, wire)                                                        =>
         transportOnly(transport.sendWire(toDevice, messageId, generation, wire))
-      case AppEffect.SendAck(sessionId, toDevice, frame)                                                  =>
+      case AppEffect.SendAck(sessionId, toDevice, frame)                                                                    =>
         transportOnly(transport.sendAck(sessionId, toDevice, frame))
-      case AppEffect.SendGap(sessionId, toDevice, frame)                                                  =>
+      case AppEffect.SendGap(sessionId, toDevice, frame)                                                                    =>
         transportOnly(transport.sendGap(sessionId, toDevice, frame))
-      case AppEffect.SendReply(invitationId, toDevice, text)                                              =>
+      case AppEffect.SendReply(invitationId, toDevice, text)                                                                =>
         transportOnly(transport.sendReply(invitationId, toDevice, text))
-      case AppEffect.SendRekeyRequest(sessionId, toDevice, request)                                       =>
+      case AppEffect.SendRekeyRequest(sessionId, toDevice, request)                                                         =>
         transportOnly(transport.sendRekeyRequest(sessionId, toDevice, request))
-      case AppEffect.SendRekeyAccept(sessionId, toDevice, accept)                                         =>
+      case AppEffect.SendRekeyAccept(sessionId, toDevice, accept)                                                           =>
         transportOnly(transport.sendRekeyAccept(sessionId, toDevice, accept))
-      case AppEffect.SendRekeyConfirm(newSessionId, toDevice, frame)                                      =>
+      case AppEffect.SendRekeyConfirm(newSessionId, toDevice, frame)                                                        =>
         transportOnly(transport.sendRekeyConfirm(newSessionId, toDevice, frame))
-      case AppEffect.SendRekeyConfirmAck(newSessionId, toDevice, frame)                                   =>
+      case AppEffect.SendRekeyConfirmAck(newSessionId, toDevice, frame)                                                     =>
         transportOnly(transport.sendRekeyConfirmAck(newSessionId, toDevice, frame))
-      case AppEffect.StartTimer(timer, deadlineMs)                                                        =>
+      case AppEffect.StartTimer(timer, deadlineMs)                                                                          =>
         transportOnly(transport.startTimer(timer, deadlineMs))
-      case AppEffect.CancelTimer(timer)                                                                   =>
+      case AppEffect.CancelTimer(timer)                                                                                     =>
         transportOnly(transport.cancelTimer(timer))
-      case AppEffect.Notify(notification)                                                                 =>
+      case AppEffect.Notify(notification)                                                                                   =>
         transportOnly(transport.notify(notification))
 
   private def persistOutbound(message: OutgoingMessage, session: AppSession): IO[Either[AppExecutionError, Unit]] =
@@ -179,12 +186,17 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
                               message.seq,
                               message.body,
                               message.wire.bytes,
-                              MessageState.Pending
+                              MessageState.Pending,
+                              message.attempts
                             )
                             .map(mapStore)
     yield result
 
-  private def persistInbound(message: BufferedMessage, session: AppSession): IO[Either[AppExecutionError, Unit]] =
+  private def persistInbound(
+    message: BufferedMessage,
+    session: AppSession,
+    retire: Vector[yochat.core.SessionId] = Vector.empty
+  ): IO[Either[AppExecutionError, Unit]] =
     for
       lock   <- lockGeneration
       loaded <- store.loadSession(session.state.sessionId)
@@ -196,19 +208,39 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
                       appended     <- conversation match
                                         case Left(error) => IO.pure(Left(error))
                                         case Right(_)    =>
-                                          store
-                                            .appendInbound(
-                                              session.state,
-                                              record.version,
-                                              lock,
-                                              session.conversationId,
-                                              message.authorPub,
-                                              message.devicePub,
-                                              message.seq,
-                                              message.body,
-                                              message.wire.bytes
+                                          val retired = retire.map { sessionId =>
+                                            (
+                                              sessionId,
+                                              CutoverRole.Responder,
+                                              CutoverEvidence(confirmAckReceived = false, firstNewSessionDataReceived = true)
                                             )
-                                            .map(mapStore)
+                                          }
+                                          (if retired.isEmpty then
+                                             store.appendInbound(
+                                               session.state,
+                                               record.version,
+                                               lock,
+                                               session.conversationId,
+                                               message.authorPub,
+                                               message.devicePub,
+                                               message.seq,
+                                               message.body,
+                                               message.wire.bytes
+                                             )
+                                           else
+                                             store.appendInboundAndRetire(
+                                               session.state,
+                                               record.version,
+                                               lock,
+                                               session.conversationId,
+                                               message.authorPub,
+                                               message.devicePub,
+                                               message.seq,
+                                               message.body,
+                                               message.wire.bytes,
+                                               retired
+                                             )
+                                          ).map(mapStore)
                     yield appended
     yield result
 
@@ -251,18 +283,53 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
                   case Left(error)   => IO.pure(Left(AppExecutionError.StoreFailed(error)))
     yield result
 
+  private def persistHandshake(
+    contact: Option[AppContact],
+    conversation: Option[Conversation],
+    sessions: Vector[AppSession],
+    invitation: Option[AppInvitation],
+    deleteInvitation: Option[ByteVector],
+    retire: Vector[(yochat.core.SessionId, SessionRetirement)],
+    deletePending: Vector[yochat.core.SessionId]
+  ): IO[Either[AppExecutionError, Unit]] =
+    val write = HandshakeWrite(
+      contact = contact.map(value => value.userPub -> contactData(value)),
+      conversation = conversation.map(value => value.id -> value.peerUserPub),
+      sessions = sessions.map(_.state),
+      invitation = invitation.map(value => value.id -> invitationData(value)),
+      deleteInvitation = deleteInvitation,
+      retire = retire.map { case (sessionId, retirement) =>
+        retirement match
+          case SessionRetirement.InitiatorAck       =>
+            (sessionId, CutoverRole.Initiator, CutoverEvidence(confirmAckReceived = true, firstNewSessionDataReceived = false))
+          case SessionRetirement.ResponderFirstData =>
+            (sessionId, CutoverRole.Responder, CutoverEvidence(confirmAckReceived = false, firstNewSessionDataReceived = true))
+      },
+      deletePendingSessions = deletePending
+    )
+    store.persistHandshake(write).map(mapStore)
+
+  private def persistAttempt(message: OutgoingMessage): IO[Either[AppExecutionError, Unit]] =
+    for
+      lock   <- lockGeneration
+      result <- store.setAttemptsByKey(
+                  message.conversationId,
+                  message.sessionId,
+                  message.authorPub,
+                  message.devicePub,
+                  message.seq,
+                  message.attempts,
+                  lock
+                )
+    yield mapStore(result)
+
+  private def persistLockGeneration(generation: Long): IO[Either[AppExecutionError, Unit]] =
+    store.advanceLockGeneration(generation).map(mapStore)
+
   private def persistInvitation(invitation: AppInvitation): IO[Either[AppExecutionError, Unit]] =
     for
       lock   <- lockGeneration
-      data    = InvitationData(
-                  ephemeralPrivate = invitation.ephemeralPrivate,
-                  ratchetPrivate = invitation.ratchetPrivate,
-                  peerAccount = invitation.expectedAccount,
-                  state = invitationState(invitation.lifecycle),
-                  confirmationState = StoreConfirmation.Pending,
-                  payload = invitation.invitation.canonical,
-                  expiresAt = invitation.expiresAt
-                )
+      data    = invitationData(invitation)
       loaded <- store.loadInvitation(invitation.id)
       result <- loaded match
                   case Right(record)                  =>
@@ -279,22 +346,6 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
       result <- loaded match
                   case Right(record)                  =>
                     store.deleteInvitation(invitationId, record.version, lock).map(mapStore)
-                  case Left(StorageError.NotFound(_)) => IO.pure(Right(()))
-                  case Left(error)                    => IO.pure(Left(AppExecutionError.StoreFailed(error)))
-    yield result
-
-  private def deleteSession(sessionId: yochat.core.SessionId, retirement: SessionRetirement): IO[Either[AppExecutionError, Unit]] =
-    for
-      lock   <- lockGeneration
-      loaded <- store.loadSession(sessionId)
-      result <- loaded match
-                  case Right(record)                  =>
-                    val (role, evidence) = retirement match
-                      case SessionRetirement.InitiatorAck       =>
-                        (CutoverRole.Initiator, CutoverEvidence(confirmAckReceived = true, firstNewSessionDataReceived = false))
-                      case SessionRetirement.ResponderFirstData =>
-                        (CutoverRole.Responder, CutoverEvidence(confirmAckReceived = false, firstNewSessionDataReceived = true))
-                    store.retireSession(sessionId, record.version, lock, role, evidence).map(mapStore)
                   case Left(StorageError.NotFound(_)) => IO.pure(Right(()))
                   case Left(error)                    => IO.pure(Left(AppExecutionError.StoreFailed(error)))
     yield result
@@ -376,9 +427,23 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
 
   final private class ExecutionAbort(val error: AppExecutionError) extends RuntimeException(error.code)
 
+  private def invitationData(invitation: AppInvitation): InvitationData =
+    InvitationData(
+      ephemeralPrivate = invitation.ephemeralPrivate,
+      ratchetPrivate = invitation.ratchetPrivate,
+      peerAccount = invitation.expectedAccount,
+      state = invitationState(invitation.lifecycle),
+      confirmationState = StoreConfirmation.Pending,
+      payload = invitation.invitation.canonical,
+      expiresAt = invitation.expiresAt,
+      replyText = invitation.replyText,
+      replyAttempts = invitation.replyAttempts
+    )
+
   private def invitationState(lifecycle: InvitationLifecycle): InvitationState =
     lifecycle match
       case InvitationLifecycle.Issued        => InvitationState.Pending
       case InvitationLifecycle.AwaitingReply => InvitationState.Pending
+      case InvitationLifecycle.PendingReply  => InvitationState.PendingReply
       case InvitationLifecycle.Accepted      => InvitationState.Accepted
       case InvitationLifecycle.Expired       => InvitationState.Expired

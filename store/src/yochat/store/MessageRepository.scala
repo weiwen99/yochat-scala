@@ -24,7 +24,8 @@ private[store] object MessageRepository:
     body: Array[Byte],
     wire: Array[Byte],
     state: Int,
-    createdAt: Long
+    createdAt: Long,
+    attempts: Int
   )
 
   def appendOutbound(
@@ -38,9 +39,52 @@ private[store] object MessageRepository:
     seq: Long,
     body: ByteVector,
     wire: ByteVector,
-    messageState: MessageState
+    messageState: MessageState,
+    attempts: Int = 0
   ): IO[Either[StorageError, AppendResult]] =
-    append(runtime, state, expectedVersion, expectedLockGeneration, conversationId, authorPub, devicePub, seq, body, wire, messageState)
+    append(
+      runtime,
+      state,
+      expectedVersion,
+      expectedLockGeneration,
+      conversationId,
+      authorPub,
+      devicePub,
+      seq,
+      body,
+      wire,
+      messageState,
+      attempts
+    )
+
+  def appendInboundAndRetire(
+    runtime: StoreRuntime,
+    state: yochat.core.RatchetState,
+    expectedVersion: Long,
+    expectedLockGeneration: Long,
+    conversationId: ByteVector,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    seq: Long,
+    body: ByteVector,
+    wire: ByteVector,
+    retired: Vector[(SessionId, CutoverRole, CutoverEvidence)]
+  ): IO[Either[StorageError, AppendResult]] =
+    append(
+      runtime,
+      state,
+      expectedVersion,
+      expectedLockGeneration,
+      conversationId,
+      authorPub,
+      devicePub,
+      seq,
+      body,
+      wire,
+      MessageState.Received,
+      0,
+      retired
+    )
 
   def appendInbound(
     runtime: StoreRuntime,
@@ -65,7 +109,9 @@ private[store] object MessageRepository:
       seq,
       body,
       wire,
-      MessageState.Received
+      MessageState.Received,
+      0,
+      Vector.empty
     )
 
   private def append(
@@ -79,7 +125,9 @@ private[store] object MessageRepository:
     seq: Long,
     body: ByteVector,
     wire: ByteVector,
-    messageState: MessageState
+    messageState: MessageState,
+    attempts: Int,
+    retired: Vector[(SessionId, CutoverRole, CutoverEvidence)] = Vector.empty
   ): IO[Either[StorageError, AppendResult]] =
     runtime.now.flatMap { now =>
       runtime.run {
@@ -108,17 +156,21 @@ private[store] object MessageRepository:
                             body
                           )
                         )
-          changed    <- sql"""INSERT INTO messages(conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at)
+          changed    <-
+            sql"""INSERT INTO messages(conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts)
                              |VALUES (${conversationId.toArray}, ${state.sessionId.bytes.toArray}, ${authorPub.bytes.toArray},
                              |        ${devicePub.bytes.toArray}, $seq, ${sealedBody}, ${wire.toArray}, ${MessageState.code(
-                              messageState
-                            )}, $now)""".stripMargin.update.run
+                  messageState
+                )}, $now, $attempts)""".stripMargin.update.run
           _          <- Sql.changed(changed)
           messageId  <- sql"SELECT last_insert_rowid()".query[Long].unique
           _          <- SessionRepository.writeHighWater(prepared)
+          _          <- retired.foldLeft(FC.unit) { case (acc, (sessionId, role, evidence)) =>
+                          acc.flatMap(_ => SessionRepository.retireProgram(runtime, sessionId, lock, role, evidence))
+                        }
         yield AppendResult(
           SessionRecord(state, prepared.nextVersion, lock, now),
-          MessageRecord(messageId, conversationId, state.sessionId, authorPub, devicePub, seq, body, wire, messageState, now)
+          MessageRecord(messageId, conversationId, state.sessionId, authorPub, devicePub, seq, body, wire, messageState, now, attempts)
         )
       }
     }
@@ -147,11 +199,11 @@ private[store] object MessageRepository:
     if limit <= 0 || limit > MaxListLimit then IO.pure(Left(StorageError.InvalidArgument("limit")))
     else
       runtime.run {
-        sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at
+        sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts
              |FROM messages
              |WHERE conversation_id = ${conversationId.toArray} AND author_pub = ${authorPub.bytes.toArray}
              |ORDER BY seq LIMIT $limit""".stripMargin
-          .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long)]
+          .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]
           .to[List]
           .flatMap(_.foldLeft(FC.pure(List.empty[MessageRecord])) { (acc, tuple) =>
             acc.flatMap(values => decode(runtime, toRow(tuple)).map(values :+ _))
@@ -166,11 +218,11 @@ private[store] object MessageRepository:
     if limit <= 0 || limit > MaxListLimit then IO.pure(Left(StorageError.InvalidArgument("limit")))
     else
       runtime.run {
-        sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at
+        sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts
              |FROM messages
              |WHERE conversation_id = ${conversationId.toArray}
              |ORDER BY id DESC LIMIT $limit""".stripMargin
-          .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long)]
+          .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]
           .to[List]
           .flatMap(_.foldLeft(FC.pure(List.empty[MessageRecord])) { (acc, tuple) =>
             acc.flatMap(values => decode(runtime, toRow(tuple)).map(values :+ _))
@@ -183,18 +235,70 @@ private[store] object MessageRepository:
     limit: Int
   ): IO[Either[StorageError, List[MessageRecord]]] =
     if limit <= 0 || limit > MaxRestoreLimit then IO.pure(Left(StorageError.InvalidArgument("limit")))
-    else
-      runtime.run {
-        sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at
-             |FROM messages
-             |WHERE conversation_id = ${conversationId.toArray}
-             |ORDER BY author_pub, seq LIMIT $limit""".stripMargin
-          .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long)]
-          .to[List]
-          .flatMap(_.foldLeft(FC.pure(List.empty[MessageRecord])) { (acc, tuple) =>
-            acc.flatMap(values => decode(runtime, toRow(tuple)).map(values :+ _))
-          })
+    else runtime.run(listAllProgram(runtime, conversationId, limit)).map(_.map(_.toList))
+
+  private[store] def listAllProgram(
+    runtime: StoreRuntime,
+    conversationId: ByteVector,
+    limit: Int = MaxRestoreLimit
+  ): ConnectionIO[Vector[MessageRecord]] =
+    def page(
+      cursor: Option[(Array[Byte], Long)],
+      size: Int
+    ): ConnectionIO[List[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]] =
+      cursor match
+        case None                =>
+          sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts
+               |FROM messages
+               |WHERE conversation_id = ${conversationId.toArray}
+               |ORDER BY author_pub, seq LIMIT $size""".stripMargin
+            .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]
+            .to[List]
+        case Some((author, seq)) =>
+          sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts
+               |FROM messages
+               |WHERE conversation_id = ${conversationId.toArray}
+               |  AND (author_pub > $author OR (author_pub = $author AND seq > $seq))
+               |ORDER BY author_pub, seq LIMIT $size""".stripMargin
+            .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]
+            .to[List]
+
+    def hasMore(cursor: (Array[Byte], Long)): ConnectionIO[Boolean] =
+      val (author, seq) = cursor
+      sql"""SELECT 1 FROM messages
+           |WHERE conversation_id = ${conversationId.toArray}
+           |  AND (author_pub > $author OR (author_pub = $author AND seq > $seq))
+           |LIMIT 1""".stripMargin.query[Int].option.map(_.isDefined)
+
+    def decodeRows(
+      rows: List[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]
+    ): ConnectionIO[Vector[MessageRecord]] =
+      rows.foldLeft(FC.pure(Vector.empty[MessageRecord])) { (acc, tuple) =>
+        acc.flatMap(values => decode(runtime, toRow(tuple)).map(values :+ _))
       }
+
+    def loop(cursor: Option[(Array[Byte], Long)], remaining: Int, acc: Vector[MessageRecord]): ConnectionIO[Vector[MessageRecord]] =
+      if remaining <= 0 then FC.pure(acc)
+      else
+        val pageSize = math.min(512, remaining)
+        page(cursor, pageSize).flatMap { rows =>
+          decodeRows(rows).flatMap { decoded =>
+            val next = acc ++ decoded
+            rows.lastOption match
+              case None          => FC.pure(next)
+              case Some(lastRow) =>
+                val nextCursor = (lastRow._4, lastRow._6)
+                if rows.size < pageSize then FC.pure(next)
+                else if remaining - rows.size <= 0 then
+                  hasMore(nextCursor).flatMap {
+                    case true  => Sql.abort(StorageError.InvalidArgument("restore_limit"))
+                    case false => FC.pure(next)
+                  }
+                else loop(Some(nextCursor), remaining - rows.size, next)
+          }
+        }
+
+    loop(None, limit, Vector.empty)
 
   def setState(
     runtime: StoreRuntime,
@@ -234,6 +338,28 @@ private[store] object MessageRepository:
       yield ()
     }
 
+  def setAttemptsByKey(
+    runtime: StoreRuntime,
+    conversationId: ByteVector,
+    sessionId: SessionId,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    seq: Long,
+    attempts: Int,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, Unit]] =
+    if attempts < 0 then IO.pure(Left(StorageError.InvalidArgument("attempts")))
+    else
+      runtime.run {
+        for
+          _       <- Sql.checkLock(expectedLockGeneration)
+          changed <- sql"""UPDATE messages SET attempts = $attempts
+                          |WHERE conversation_id = ${conversationId.toArray} AND session_id = ${sessionId.bytes.toArray}
+                          |  AND author_pub = ${authorPub.bytes.toArray} AND device_pub = ${devicePub.bytes.toArray} AND seq = $seq""".stripMargin.update.run
+          _       <- Sql.changed(changed)
+        yield ()
+      }
+
   def pendingCount(runtime: StoreRuntime, sessionId: SessionId): IO[Either[StorageError, Long]] =
     runtime.run(SessionRepository.pendingCountProgram(sessionId))
 
@@ -272,7 +398,8 @@ private[store] object MessageRepository:
       body,
       ByteVector.view(value.wire),
       state,
-      value.createdAt
+      value.createdAt,
+      value.attempts
     )
 
   private def decodeSession(value: ByteVector): ConnectionIO[SessionId] =
@@ -307,17 +434,17 @@ private[store] object MessageRepository:
     devicePub: Ed25519Public,
     seq: Long
   ): ConnectionIO[Option[Row]] =
-    sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at
+    sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts
          |FROM messages
          |WHERE conversation_id = ${conversationId.toArray} AND session_id = ${sessionId.bytes.toArray}
          |  AND author_pub = ${authorPub.bytes.toArray} AND device_pub = ${devicePub.bytes.toArray} AND seq = $seq""".stripMargin
-      .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long)]
+      .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]
       .option
       .map(_.map(toRow))
 
-  private def toRow(value: (Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long)): Row =
-    val (id, conversation, session, author, device, seq, body, wire, state, createdAt) = value
-    Row(id, conversation, session, author, device, seq, body, wire, state, createdAt)
+  private def toRow(value: (Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)): Row =
+    val (id, conversation, session, author, device, seq, body, wire, state, createdAt, attempts) = value
+    Row(id, conversation, session, author, device, seq, body, wire, state, createdAt, attempts)
 
   private def validateMessage(
     conversationId: ByteVector,

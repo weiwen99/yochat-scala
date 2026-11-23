@@ -43,7 +43,8 @@ final class Store private[store] (
     seq: Long,
     body: ByteVector,
     wire: ByteVector,
-    messageState: MessageState
+    messageState: MessageState,
+    attempts: Int = 0
   ): IO[Either[StorageError, AppendResult]] =
     MessageRepository.appendOutbound(
       runtime,
@@ -56,7 +57,34 @@ final class Store private[store] (
       seq,
       body,
       wire,
-      messageState
+      messageState,
+      attempts
+    )
+
+  def appendInboundAndRetire(
+    state: RatchetState,
+    expectedVersion: Long,
+    expectedLockGeneration: Long,
+    conversationId: ByteVector,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    seq: Long,
+    body: ByteVector,
+    wire: ByteVector,
+    retired: Vector[(SessionId, CutoverRole, CutoverEvidence)]
+  ): IO[Either[StorageError, AppendResult]] =
+    MessageRepository.appendInboundAndRetire(
+      runtime,
+      state,
+      expectedVersion,
+      expectedLockGeneration,
+      conversationId,
+      authorPub,
+      devicePub,
+      seq,
+      body,
+      wire,
+      retired
     )
 
   def appendInbound(
@@ -126,6 +154,26 @@ final class Store private[store] (
       seq,
       expected,
       next,
+      expectedLockGeneration
+    )
+
+  def setAttemptsByKey(
+    conversationId: ByteVector,
+    sessionId: SessionId,
+    authorPub: Ed25519Public,
+    devicePub: Ed25519Public,
+    seq: Long,
+    attempts: Int,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, Unit]] =
+    MessageRepository.setAttemptsByKey(
+      runtime,
+      conversationId,
+      sessionId,
+      authorPub,
+      devicePub,
+      seq,
+      attempts,
       expectedLockGeneration
     )
 
@@ -223,6 +271,18 @@ final class Store private[store] (
   def bumpLockGeneration(expected: Long): IO[Either[StorageError, Long]] =
     MetaRepository.bumpLockGeneration(runtime, expected)
 
+  def advanceLockGeneration(target: Long): IO[Either[StorageError, Long]] =
+    MetaRepository.advanceLockGeneration(runtime, target)
+
+  def persistHandshake(write: HandshakeWrite): IO[Either[StorageError, Unit]] =
+    for
+      lock   <- lockGeneration
+      now    <- runtime.now
+      result <- lock match
+                  case Left(error)  => IO.pure(Left(error))
+                  case Right(value) => runtime.transact(HandshakeRepository.persist(runtime, write, value, now))
+    yield result
+
   def listContacts: IO[Either[StorageError, List[ContactRecord]]] =
     ContactRepository.list(runtime)
 
@@ -242,32 +302,7 @@ final class Store private[store] (
     MessageRepository.listAll(runtime, conversationId, 100_000)
 
   def snapshot: IO[Either[StorageError, StoreSnapshot]] =
-    for
-      contacts      <- listContacts
-      invitations   <- listInvitations
-      sessions      <- listSessions
-      conversations <- listConversations
-      messages      <- conversations match
-                         case Left(error)   => IO.pure(Left(error))
-                         case Right(values) =>
-                           values.foldLeft(IO.pure[Either[StorageError, Map[ByteVector, List[MessageRecord]]]](Right(Map.empty))) {
-                             (acc, conversation) =>
-                               acc.flatMap {
-                                 case Left(error) => IO.pure(Left(error))
-                                 case Right(map)  =>
-                                   listAllMessages(conversation.id).map {
-                                     case Right(records) => Right(map.updated(conversation.id, records))
-                                     case Left(error)    => Left(error)
-                                   }
-                               }
-                           }
-    yield for
-      contactValues      <- contacts
-      invitationValues   <- invitations
-      sessionValues      <- sessions
-      conversationValues <- conversations
-      messageValues      <- messages
-    yield StoreSnapshot(contactValues, invitationValues, sessionValues, conversationValues, messageValues)
+    runtime.transact(SnapshotRepository.load(runtime))
 
   def backup(target: Path): IO[Either[StorageError, Unit]] =
     Backup.create(runtime, target)

@@ -43,6 +43,7 @@ private[server] enum RuntimeCommand:
   */
 final class AppRuntime private (
   identity: LocalIdentity,
+  store: Store,
   stateRef: Ref[IO, AppState],
   queue: Queue[IO, RuntimeCommand],
   timers: TimerService,
@@ -127,6 +128,8 @@ final class AppRuntime private (
       _          <- if accepted then IO.unit else IO.raiseError(new RuntimeError("event-queue-full"))
       visible    <- awaitState(_.invitations.contains(invitation.fields.ephPub.bytes), 5.seconds)
       _          <- if visible then IO.unit else IO.raiseError(new RuntimeError("invitation-not-visible"))
+      persisted  <- awaitStoredInvitation(invitation.fields.ephPub.bytes, _ => true, 5.seconds)
+      _          <- if persisted then IO.unit else IO.raiseError(new RuntimeError("invitation-not-persisted"))
     yield invitation
 
   def receiveInvitation(text: String, expectedAccount: Option[String]): IO[Invitation] =
@@ -137,6 +140,8 @@ final class AppRuntime private (
       _          <- if accepted then IO.unit else IO.raiseError(new RuntimeError("event-queue-full"))
       visible    <- awaitState(_.invitations.contains(invitation.fields.ephPub.bytes), 5.seconds)
       _          <- if visible then IO.unit else IO.raiseError(new RuntimeError("invitation-not-visible"))
+      persisted  <- awaitStoredInvitation(invitation.fields.ephPub.bytes, _ => true, 5.seconds)
+      _          <- if persisted then IO.unit else IO.raiseError(new RuntimeError("invitation-not-persisted"))
     yield invitation
 
   def acceptInvitation(
@@ -151,6 +156,8 @@ final class AppRuntime private (
       invitation     <- state.invitations.get(invitationId) match
                           case Some(value) => IO.pure(value)
                           case None        => IO.raiseError(new RuntimeError("invitation-not-found"))
+      _              <- if invitation.lifecycle == InvitationLifecycle.AwaitingReply then IO.unit
+                        else IO.raiseError(new RuntimeError("invitation-not-pending"))
       _              <- invitation.expectedAccount match
                           case Some(expected) if expected != invitation.invitation.fields.channelAccount =>
                             IO.raiseError(new RuntimeError("account-mismatch"))
@@ -181,6 +188,18 @@ final class AppRuntime private (
                         )
       accepted       <- submit(AppEvent.ReplyCreated(invitationId, conversationId, result, now))
       _              <- if accepted then IO.unit else IO.raiseError(new RuntimeError("event-queue-full"))
+      visible        <- awaitState(
+                          _.invitations.get(invitationId).forall(_.lifecycle != InvitationLifecycle.AwaitingReply),
+                          5.seconds
+                        )
+      _              <- if visible then IO.unit else IO.raiseError(new RuntimeError("reply-not-visible"))
+      persisted      <- awaitStoredInvitation(
+                          invitationId,
+                          data => data.state == yochat.store.InvitationState.PendingReply && data.replyText.contains(result.text),
+                          5.seconds,
+                          missingIsSuccess = true
+                        )
+      _              <- if persisted then IO.unit else IO.raiseError(new RuntimeError("reply-not-persisted"))
     yield result
 
   def startRekey(sessionId: SessionId): IO[Unit] =
@@ -199,6 +218,24 @@ final class AppRuntime private (
 
   def fatalError: IO[Option[AppExecutionError]] = AppRuntime.readRef(fatal)
 
+  private def awaitStoredInvitation(
+    invitationId: ByteVector,
+    predicate: yochat.store.InvitationData => Boolean,
+    timeout: FiniteDuration,
+    missingIsSuccess: Boolean = false
+  ): IO[Boolean] =
+    def loop(remaining: Long): IO[Boolean] =
+      store.loadInvitation(invitationId).flatMap {
+        case Right(record) if predicate(record.data)                         => IO.pure(true)
+        case Right(_) if remaining > 0L                                      => IO.sleep(10.millis) *> loop(remaining - 10L)
+        case Right(_)                                                        => IO.pure(false)
+        case Left(yochat.store.StorageError.NotFound(_)) if missingIsSuccess => IO.pure(true)
+        case Left(yochat.store.StorageError.NotFound(_)) if remaining > 0L   =>
+          IO.sleep(10.millis) *> loop(remaining - 10L)
+        case Left(error)                                                     => IO.raiseError(new RuntimeError(s"store:${error.code}"))
+      }
+    loop(timeout.toMillis)
+
   def awaitState(predicate: AppState => Boolean, timeout: FiniteDuration): IO[Boolean] =
     def loop(remaining: Long): IO[Boolean] =
       AppRuntime.readRef(stateRef).flatMap { current =>
@@ -215,6 +252,14 @@ object AppRuntime:
 
   private[server] def readRef[A](ref: Ref[IO, A]): IO[A] =
     ref.get // scalafix:ok DisableSyntax.no-unsafe-get
+
+  private[server] def isDurable(effect: AppEffect): Boolean =
+    effect match
+      case _: AppEffect.PersistOutbound | _: AppEffect.PersistInbound | _: AppEffect.PersistInboundAndRetire | _: AppEffect.PersistContact |
+          _: AppEffect.PersistSession | _: AppEffect.PersistSafetyVerified | _: AppEffect.PersistInvitation | _: AppEffect.PersistHandshake |
+          _: AppEffect.PersistAttempt | _: AppEffect.PersistLockGeneration | _: AppEffect.DeleteInvitation | _: AppEffect.UpdateMessageState =>
+        true
+      case _ => false
 
   def start(
     store: Store,
@@ -251,7 +296,7 @@ object AppRuntime:
       random         = new RuntimeRandom
       transport      = new RelayAppTransport(relay, queue, notifications, clock, timers)
       executor       = new AppEffectExecutor(store, identity, transport)
-      loop          <- eventLoop(store, transport, queue, stateRef, messageIds, random, executor, fatal, clock, onState).start
+      loop          <- eventLoop(transport, queue, stateRef, messageIds, random, executor, fatal, clock, onState).start
       inbound       <- relay.incoming
                          .flatMap(incoming => queue.tryOffer(RuntimeCommand.Inbound(incoming.from, incoming.payload)).void)
                          .foreverM
@@ -264,6 +309,7 @@ object AppRuntime:
                          .start
       runtime        = new AppRuntime(
                          identity,
+                         store,
                          stateRef,
                          queue,
                          timers,
@@ -283,7 +329,6 @@ object AppRuntime:
     yield runtime
 
   private def eventLoop(
-    store: Store,
     transport: RelayAppTransport,
     queue: Queue[IO, RuntimeCommand],
     stateRef: Ref[IO, AppState],
@@ -298,17 +343,16 @@ object AppRuntime:
       case Some(_) => IO.unit
       case None    =>
         queue.take
-          .flatMap(command => handle(store, transport, command, queue, stateRef, messageIds, random, executor, fatal, clock, onState))
+          .flatMap(command => handle(transport, command, queue, stateRef, messageIds, random, executor, fatal, clock, onState))
           .attempt
           .flatMap {
-            case Right(_)    => eventLoop(store, transport, queue, stateRef, messageIds, random, executor, fatal, clock, onState)
+            case Right(_)    => eventLoop(transport, queue, stateRef, messageIds, random, executor, fatal, clock, onState)
             case Left(error) =>
               fatal.set(Some(AppExecutionError.Unsupported(s"runtime-loop:${error.getClass.getSimpleName}")))
           }
     }
 
   private def handle(
-    store: Store,
     transport: RelayAppTransport,
     command: RuntimeCommand,
     queue: Queue[IO, RuntimeCommand],
@@ -321,17 +365,21 @@ object AppRuntime:
     onState: AppState => IO[Unit]
   ): IO[Unit] =
     command match
-      case RuntimeCommand.App(event)             => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock, onState)
+      case RuntimeCommand.App(event)             =>
+        applyEvent(transport, event, queue, stateRef, executor, fatal, clock, onState) *>
+          (event match
+            case AppEvent.Unlock(_, _, _) => resumeGaps(queue, stateRef, random, clock)
+            case _                        => IO.unit)
       case RuntimeCommand.Connection(on, now)    =>
-        applyEvent(store, transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, executor, fatal, clock, onState)
+        applyEvent(transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, executor, fatal, clock, onState) *>
+          (if on then resumeGaps(queue, stateRef, random, clock) else IO.unit)
       case RuntimeCommand.Inbound(from, payload) =>
         translateInbound(from, payload, messageIds, random, stateRef, clock).flatMap {
           case None        => IO.unit
-          case Some(event) => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock, onState)
+          case Some(event) => applyEvent(transport, event, queue, stateRef, executor, fatal, clock, onState)
         }
 
   private def applyEvent(
-    store: Store,
     transport: RelayAppTransport,
     event: AppEvent,
     queue: Queue[IO, RuntimeCommand],
@@ -344,15 +392,43 @@ object AppRuntime:
     for
       current        <- AppRuntime.readRef(stateRef)
       (next, effects) = Application.step(current, event)
-      _              <- stateRef.set(next)
-      _              <- onState(next)
-      _              <- executeEffects(store, transport, effects, queue, stateRef, executor, fatal, clock, onState)
+      durable         = effects.filter(AppRuntime.isDurable)
+      external        = effects.filterNot(AppRuntime.isDurable)
+      result         <- executor.executeAll(durable)
+      _              <- result match
+                          case Left(error) => fatal.set(Some(error))
+                          case Right(_)    =>
+                            stateRef.set(next) *> onState(next) *>
+                              feedPersisted(durable, transport, queue, stateRef, executor, fatal, clock, onState) *>
+                              executeExternal(external, transport, queue, stateRef, executor, fatal, clock, onState)
     yield ()
 
-  private def executeEffects(
-    store: Store,
-    transport: RelayAppTransport,
+  private def feedPersisted(
     effects: Vector[AppEffect],
+    transport: RelayAppTransport,
+    queue: Queue[IO, RuntimeCommand],
+    stateRef: Ref[IO, AppState],
+    executor: AppEffectExecutor,
+    fatal: Ref[IO, Option[AppExecutionError]],
+    clock: Clock,
+    onState: AppState => IO[Unit]
+  ): IO[Unit] =
+    effects.collect { case AppEffect.PersistOutbound(message, _) => message }.foldLeft(IO.unit) { (acc, message) =>
+      acc *> applyEvent(
+        transport,
+        AppEvent.PersistOutboundSucceeded(message.id, message.generation, clock.millis()),
+        queue,
+        stateRef,
+        executor,
+        fatal,
+        clock,
+        onState
+      )
+    }
+
+  private def executeExternal(
+    effects: Vector[AppEffect],
+    transport: RelayAppTransport,
     queue: Queue[IO, RuntimeCommand],
     stateRef: Ref[IO, AppState],
     executor: AppEffectExecutor,
@@ -369,51 +445,36 @@ object AppRuntime:
               case AppEffect.SendWire(toDevice, messageId, generation, wire) =>
                 transport
                   .sendWireResult(toDevice, messageId, generation, wire)
-                  .flatMap(event => applyEvent(store, transport, event, queue, stateRef, executor, fatal, clock, onState))
+                  .flatMap(result => applyEvent(transport, result, queue, stateRef, executor, fatal, clock, onState))
+              case AppEffect.SendReply(invitationId, toDevice, text)         =>
+                transport
+                  .sendReplyResult(invitationId, toDevice, text)
+                  .flatMap(result => applyEvent(transport, result, queue, stateRef, executor, fatal, clock, onState))
               case _                                                         =>
                 executor.execute(effect).flatMap {
-                  case Right(_)                                =>
-                    effect match
-                      case AppEffect.PersistOutbound(message, _) =>
-                        applyEvent(
-                          store,
-                          transport,
-                          AppEvent.PersistOutboundSucceeded(message.id, message.generation, clock.millis()),
-                          queue,
-                          stateRef,
-                          executor,
-                          fatal,
-                          clock,
-                          onState
-                        )
-                      case _                                     => publishPersisted(effect, stateRef, onState)
-                  case Left(AppExecutionError.TransportFailed) =>
-                    effect match
-                      case AppEffect.SendReply(_, _, _) => fatal.set(Some(AppExecutionError.TransportFailed))
-                      case _                            => IO.unit
-                  case Left(error)                             =>
-                    recoverState(store, stateRef, onState).flatMap(_ => fatal.set(Some(error)))
+                  case Right(_)                                => IO.unit
+                  case Left(AppExecutionError.TransportFailed) => IO.unit
+                  case Left(error)                             => fatal.set(Some(error))
                 }
         }
       }
     }
 
-  private def publishPersisted(
-    effect: AppEffect,
+  private def resumeGaps(
+    queue: Queue[IO, RuntimeCommand],
     stateRef: Ref[IO, AppState],
-    onState: AppState => IO[Unit]
+    random: RuntimeRandom,
+    clock: Clock
   ): IO[Unit] =
-    effect match
-      case AppEffect.PersistInbound(_, _) | AppEffect.PersistContact(_) | AppEffect.PersistSession(_) | AppEffect.PersistSafetyVerified(_, _) |
-          AppEffect.PersistInvitation(_) | AppEffect.DeleteInvitation(_) | AppEffect.DeleteSession(_, _) |
-          AppEffect.UpdateMessageState(_, _, _, _, _, _) =>
-        AppRuntime.readRef(stateRef).flatMap(onState)
-      case _ => IO.unit
-
-  private def recoverState(store: Store, stateRef: Ref[IO, AppState], onState: AppState => IO[Unit]): IO[Unit] =
-    AppStateRestore.load(store).flatMap {
-      case Right(state) => stateRef.set(state) *> onState(state)
-      case Left(_)      => IO.unit
+    AppRuntime.readRef(stateRef).flatMap { state =>
+      if state.connection != ConnectionState.Online || !state.lock.isUnlocked then IO.unit
+      else
+        val gaps = state.conversations.values.filter(_.gapRequested.isDefined).toVector.sortBy(_.id.toHex)
+        gaps.foldLeft(IO.unit) { (acc, conversation) =>
+          acc *> random.nonce.flatMap { nonce =>
+            queue.tryOffer(RuntimeCommand.App(AppEvent.ResumeGap(conversation.id, nonce, clock.millis()))).void
+          }
+        }
     }
 
   private def translateInbound(
@@ -465,13 +526,13 @@ object AppRuntime:
                   r2     <- random.x25519
                   r2Next <- random.x25519
                   nonce  <- random.nonce
-                yield Some(AppEvent.RekeyRequestReceived(request.sessionId, request, r2, r2Next, nonce))
+                yield Some(AppEvent.RekeyRequestReceived(request.sessionId, request, r2, r2Next, nonce, clock.millis()))
         case RelayPayload.RekeyAccept(bytes)  =>
           RekeyAccept.fromBytes(bytes) match
             case Left(_)       => IO.pure(None)
             case Right(accept) =>
               if !state.sessions.contains(accept.sessionId) then IO.pure(None)
-              else random.nonce.map(nonce => Some(AppEvent.RekeyAcceptReceived(accept.sessionId, accept, nonce)))
+              else random.nonce.map(nonce => Some(AppEvent.RekeyAcceptReceived(accept.sessionId, accept, nonce, clock.millis())))
     }
 
   private def replyEvent(
@@ -495,7 +556,16 @@ object AppRuntime:
                     .map(conversationId => Some(AppEvent.ReplyReceived(head.id, conversationId, result, head.expectedAccount, now)))
                 case _                                                => tryInvitation(tail)
             case _                                => tryInvitation(tail)
-    tryInvitation(state.invitations.values.toList.sortBy(_.id.toHex))
+    val candidates                                                       = state.invitations.valuesIterator
+      .filter(invitation =>
+        (invitation.lifecycle == InvitationLifecycle.Issued || invitation.lifecycle == InvitationLifecycle.AwaitingReply) &&
+          invitation.ephemeralPrivate.isDefined && invitation.ratchetPrivate.isDefined
+      )
+      .toVector
+      .sortBy(invitation => (invitation.expiresAt, invitation.id.toHex))
+      .take(AppLimits.MaxReplyCandidates)
+      .toList
+    tryInvitation(candidates)
 
   private def expectedControl(state: AppState, newSessionId: SessionId, role: RekeyRole): Option[ControlExtension] =
     state.sessions.get(newSessionId).flatMap { newSession =>
@@ -540,29 +610,54 @@ final private[server] class TimerService private (
   queue: Queue[IO, RuntimeCommand],
   stateRef: Ref[IO, AppState],
   clock: Clock,
-  fibers: Ref[IO, Map[TimerId, FiberIO[Unit]]]
+  fibers: Ref[IO, Map[TimerId, (Long, FiberIO[Unit])]],
+  tokens: Ref[IO, Long]
 ):
 
   def start(timer: TimerId, deadlineMs: Long): IO[Unit] =
     for
-      generation <- AppRuntime.readRef(stateRef).map(_.outgoing.get(timer.messageId).fold(0L)(_.generation))
-      previous   <- fibers.modify(values => (values.removed(timer), values.get(timer)))
+      generation <- generationFor(timer)
+      token      <- tokens.updateAndGet(value => if value == Long.MaxValue then 1L else value + 1L)
+      previous   <- fibers.modify(values => (values.removed(timer), values.get(timer).map(_._2)))
       _          <- previous.fold(IO.unit)(_.cancel)
       delay       = math.max(0L, deadlineMs - clock.millis())
-      fiber      <- IO.sleep(delay.millis)
-                      .flatMap(_ => queue.offer(RuntimeCommand.App(AppEvent.TimerFired(timer, generation, clock.millis()))).void)
-                      .start
-      _          <- fibers.update(_.updated(timer, fiber))
+      gate       <- cats.effect.Deferred[IO, FiberIO[Unit]]
+      fire        = gate.get.flatMap(_ => IO.sleep(delay.millis)) // scalafix:ok DisableSyntax.no-unsafe-get
+      fiber      <- (
+                      fire *>
+                        fibers
+                          .modify(values =>
+                            values.get(timer) match
+                              case Some((current, _)) if current == token => (values.removed(timer), true)
+                              case _                                      => (values, false)
+                          )
+                          .flatMap(shouldFire =>
+                            if shouldFire then queue.offer(RuntimeCommand.App(AppEvent.TimerFired(timer, generation, clock.millis()))).void
+                            else IO.unit
+                          )
+                    ).start
+      _          <- fibers.update(_.updated(timer, (token, fiber)))
+      _          <- gate.complete(fiber).void
     yield ()
 
+  private[server] def activeCount: IO[Int] = AppRuntime.readRef(fibers).map(_.size)
+
   def cancel(timer: TimerId): IO[Unit] =
-    fibers.modify(values => (values.removed(timer), values.get(timer))).flatMap {
+    fibers.modify(values => (values.removed(timer), values.get(timer).map(_._2))).flatMap {
       case None        => IO.unit
       case Some(fiber) => fiber.cancel
     }
 
   def close: IO[Unit] =
-    AppRuntime.readRef(fibers).flatMap(_.values.foldLeft(IO.unit)((acc, fiber) => acc *> fiber.cancel))
+    AppRuntime
+      .readRef(fibers)
+      .flatMap(_.values.toVector.foldLeft(IO.unit) { case (acc, (_, fiber)) => acc *> fiber.cancel })
+      .guarantee(fibers.set(Map.empty))
+
+  private def generationFor(timer: TimerId): IO[Long] =
+    timer match
+      case TimerId.Message(_, messageId)                         => AppRuntime.readRef(stateRef).map(_.outgoing.get(messageId).fold(0L)(_.generation))
+      case TimerId.Reply(_) | TimerId.Rekey(_, _) | TimerId.Idle => IO.pure(0L)
 
 private[server] object TimerService:
 
@@ -571,7 +666,10 @@ private[server] object TimerService:
     stateRef: Ref[IO, AppState],
     clock: Clock
   ): IO[TimerService] =
-    Ref.of[IO, Map[TimerId, FiberIO[Unit]]](Map.empty).map(fibers => new TimerService(queue, stateRef, clock, fibers))
+    for
+      fibers <- Ref.of[IO, Map[TimerId, (Long, FiberIO[Unit])]](Map.empty)
+      tokens <- Ref.of[IO, Long](0L)
+    yield new TimerService(queue, stateRef, clock, fibers, tokens)
 
 final private[server] class RelayAppTransport(
   relay: RelayClient,
@@ -598,6 +696,12 @@ final private[server] class RelayAppTransport(
 
   def sendReply(invitationId: ByteVector, toDevice: Ed25519Public, text: String): IO[Unit] =
     relay.send(toDevice, RelayPayload.Reply(text))
+
+  def sendReplyResult(invitationId: ByteVector, toDevice: Ed25519Public, text: String): IO[AppEvent] =
+    relay.send(toDevice, RelayPayload.Reply(text)).attempt.map {
+      case Right(_) => AppEvent.ReplySent(invitationId)
+      case Left(_)  => AppEvent.ReplySendFailed(invitationId, clock.millis())
+    }
 
   def sendRekeyRequest(sessionId: SessionId, toDevice: Ed25519Public, request: RekeyRequest): IO[Unit] =
     relay.send(toDevice, RelayPayload.RekeyRequest(request.canonical))

@@ -45,7 +45,8 @@ final case class MessageRecord(
   body: ByteVector,
   wire: ByteVector,
   state: MessageState,
-  createdAt: Long
+  createdAt: Long,
+  attempts: Int
 ):
 
   override def toString: String = s"MessageRecord(id=$id, seq=$seq, state=$state)"
@@ -86,6 +87,21 @@ final case class StoreSnapshot(
   conversations: List[ConversationRecord],
   messages: Map[ByteVector, List[MessageRecord]]
 )
+
+final case class HandshakeWrite(
+  contact: Option[(Ed25519Public, ContactData)],
+  conversation: Option[(ByteVector, Ed25519Public)],
+  sessions: Vector[RatchetState],
+  invitation: Option[(ByteVector, InvitationData)],
+  deleteInvitation: Option[ByteVector],
+  retire: Vector[(SessionId, CutoverRole, CutoverEvidence)],
+  deletePendingSessions: Vector[SessionId]
+):
+
+  override def toString: String =
+    s"HandshakeWrite(contact=${contact.isDefined}, conversation=${conversation.isDefined}, sessions=${sessions.size}, " +
+      s"invitation=${invitation.isDefined}, deleteInvitation=${deleteInvitation.isDefined}, retire=${retire.size}, " +
+      s"deletePending=${deletePendingSessions.size})"
 
 enum CutoverRole:
   case Initiator, Responder

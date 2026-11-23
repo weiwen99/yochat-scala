@@ -2,7 +2,7 @@
 
 - Plan: 0002
 - Date: 2026-11-23
-- Status: draft
+- Status: implemented
 - Domain: engineering
 - Summary: Close the nine M3 review-round-1 risks without adding a protocol path, table, or UI screen. Seven review rounds maximum; stop at round 3 if findings do not fall.
 - Live spec: `.scratch/yochat-m3-structural-hardening/spec.md`

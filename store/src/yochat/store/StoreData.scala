@@ -13,7 +13,7 @@ enum ContactConfirmation:
   case Pending, Confirmed, AccountMismatch
 
 enum InvitationState:
-  case Pending, Accepted, Declined, Expired, Consumed
+  case Pending, Accepted, Declined, Expired, Consumed, PendingReply
 
 final case class ContactData(
   channelLabel: String,
@@ -34,7 +34,9 @@ final case class InvitationData(
   state: InvitationState,
   confirmationState: ContactConfirmation,
   payload: ByteVector,
-  expiresAt: Long
+  expiresAt: Long,
+  replyText: Option[String] = None,
+  replyAttempts: Int = 0
 ):
 
   override def toString: String = s"InvitationData(state=$state, confirmation=$confirmationState)"
@@ -44,6 +46,7 @@ private[store] object StoreDataCodec:
   private val ContactVersion: Int     = 1
   private val InvitationVersion: Int  = 1
   private val InvitationVersion2: Int = 2
+  private val InvitationVersion3: Int = 3
   private val MaxFieldBytes: Int      = 4096
   private val MaxPayloadBytes: Int    = 1_048_576
 
@@ -87,11 +90,14 @@ private[store] object StoreDataCodec:
   def encodeInvitation(value: InvitationData): Either[StorageError, ByteVector] =
     if value.payload.size > MaxPayloadBytes.toLong then Left(StorageError.InvalidArgument("payload"))
     else if value.expiresAt < 0L then Left(StorageError.InvalidArgument("expires_at"))
+    else if value.replyAttempts < 0 || value.replyAttempts > 1_000 then Left(StorageError.InvalidArgument("reply_attempts"))
     else
-      for peer <- writeOptionString(value.peerAccount, "peer_account")
+      for
+        peer  <- writeOptionString(value.peerAccount, "peer_account")
+        reply <- writeOptionString(value.replyText, "reply_text")
       yield
         val writer = CodecWriter()
-          .u8(InvitationVersion2)
+          .u8(InvitationVersion3)
         writeOptionFixed(writer, value.ephemeralPrivate.map(_.bytes))
         writeOptionFixed(writer, value.ratchetPrivate.map(_.bytes))
         writeOptionBytes(writer, peer)
@@ -100,7 +106,8 @@ private[store] object StoreDataCodec:
           .u8(confirmationCode(value.confirmationState))
           .bytes(value.payload)
           .u64(value.expiresAt)
-          .result
+        writeOptionBytes(writer, reply)
+        writer.u32(value.replyAttempts.toLong).result
 
   def decodeInvitation(value: ByteVector): Either[StorageError, InvitationData] =
     val reader = CodecReader(value)
@@ -111,7 +118,7 @@ private[store] object StoreDataCodec:
 
   private def decodeCurrentInvitation(version: Int, reader: CodecReader): Either[StorageError, InvitationData] =
     for
-      _                  <- if version == InvitationVersion2 then Right(()) else Left(StorageError.InvalidEnvelope)
+      _                  <- if version == InvitationVersion2 || version == InvitationVersion3 then Right(()) else Left(StorageError.InvalidEnvelope)
       (ephemeral, r2)    <- readOptionFixed(reader, X25519Private.from)
       (ratchet, r3)      <- readOptionFixed(r2, X25519Private.from)
       (peer, r4)         <- readOptionString(r3)
@@ -121,8 +128,16 @@ private[store] object StoreDataCodec:
       confirmationState  <- confirmationFromCode(confirmation)
       (payload, r7)      <- r6.bytes(MaxPayloadBytes)
       (expiresAt, r8)    <- r7.u64
-      _                  <- r8.finish
-    yield InvitationData(ephemeral, ratchet, peer, state, confirmationState, payload, expiresAt)
+      decoded            <-
+        if version == InvitationVersion3 then
+          for
+            (reply, r9)     <- readOptionString(r8)
+            (attempts, r10) <- r9.u32
+            _               <- r10.finish
+            value           <- if attempts <= 1_000L then Right(attempts.toInt) else Left(StorageError.InvalidEnvelope)
+          yield InvitationData(ephemeral, ratchet, peer, state, confirmationState, payload, expiresAt, reply, value)
+        else r8.finish.map(_ => InvitationData(ephemeral, ratchet, peer, state, confirmationState, payload, expiresAt))
+    yield decoded
 
   private def decodeLegacyInvitation(reader: CodecReader): Either[StorageError, InvitationData] =
     for
@@ -200,11 +215,12 @@ private[store] object StoreDataCodec:
 
   private def invitationCode(value: InvitationState): Int =
     value match
-      case InvitationState.Pending  => 1
-      case InvitationState.Accepted => 2
-      case InvitationState.Declined => 3
-      case InvitationState.Expired  => 4
-      case InvitationState.Consumed => 5
+      case InvitationState.Pending      => 1
+      case InvitationState.Accepted     => 2
+      case InvitationState.Declined     => 3
+      case InvitationState.Expired      => 4
+      case InvitationState.Consumed     => 5
+      case InvitationState.PendingReply => 6
 
   private def invitationFromCode(value: Int): Either[StorageError, InvitationState] =
     value match
@@ -213,6 +229,7 @@ private[store] object StoreDataCodec:
       case 3 => Right(InvitationState.Declined)
       case 4 => Right(InvitationState.Expired)
       case 5 => Right(InvitationState.Consumed)
+      case 6 => Right(InvitationState.PendingReply)
       case _ => Left(StorageError.InvalidEnvelope)
 
 final private[store] class CodecWriter private ():

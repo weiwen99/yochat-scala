@@ -155,6 +155,37 @@ private[store] object ContactRepository:
       }
     }
 
+  def upsertProgram(
+    runtime: StoreRuntime,
+    userPub: Ed25519Public,
+    data: ContactData,
+    expectedLockGeneration: Long,
+    now: Long
+  ): ConnectionIO[ContactRecord] =
+    Sql.checkLock(expectedLockGeneration).flatMap(_ => loadOptionProgram(runtime, userPub)).flatMap {
+      case Some(current) =>
+        for
+          next        <- Sql.nextVersion(current.version)
+          encoded     <- fromEither(StoreDataCodec.encodeContact(data))
+          nonce       <- FC.delay(StoreCrypto.randomNonceUnsafe())
+          sealedValue <- fromEither(StoreCrypto.seal(runtime.keys.contactKey, nonce, StoreCrypto.contactAad(userPub.bytes, next), encoded))
+          changed     <-
+            sql"UPDATE contacts SET sealed = ${sealedValue}, version = $next WHERE user_pub = ${userPub.bytes.toArray} AND version = ${current.version}".update.run
+          _           <- Sql.changed(changed)
+          _           <- Sql.writeMeta(Sql.contactVersionKey(userPub.bytes), next)
+        yield ContactRecord(userPub, data, next, current.createdAt)
+      case None          =>
+        for
+          encoded     <- fromEither(StoreDataCodec.encodeContact(data))
+          nonce       <- FC.delay(StoreCrypto.randomNonceUnsafe())
+          sealedValue <- fromEither(StoreCrypto.seal(runtime.keys.contactKey, nonce, StoreCrypto.contactAad(userPub.bytes, 1L), encoded))
+          changed     <-
+            sql"INSERT INTO contacts(user_pub, sealed, version, created_at) VALUES (${userPub.bytes.toArray}, ${sealedValue}, 1, $now)".update.run
+          _           <- Sql.changed(changed)
+          _           <- Sql.writeMeta(Sql.contactVersionKey(userPub.bytes), 1L)
+        yield ContactRecord(userPub, data, 1L, now)
+    }
+
   private[store] def loadOptionProgram(runtime: StoreRuntime, userPub: Ed25519Public): ConnectionIO[Option[ContactRecord]] =
     row(userPub).flatMap {
       case None        => FC.pure(None)

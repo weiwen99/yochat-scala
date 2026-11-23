@@ -46,7 +46,7 @@ class AppLockSpec extends FunSuite:
       AppEvent.UserSend(8L, conversation, yochat.core.Crypto.text("body"), TestKeys.nonce(2), 0L)
     )
     val (locked, lockEffects) = Application.step(persisting, AppEvent.Lock)
-    assert(lockEffects.exists { case AppEffect.CancelTimer(_) => true; case _ => false } || lockEffects.isEmpty)
+    assert(lockEffects.exists { case AppEffect.PersistLockGeneration(1L) => true; case _ => false })
     assertEquals(locked.lock, LockState.Locked(1L))
     assert(locked.outgoing.get(8L).isEmpty)
 
@@ -115,11 +115,12 @@ class AppLockSpec extends FunSuite:
 
   test("idle timeout locks exactly at the injected deadline and unlock installs it") {
     val peers                 = AppTestSupport.connected
-    val (unlocked, _)         = Application.step(
+    val (unlocked, unlockEffects) = Application.step(
       peers.aliceState.copy(lock = LockState.Locked(0L)),
       AppEvent.Unlock(peers.alice, nowMs = 100L, idleTimeoutMs = 1_000L)
     )
     assertEquals(unlocked.lock, LockState.Unlocked(0L))
+    assert(unlockEffects.contains(AppEffect.StartTimer(TimerId.Idle, 1_100L)))
     assertEquals(unlocked.idleDeadline, Some(1_100L))
     val (early, earlyEffects) = Application.step(unlocked, AppEvent.IdleTimeout(1_099L))
     assertEquals(early.lock, LockState.Unlocked(0L))

@@ -48,8 +48,8 @@ class AppRuntimeSpec extends FunSuite:
           _           = assertEquals(stored.data.ratchetPrivate, None)
           _           = assertEquals(stored.data.payload, invitation.canonical)
           _          <- runtimeB.acceptInvitation(invitation.fields.ephPub.bytes, "test", "@bob", "reply")
-          _          <- runtimeA.awaitState(state => state.contacts.contains(bob) && state.sessions.nonEmpty, 10.seconds)
-          _          <- runtimeB.awaitState(state => state.contacts.contains(alice) && state.sessions.nonEmpty, 10.seconds)
+          _          <- requireAwait(runtimeA, state => state.contacts.contains(bob) && state.sessions.nonEmpty, 10.seconds, "alice reply")
+          _          <- requireAwait(runtimeB, state => state.contacts.contains(alice) && state.sessions.nonEmpty, 10.seconds, "bob reply")
           _          <- runtimeA.submit(AppEvent.SafetyVerified(bob, 2_000L))
           _          <- runtimeB.submit(AppEvent.SafetyVerified(alice, 2_000L))
           _          <- runtimeA.awaitState(state => state.contacts.get(bob).exists(_.safetyVerified), 5.seconds)
@@ -73,7 +73,18 @@ class AppRuntimeSpec extends FunSuite:
                           MessageState.Delivered,
                           5.seconds
                         )
-          _           = assert(delivered)
+          stateAfterA <- runtimeA.state
+          stateAfterB <- runtimeB.state
+          fatalA      <- runtimeA.fatalError
+          fatalB      <- runtimeB.fatalError
+          messagesA   <- storeA.listMessages(conversationId, alice, 100)
+          messagesB   <- storeB.listMessages(conversationId, alice, 100)
+          _           = assert(
+                          delivered,
+                          s"delivered=false outgoingA=${stateAfterA.outgoing.values.toVector} fatalA=$fatalA fatalB=$fatalB " +
+                            s"messagesA=${messagesA.map(_.map(_.state))} messagesB=${messagesB.map(_.map(_.state))} " +
+                            s"sessionsA=${stateAfterA.sessions.values.map(_.state.phase)} sessionsB=${stateAfterB.sessions.values.map(_.state.phase)}"
+                        )
           restored   <- AppStateRestore.load(storeA)
           restoredState <- IO.fromEither(restored.left.map(error => new AssertionError(error.code)))
           _           = assert(restoredState.contacts.contains(bob))
@@ -160,6 +171,22 @@ class AppRuntimeSpec extends FunSuite:
       deleteTree(directoryA)
       deleteTree(directoryB)
   }
+
+  private def requireAwait(runtime: AppRuntime, predicate: AppState => Boolean, timeout: FiniteDuration, label: String): IO[Unit] =
+    runtime.awaitState(predicate, timeout).flatMap {
+      case true  => IO.unit
+      case false =>
+        for
+          state <- runtime.state
+          fatal <- runtime.fatalError
+          _     <- IO.raiseError(
+                     new AssertionError(
+                       s"$label: contacts=${state.contacts.keys.map(_.bytes.toHex.take(8))} sessions=${state.sessions.size} " +
+                         s"conversations=${state.conversations.size} invitations=${state.invitations.values.map(_.lifecycle)} fatal=$fatal"
+                     )
+                   )
+        yield ()
+    }
 
   private def requireState(runtime: AppRuntime, accepted: Boolean, label: String): IO[Unit] =
     if accepted then IO.unit

@@ -7,7 +7,7 @@ import org.typelevel.doobie.implicits.*
 /** Schema v1. There are no foreign keys; message rows intentionally outlive their session rows. */
 private[store] object Schema:
 
-  val Version: Long = 1L
+  val Version: Long = 2L
 
   private val Tables = Vector("meta", "sessions", "messages", "contacts", "invitations", "conversations")
 
@@ -40,6 +40,7 @@ private[store] object Schema:
                  |  wire BLOB NOT NULL,
                  |  state INTEGER NOT NULL,
                  |  created_at INTEGER NOT NULL,
+                 |  attempts INTEGER NOT NULL DEFAULT 0,
                  |  UNIQUE(session_id, device_pub, seq)
                  |)""".stripMargin.update.run
       _ <- sql"""CREATE TABLE contacts (
@@ -72,6 +73,7 @@ private[store] object Schema:
       _        <- if required == Tables.size.toLong then FC.unit else abort(StorageError.UnsupportedSchema)
       version  <- sql"SELECT value FROM meta WHERE key = 'schema_version'".query[Long].option
       _        <- version match
+                    case Some(value) if value == 1L      => migrateFromOne
                     case Some(value) if value == Version => FC.unit
                     case Some(_)                         => abort(StorageError.UnsupportedSchema)
                     case None                            => abort(StorageError.UnsupportedSchema)
@@ -79,6 +81,12 @@ private[store] object Schema:
       _        <- lock match
                     case Some(_) => FC.unit
                     case None    => abort(StorageError.MissingHighWater("lock-generation"))
+    yield ()
+
+  private def migrateFromOne: ConnectionIO[Unit] =
+    for
+      _ <- sql"ALTER TABLE messages ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0".update.run
+      _ <- writeMeta("schema_version", Version)
     yield ()
 
   private def tableCount: ConnectionIO[Long] =

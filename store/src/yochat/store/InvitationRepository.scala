@@ -106,6 +106,67 @@ private[store] object InvitationRepository:
       yield ()
     }
 
+  def upsertProgram(
+    runtime: StoreRuntime,
+    id: ByteVector,
+    data: InvitationData,
+    expectedLockGeneration: Long,
+    now: Long
+  ): ConnectionIO[InvitationRecord] =
+    for
+      _       <- checkId(id)
+      _       <- Sql.checkLock(expectedLockGeneration)
+      current <- loadOptionProgram(runtime, id)
+      record  <- current match
+                   case Some(value) =>
+                     for
+                       next        <- Sql.nextVersion(value.version)
+                       encoded     <- fromEither(StoreDataCodec.encodeInvitation(data))
+                       nonce       <- FC.delay(StoreCrypto.randomNonceUnsafe())
+                       sealedValue <- fromEither(
+                                        StoreCrypto.seal(runtime.keys.invitationKey, nonce, StoreCrypto.invitationAad(id, next), encoded)
+                                      )
+                       changed     <-
+                         sql"UPDATE invitations SET sealed = ${sealedValue}, version = $next WHERE id = ${id.toArray} AND version = ${value.version}".update.run
+                       _           <- Sql.changed(changed)
+                       _           <- Sql.writeMeta(Sql.invitationVersionKey(id), next)
+                     yield InvitationRecord(id, data, next, value.createdAt)
+                   case None        =>
+                     for
+                       tombstone   <- Sql.meta(Sql.invitationVersionKey(id))
+                       _           <- tombstone match
+                                        case Some(_) => Sql.abort(StorageError.WriteConflict)
+                                        case None    => FC.unit
+                       encoded     <- fromEither(StoreDataCodec.encodeInvitation(data))
+                       nonce       <- FC.delay(StoreCrypto.randomNonceUnsafe())
+                       sealedValue <- fromEither(StoreCrypto.seal(runtime.keys.invitationKey, nonce, StoreCrypto.invitationAad(id, 1L), encoded))
+                       changed     <-
+                         sql"INSERT INTO invitations(id, sealed, version, created_at) VALUES (${id.toArray}, ${sealedValue}, 1, $now)".update.run
+                       _           <- Sql.changed(changed)
+                       _           <- Sql.writeMeta(Sql.invitationVersionKey(id), 1L)
+                     yield InvitationRecord(id, data, 1L, now)
+    yield record
+
+  def deleteProgram(
+    runtime: StoreRuntime,
+    id: ByteVector,
+    expectedLockGeneration: Long
+  ): ConnectionIO[Unit] =
+    for
+      _       <- checkId(id)
+      _       <- Sql.checkLock(expectedLockGeneration)
+      current <- loadOptionProgram(runtime, id)
+      _       <- current match
+                   case None        => FC.unit
+                   case Some(value) =>
+                     for
+                       deleted <- sql"DELETE FROM invitations WHERE id = ${id.toArray} AND version = ${value.version}".update.run
+                       _       <- Sql.changed(deleted)
+                       next    <- Sql.nextVersion(value.version)
+                       _       <- Sql.writeMeta(Sql.invitationVersionKey(id), next)
+                     yield ()
+    yield ()
+
   private[store] def loadOptionProgram(runtime: StoreRuntime, id: ByteVector): ConnectionIO[Option[InvitationRecord]] =
     row(id).flatMap {
       case None        => FC.pure(None)

@@ -120,6 +120,8 @@
 - 已修: 恢复按 conversation 统计 outbound seq（跨 rekey 不重置）、session 优先按自身 message 绑定 conversation、retired session 的 Failed 历史跳过回放、restore 恢复 responder `retireOldOnFirstData`、v1 issued invitation 不冒充 incoming；`SendSucceeded`/`SendFailed` 在 offline/locked 时忽略，`pump`/`sendNow` 锁态不发送，`ReplyReceived`/`RekeyAckReceived` 锁态不落状态；fatal 后拒绝 submit 与 API；PersistOutbound 成功直接回灌，SendWire 由 runtime 直接取结果，timer 在 sleep 后取时间；RelayClient 写超时并关闭退役 socket，RelayServer 注册 5s 超时、先 ACK 后发布；relay payload 上限按核心最大 wire 收紧；邀请 tombstone 阻止 API 重插；邀请 API 等待状态可见并校验 signed account；rekey control 按 role 匹配；AppRuntimeSpec 断言重连后的收发。
 - 未关闭（按优先级）: (1) Reply/Rekey 握手状态仍是多条独立事务，contact/session/conversation/invitation 的崩溃窗口未消除；(2) `AppRuntime` 在 store 失败后 reload + fatal，而不是“提交后发布”的事务模型；(3) 接受邀请后 `SendReply` 失败没有持久化重试；（4）rekey 四个控制帧丢失后没有 runtime 重试/超时 abort；(5) `Store.snapshot`/`listAllMessages` 仍是多事务、100k 前缀读取，不是分页快照；(6) restore 不重发 outstanding Gap、不恢复 retry attempts；(7) Reply 匹配仍按邀请列表逐个尝试，候选数无上限；(8) timer fiber registry 保留已触发句柄；(9) idle timeout 与 Lock generation 持久化仍未接。以上均记录为 M3 后续输入，不把当前提交当作 S1 完成或可合并状态。
 
+- 关闭记录: 上述九项由 Plan 0002 `docs/plans/2026/11/0002-m3-structural-hardening/impl.md` 关闭；Plan 0001 保留历史原文，不重写评审结论。
+
 ## M4 UI / shell（2026-11-23）
 
 - 对象: `ui/`（ScalaJS + Laminar）、`server/src/yochat/server/{Main,AppService,HttpApi,ApiJson,EventHub}.scala`、`server/resources/public`、`shell/`（Electron）、`server/test/src/yochat/server/HttpApiSpec.scala`、`build.mill`、`check.sh`；分支 `feat/plan-0001-m4-ui-shell`，父提交 `0c9a624`。

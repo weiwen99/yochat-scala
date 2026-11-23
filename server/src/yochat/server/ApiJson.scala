@@ -221,6 +221,7 @@ object ApiJson:
     value match
       case InvitationLifecycle.Issued        => "issued"
       case InvitationLifecycle.AwaitingReply => "awaiting-reply"
+      case InvitationLifecycle.PendingReply  => "pending-reply"
       case InvitationLifecycle.Accepted      => "accepted"
       case InvitationLifecycle.Expired       => "expired"
 
