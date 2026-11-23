@@ -6,7 +6,7 @@ A no-account-server, end-to-end-encrypted, friend-to-friend messenger. S1 uses o
 
 M5 is in progress on `main`. Plans 0002–0007 close M3 structural hardening, first-message binding, functional E2E, privacy/lock/automatic rebuild, and rekey continuity. `core/` contains the protocol core and pure application kernel; `models/` contains Q1–Q6 finite models with Apalache/TLC receipts; `store/` is doobie + SQLite + application-layer AEAD; `transport/` has the relay and reconnecting client; `server/` has the single-writer runtime and HTTP service; `ui/` and `shell/` provide the Laminar and Electron surfaces.
 
-Functional E2E now covers 16 behavior contracts plus `PERF#10K`: 1,000 measured messages under the 5s gate and 10,000 measured messages under the 60s gate, after explicit warmup. Remaining release work is cold-start/idle-memory gates, UI automation, and external cryptography review.
+Functional E2E now covers 16 behavior contracts plus `PERF#10K`: 1,000 measured messages under the 5s gate and 10,000 measured messages under the 60s gate, after explicit warmup. Cold-start/idle-memory gates are measured by `shell/perf-start.js`; remaining release work is UI automation and external cryptography review.
 
 ## Read first
 

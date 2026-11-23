@@ -26,6 +26,7 @@ fi
 node --check shell/main.js
 node --check shell/preload.js
 node --check shell/keychain-smoke.js
+node --check shell/perf-start.js
 ./models/check.sh
 ./mill spike.checkFormat
 ./mill spike.fix --check

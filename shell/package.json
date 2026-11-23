@@ -7,7 +7,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "check": "node --check main.js && node --check preload.js && node --check keychain-smoke.js",
+    "perf:start": "node perf-start.js",
+    "check": "node --check main.js && node --check preload.js && node --check keychain-smoke.js && node --check perf-start.js",
     "check:keychain": "electron keychain-smoke.js"
   },
   "devDependencies": {

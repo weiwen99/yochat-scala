@@ -5,6 +5,7 @@ const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const START_NS = process.hrtime.bigint();
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.YOCHAT_PORT || 8787);
 const BASE_URL = `http://${HOST}:${PORT}`;
@@ -126,6 +127,14 @@ function createWindow() {
     mainWindow = null;
   });
   mainWindow.loadURL(BASE_URL);
+
+  if (process.env.YOCHAT_START_METRIC) {
+    mainWindow.webContents.once("did-finish-load", () => {
+      const elapsedMs = Number(process.hrtime.bigint() - START_NS) / 1_000_000;
+      fs.writeFileSync(process.env.YOCHAT_START_METRIC, JSON.stringify({ elapsedMs }) + "\n");
+      app.quit();
+    });
+  }
 
   if (process.env.YOCHAT_CAPTURE) {
     mainWindow.webContents.once("did-finish-load", () => {
