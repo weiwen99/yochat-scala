@@ -111,6 +111,17 @@ object server extends CommonModule with ScalafmtModule with ScalafixModule:
 
   def mainClass = Some("yochat.server.Main")
 
+  /** 10k store restore benchmark, with a warmup store and p50/p95 samples. */
+  def bench(): Command[Unit] = Task.Command {
+    val classpath = test.runClasspath().map(_.path).mkString(java.io.File.pathSeparator)
+    os.proc("java", "-cp", classpath, "yochat.server.RestoreBench").call(
+      cwd = moduleDir,
+      stdout = os.Inherit,
+      stderr = os.Inherit
+    )
+    ()
+  }
+
   def resources = Task {
     val resourceRoot = Task.dest
     val publicDir    = resourceRoot / "public"

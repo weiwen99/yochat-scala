@@ -28,6 +28,14 @@ open http://127.0.0.1:8787/
 
 The first visit asks for a local passphrase and creates the device identity; later visits unlock the existing SQLite database. The server binds loopback only. `GET /api/session` reports the locked/unlocked bootstrap state, and `/api/events` is the pushed state channel used by the UI.
 
+## Run the storage restore benchmark
+
+```sh
+./mill server.bench
+```
+
+Writes 10,000 inbound messages to a real SQLite store, then reports per-message append p50/p95 and full `AppStateRestore.load` p50/p95 after a separate warmup. This is a benchmark command, not part of `./check.sh`; the two-process 1k/10k E2E gates remain M5.
+
 ## Run the Electron shell
 
 ```sh
