@@ -122,6 +122,25 @@ object server extends CommonModule with ScalafmtModule with ScalafixModule:
     ()
   }
 
+  /** Two-process functional S1 behavior contracts. Not a load test. */
+  def e2e(): Command[Unit] = Task.Command {
+    val classpath = test.runClasspath().map(_.path).mkString(java.io.File.pathSeparator)
+    Option(System.getProperty("e2e.only")) match
+      case Some(contract) =>
+        os.proc("java", s"-De2e.only=$contract", "-cp", classpath, "yochat.server.e2e.S1E2E").call(
+          cwd = moduleDir,
+          stdout = os.Inherit,
+          stderr = os.Inherit
+        )
+      case None           =>
+        os.proc("java", "-cp", classpath, "yochat.server.e2e.S1E2E").call(
+          cwd = moduleDir,
+          stdout = os.Inherit,
+          stderr = os.Inherit
+        )
+    ()
+  }
+
   def resources = Task {
     val resourceRoot = Task.dest
     val publicDir    = resourceRoot / "public"

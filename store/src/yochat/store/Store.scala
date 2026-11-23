@@ -26,6 +26,9 @@ final class Store private[store] (
   def loadSession(sessionId: SessionId): IO[Either[StorageError, SessionRecord]] =
     SessionRepository.load(runtime, sessionId)
 
+  def adoptLockGeneration(expectedLockGeneration: Long): IO[Either[StorageError, Unit]] =
+    SessionRepository.adoptLockGeneration(runtime, expectedLockGeneration)
+
   def updateSession(
     state: RatchetState,
     expectedVersion: Long,

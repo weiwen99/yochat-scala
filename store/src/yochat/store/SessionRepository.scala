@@ -105,6 +105,39 @@ private[store] object SessionRepository:
       }
     }
 
+  /** Re-seal existing session rows under the current lock generation after an unlock. The lock boundary invalidates old-generation writers, but
+    * rows written before the lock still carry the previous generation; without this step the next legitimate write is rejected as stale. One
+    * transaction, bounded by the number of sessions.
+    */
+  def adoptLockGeneration(runtime: StoreRuntime, expectedLockGeneration: Long): IO[Either[StorageError, Unit]] =
+    runtime.now.flatMap { now =>
+      runtime.run {
+        for
+          lock     <- Sql.lockGeneration
+          _        <- if lock == expectedLockGeneration then FC.unit else Sql.abort(StorageError.StaleGeneration)
+          ids      <- sql"SELECT id FROM sessions ORDER BY id".query[Array[Byte]].to[List]
+          sessions <- ids.foldLeft(FC.pure(Vector.empty[SessionRecord])) { (acc, id) =>
+                        acc.flatMap(values =>
+                          SessionId.from(ByteVector.view(id)) match
+                            case Left(_)        => Sql.abort(StorageError.InvalidEnvelope)
+                            case Right(session) => loadProgram(runtime, session).map(values :+ _)
+                        )
+                      }
+          _        <- sessions.foldLeft(FC.unit) { (acc, record) =>
+                        acc.flatMap(_ => if record.generation <= lock then FC.unit else Sql.abort(StorageError.StaleGeneration))
+                      }
+          updates  <- sessions.foldLeft(FC.pure(Vector.empty[PreparedUpdate])) { (acc, record) =>
+                        acc.flatMap { values =>
+                          if record.generation == lock then FC.pure(values)
+                          else prepareUpdate(runtime, record, record.state, lock, now).map(values :+ _)
+                        }
+                      }
+          _        <- updates.foldLeft(FC.unit)((acc, update) => acc.flatMap(_ => writeRow(update)))
+          _        <- updates.foldLeft(FC.unit)((acc, update) => acc.flatMap(_ => writeHighWater(update)))
+        yield ()
+      }
+    }
+
   def update(
     runtime: StoreRuntime,
     state: RatchetState,

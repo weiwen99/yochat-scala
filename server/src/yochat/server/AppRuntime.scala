@@ -284,6 +284,10 @@ object AppRuntime:
       state         <- restored match
                          case Left(error)  => IO.raiseError(new RuntimeError(s"restore-failed:${error.code}"))
                          case Right(value) => IO.pure(value)
+      _             <- store.adoptLockGeneration(state.lock.value).flatMap {
+                         case Right(_)    => IO.unit
+                         case Left(error) => IO.raiseError(new RuntimeError(s"adopt-lock-failed:${error.code}"))
+                       }
       identity      <- state.identity match
                          case Some(value) => IO.pure(value)
                          case None        => IO.raiseError(new RuntimeError("identity-missing"))

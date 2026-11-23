@@ -132,3 +132,10 @@
 - 验证: `./check.sh` 全绿（83.09s）：`core.test` 145（含新增 alias 用例）；`store.test` 20；`transport.test` 7；`server.test` 6（含 HTTP unlock/invite/lock 集成测试）；`ui.checkFormat`、`ui.fix --check`、`ui.fastLinkJS`；Q1–Q6 9 个 Quint check；spike compile/crypto/storage/doobie/demo 100 条 + reconnect `ok=true`。回执：`TENK_REPLAY messages=10000 elapsed_ms=12328 outgoing=0 next_seq=10001`；`STORE_THROUGHPUT inserts=1000 reads=1000 insert_ms=1407 read_ms=138 total_ms=1546`；`SPIKE messages=100 total=101 reconnect=true aliceSent=101 aliceAcked=101 elapsedMs=50 reconnectMs=30 bobReceived=101 ok=true`。
 - 手工验证: 真实 TCP relay + 两个独立 JVM 服务（8787/8788）跑通邀请/应答、安全码、双向消息、实时 WebSocket 入站和持久化解锁；Web 1440×900 浅色、390×844 窄屏、Electron 2560×1720 浅/深色截图均来自实际运行；`shell` 能自启/停止 JVM，二次启动能复用已有服务。`KEYCHAIN_SMOKE unavailable` 在无系统钥匙串的 headless 环境，UI 自动隐藏该选项；未把它冒充为已通过。
 - 未关闭: M3 review round 1 的九项结构性风险仍在（原子握手、SendReply 重试、rekey runtime 重试、snapshot 分页、Gap 恢复、Reply 候选上限、timer fiber、idle/Lock generation），M4 只加了 UI 侧的状态边界；15 条行为契约、两进程 1k/10k E2E、冷启动/内存门、外部密码学评审仍未完成；M4 未合入 `main`、未推送。
+
+## M5 functional E2E increment（2026-11-23）
+
+- 对象: `docs/plans/2026/11/0003-s1-functional-e2e/`、`server.e2e`、`server/test/src/yochat/server/e2e`、`SessionRepository.adoptLockGeneration`；父提交 `8977ebd`。
+- 结果: 两进程服务层 `E2E#1–#7` 全部通过（7/7，约 35s）；E2E 暴露并修复了 lock 后 session 行仍为旧 generation、解锁后第一次写 `StaleGeneration` 的缺陷。修复只触碰 sessions/meta，`store.test` 新增回归。
+- 边界: 这是服务层流程回执，不是 S1 安全契约关闭。ADR-0006 §3.3 首条业务消息的双方账号/安全码绑定仍未实现，`E2E#1/#2` 及 `#3` 的安全含义保持 open；wire 级安全门前未发送未证明。
+- 未关闭: `E2E#8`、1k/10k 两进程、冷启动/内存、`E2E#9–#15`、UI 自动化、外部密码学评审；详见 Plan 0003 `impl.md`。

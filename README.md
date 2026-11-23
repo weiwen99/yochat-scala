@@ -36,6 +36,14 @@ The first visit asks for a local passphrase and creates the device identity; lat
 
 Writes 10,000 inbound messages to a real SQLite store, then reports per-message append p50/p95 and full `AppStateRestore.load` p50/p95 after a separate warmup. This is a benchmark command, not part of `./check.sh`; the two-process 1k/10k E2E gates remain M5.
 
+## Run the functional E2E contracts
+
+```sh
+./mill server.e2e
+```
+
+Starts one real relay and two real server JVMs with temporary data directories, then runs service-level S1 contracts #1–#7: invite/reply, contacts, safety gate, one message, sender/receiver restart, relay reconnect, and 100 ordered messages. It writes a redacted receipt under `tmp/checks/`; it is not a performance/load test. `E2E#1/#2` still need the ADR-0006 §3.3 first-message account/safety binding before their security contracts can close.
+
 ## Run the Electron shell
 
 ```sh

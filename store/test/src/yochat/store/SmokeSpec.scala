@@ -40,3 +40,35 @@ class SmokeSpec extends FunSuite:
       }
     finally StoreTestSupport.deleteTree(directory)
   }
+
+  test("unlock adoption makes existing sessions writable under the new lock generation") {
+    val directory = StoreTestSupport.temporaryDirectory("yochat-store-lock-")
+    try
+      val session = StoreTestSupport.state(safetyVerified = false)
+      StoreTestSupport.withStore(directory) { store =>
+        for
+          _        <- store.insertContact(session.peerUserPub, StoreTestSupport.contact(), 0L)
+          _        <- store.createConversation(StoreTestSupport.conversationId(), session.peerUserPub, 0L)
+          _        <- store.insertSession(session, 0L)
+          bumped     <- store.bumpLockGeneration(0L)
+          stale      <- store.updateSession(session, 1L, 1L)
+          wrongAdopt <- store.adoptLockGeneration(0L)
+          adopted    <- store.adoptLockGeneration(1L)
+          loaded     <- store.loadSession(session.sessionId)
+          oldGen     <- store.updateSession(session, 2L, 0L)
+          oldVersion <- store.updateSession(session, 1L, 1L)
+          unchanged  <- store.loadSession(session.sessionId)
+          updated    <- store.updateSession(session, 2L, 1L)
+        yield
+          assertEquals(bumped, Right(1L))
+          assertEquals(StoreTestSupport.left(stale), StorageError.StaleGeneration)
+          assertEquals(StoreTestSupport.left(wrongAdopt), StorageError.StaleGeneration)
+          assertEquals(adopted, Right(()))
+          assertEquals(loaded.map(record => (record.version, record.generation)), Right((2L, 1L)))
+          assertEquals(StoreTestSupport.left(oldGen), StorageError.StaleGeneration)
+          assertEquals(StoreTestSupport.left(oldVersion), StorageError.StaleGeneration)
+          assertEquals(unchanged.map(record => (record.version, record.generation)), Right((2L, 1L)))
+          assertEquals(updated.map(_.generation), Right(1L))
+      }
+    finally StoreTestSupport.deleteTree(directory)
+  }
