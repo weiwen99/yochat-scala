@@ -213,3 +213,36 @@ E2E 必须让 **A 服务本身** 在自动 rekey 前 `sendMessage` 并消费序�
 ### 10.7 验收文字
 
 D:109 改为“E2E#1–#7、#9–#15 共 14 条通过；#8 不计入本计划”。7A 的真实发送者验收按 §9.8；不得用注入帧或仅 Active session 代签。
+
+## 11. Round 3 review 修订
+
+### 11.1 A6：退休只接受目标角色的证据
+
+`retirementCandidates` 不再从普通 `DataAck` 推断“新 session 已被对端接受”：
+
+- **发起方**：只有目标新 session 的 `ConfirmAck` 到达后，才允许移除旧行；ConfirmAck 本身证明对端已接受新 session。
+- **应答方**：只有目标新 session 的**首个已认证 Data** 被本地接收后，才允许移除旧行；旧 session 的迟到 DataAck 不能作为证据。
+- `acknowledge` 若移除旧 outgoing，必须把 `sessionId`/`role` 和证据传入退休检查；旧 session 的 ACK 只更新对应旧消息，不触发 old→new 退休。
+- 没有证据不调用 retire、不报 fatal；旧行保留，重复 Confirm 仍可找到 old→new 关联并重发 ACK。
+
+实现上使用 `SessionRetirement` 现有的 `InitiatorAck`/`ResponderFirstData` 作为显式证据参数，不为旧 DataAck 制造新的退休理由。
+
+### 11.2 A7：Accepted+Pending 的恢复接回 Confirm 重试
+
+- 在线：发出 Confirm 后安装 `ConfirmRetry` timer；每次重发生成新 nonce/`n`，先持久化后发，不增加 `rekeyAttempts` 的 `StartRekey` 计数，受现有一个 rekey 截止/次数预算约束。
+- 恢复/重连：若旧 rekey 为 Initiator + `Accepted`，目标新 session 为 `Pending`，且 Confirm 尚未收到 ACK，则恢复 `ConfirmRetry` timer，不安装直接 abort 的 timer；只有重试预算耗尽才 abort/`RekeyFailed`。
+- `Responder + Pending` 仍等待 Confirm；收到重复 Confirm 时重发 ACK。
+- 测试：持久化 `PersistHandshake(old, new Pending)` 后、`SendRekeyConfirm` 前杀进程；重开后不发额外用户消息，确认重试最终使原行 `Delivered` 一次；永久丢 ACK 时有限次重试后公开失败。
+
+### 11.3 R3-N1：Skipped 只跳过棘轮候选，不跳过终态清理
+
+`RebindOutcome` 返回：
+
+- `Migrated`：提交新 session/message，运行时可发布候选并进入发送；
+- `Skipped(state: Delivered|Failed)`：不写 session/message/high-water，不推进 `ns`；运行时取得终态后，**移除该旧 outgoing 或对齐为不阻塞的 Failed 内存项**，取消旧 timer，不发送旧 wire；不产生 `PersistOutboundSucceeded`/`SendWire`。
+
+因此“Skipped 不发布候选”不等于“全部内存不变”：终态调度项必须清理，否则旧 `Failed/Queued` 会永久阻塞发送门。测试构造“内存旧 Queued、DB Delivered/Failed、另有一条可发送消息”：旧行/棘轮不变，旧 wire 不发送，下一条真正发出并 ACK。
+
+### 11.4 验收文字
+
+真实发送者 7A 使用 A 服务在自动 rekey 前 `sendMessage`，保留同一 DB 行；B 只显示一次，A 收到新 session 的 ACK 后 `Delivered`，随后发送 k+1 成功。旧 DataAck、仅 Active session 和注入帧均不能代签。

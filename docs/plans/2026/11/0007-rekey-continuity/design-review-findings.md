@@ -36,3 +36,27 @@
 - 7D 可保持无新表、持久字段、wire kind、header 或用户配置；7B 确有新的 HTTP 字段，7C 确有两个内存字段。无须新 outbox、分布式配额或修改 Quint。永久离线/永久丢控制帧只能要求有界且可见的失败，不能保证送达。`S1E2E.select` 当前列 #1–#7、#9–#15；D:109 的“#1–#15 全绿”不能用这 14 项代签 #8，#8/两进程 10k 仍按 S:28 排除，不在此扩项。
 
 本轮两轴均已覆盖完整设计和 live spec。论证上不接受“保留旧行即最终退休”“单一发起入口即全部重建有界”两项推论；ID 区分和写序有代码依据。格式量测不适用（只审读），无正文改写可做保真差分，无独立人工签收。本轮未运行构建、测试、E2E 或模型；上列均非通过回执。按计划最多三轮，修订冻结后再审，不以本记录关闭 #14。
+
+## Round 2 交接记录
+
+Round 2 审的是设计 `71a4e91b5818edb5ead93bbe006f142726a3b15f`、规格 `278c31e468de70d72629fcac085dfb669164d7b2`。当轮以只读答复交付：A1、A3、A5、A8、B2 设计关闭；A2、A4、A6、A7、B1、C1 剩余。这里补记当时的结论，不把后来的 §10 算作当轮证据。
+
+## Round 3：逐项裁决
+
+**不冻结 7A。** Round 2 的六项中，A2、A4、B1、C1 在设计层面 CLOSED；A6、A7 仍需修改。新增 R3-N1（P1）。当前共 **3 项：1 BLOCKER、2 P1、0 P2**。A2 的原问题是会不会发布没有提交的棘轮候选；R3-N1 是跳过该候选后，仍留在发送门里的旧消息，两者的状态和验收不同。
+
+评审对象：本目录 `design.md`（Git blob `054ec5b1fb2cb2b3bd410ccb0fb53c3b22e0b612`，D:1–215）及 `.scratch/yochat-rekey-continuity/spec.md`（`04e47590d2a4b6f79f439734a1f383678bb58502`，S:1–31）；相关实现基线 `647f785`。按 §10「最终实现契约」解释与 §3/§9 冲突的旧句。CLOSED 指设计写明了可实行的处置，不是生产实现或测试已通过。成本为剩余设计及定向验收的估算人日 / 新表 / 新组件。
+
+| 项目、裁决 | 原句与位置 | 规则 | 问题与影响／裁决依据 | 关闭证据或仍需满足的 PASS 条件 | 规模代价 |
+| --- | --- | --- | --- | --- | --- |
+| A2 · CLOSED | D:173–179「任何 session 写之前」「只有 `.Migrated` 才把候选 … 发布」 | ADR-0007 §5、G1/G2 | 旧业务键预读区分终态和 `Pending/Sent`；后者 UPDATE 仍须匹配旧键及旧状态。`Skipped` 与真正提交的 `Migrated` 分别到达运行时，不再把普通 `Right(())` 当成功反馈。先读 message 不改变 `sessions → messages → meta` 的**写**序。 | D:175–179 已关闭原反例。实现时让 `Skipped` 穿过 executor 而不被 `mapStore` 抹去：终态行、新 session 的 `ns`/版本、高水位及 attempts 不变，没有 `PersistOutboundSucceeded`/`SendWire`；真正迁移的下一条可解。发送门的独立问题见 R3-N1。 | 0 / 0 / 0 |
+| A4 · CLOSED | D:183「timer instance token」「新 timer 使用新 token」 | ADR-0008 §3/§5、G3 | token 随回调进入事件循环，消费点同时核对当前实例和 session。它区分了相同运行时消息 id、相同锁代次的两次安装，不再靠取消 fiber 撤回已入队事件。 | D:183 的先后顺序可证伪：旧回调排队 → 重绑并安装新 timer → 消费旧回调；此时不发送、不加 attempts，也不清除新 timer，新回调仍可生效。 | 0 / 0 / 0 |
+| A6 · **仍需修改 · BLOCKER** | D:187–193「分三态」「`acknowledge` 移除旧 outgoing 后 … 重查；只有目标新 session Active 且旧 outgoing 为空才允许 retire」 | ADR-0007 §4/G12；Q5 按角色退休 | `Requested/无新行` 恢复 timeout 和对 Active 忽略旧 timeout 已讲清。新加的 **DataAck 调用点**却没有说明从何获得应答方的“已收到首条认证新 Data”证据。应答方本地已 Active、ConfirmAck 丢失时，迟到的**旧** DataAck 仍可移除最后一条旧 outgoing（`AppStep.scala:688–694` 连保留的 `Failed` 也接受）。此时新 Active、旧队列空均为真，却没有收到新 Data。若在这里退休，`AppRuntime.expectedControl:592–597` 找不到旧行的 rekey 关联，重复 Confirm 在 `AppRuntime.scala:530–531` 被直接丢弃。`SessionRepository.cutoverReady:341–346` 也不接受把旧 ACK 当应答方证据。 | 明确对**同一对 old→new、同一角色**重查：发起方需 ConfirmAck，应答方需新 session 上首个已认证 Data；没有证据就不调用 retire、也不报 fatal。旧项重绑后由**新 session** 的 DataAck 移除，不能只等旧 id 的 ACK。覆盖「丢 ConfirmAck → 迟到旧 DataAck 清空旧项 → 重复 Confirm 仍获 ACK，旧行仍在」；再送首条认证新 Data 才可退休。反向覆盖证据先到、最后一项后移走，含重开后的重查；不得凭 Active 猜证据。 | 0.25–0.5 / 0 / 0 |
+| A7 · **仍需修改 · P1** | D:189–191「Accepted … Pending … 超时只 abort」；D:197–203「发出 Confirm 后 … 安装 Confirm retry timer」 | ADR-0006 §6、7A 崩溃恢复、R5 | 在线路径已经有重发者、fresh nonce/`n`、先存后发和单次/永久丢 ACK 的验收。**恢复路径不同**：发起方提交 `PersistHandshake(old,new Pending)` 后、外部 `SendRekeyConfirm` 前崩溃，两者正是 `AppStep.scala:471–472` 的先后顺序。重开命中 §10.3 第 2 态，却只安装到期 abort 的 timer，不会再次经过“刚发出 Confirm”的入口；断线取消 timer 后重连亦同。即使链路已恢复，也可能一次 Confirm 都没送出就放弃。`MaxRekeyAttempts` 是数值上限；现有计数在 `Rekey.start` 增加（`Rekey.scala:40–45`），`Rekey.confirm` 不增加它。 | 把 `Initiator + Accepted + new Pending` 在启动/重连时接回与在线路径相同的有界 Confirm 重试；Responder 等待 Confirm 的 timeout 分开处理。写清这次握手的重发次数或固定截止如何生效，只有耗尽才 abort；重发不是新的 `StartRekey`，不扣 7C。测试在上述两次效果之间停进程并重开，不发额外用户消息；恢复网络后原行最终 `Delivered` 一次，永久丢响应时观察到有限次 Confirm 后公开失败。 | 0.3–0.6 / 0 / 0 |
+| B1 · CLOSED | D:152「同步写 `rekey-failed`」；D:207「以 `AppState.lock` 为准」 | 7B、锁边界 | 覆盖了两个不同出口：入队失败不依赖已满的队列；idle lock 即使保留 `Running`，也按实际锁态选 JSON/HTTP 状态，不再仅依赖没有 runtime 时的模板。 | §9.6/§10.5 的可观察结果：未锁时公开短码；触发 idle timeout 且不销毁 runtime 后，`/api/session.notification` 为 null、`/api/state` 为 401。无通知持久化或 GUI 必达承诺。 | 0 / 0 / 0 |
+| C1 · CLOSED | D:158–163、D:211「限制 `StartRekey` … 不扣本端发起计数」；S:15、30–31 | 7C、D6/R7 | 设计与 live spec 现均限定本端显式/自动发起；入站只走既有认证、pending/重复、epoch 检查。固定窗口跨成功切换保留，runtime 重建清零；不再声称接收端执行对端的 cooldown，或双方共享预算。 | 用不同 Active session 的本端成功/失败启动检验第 4 次无 Request 且可见失败，59,999/60,000 ms 两侧结果不同；换角色的认证新请求不扣本端预算。 | 0 / 0 / 0 |
+| R3-N1 · **新增 P1：清除已跳过的旧发送阻塞项** | D:179「`.Skipped` 不发布 … 内存均不变」；D:131「阻塞集合 … 属于旧 session 的 outgoing」 | 7A、G3；ADR-0008 终态不再重试 | 在 §10.1 明确支持的分支中，若运行时仍把旧项列为 `Queued/Sent` 而 DB 已是 `Delivered/Failed`，保持**全部**内存不变就留下永久阻塞项：它仍符合 §9.2 的发送门，旧 timer 已取消，DB 又不会再允许重封。下一条即使迁移成功且密文可解，也发不出去。这不是说正常 ACK 都会产生这个分歧。 | 跳过的是未提交的**棘轮/消息候选**，不应跳过按 DB 终态清理旧调度项。让运行时取得终态（返回或读取均可），移除已送达的旧 outgoing，或将其对齐为不阻塞的 `Failed`；若已对齐则真正无操作。测试「内存旧 Queued、DB 终态、另有一条可发送消息」：旧行及棘轮不动、无旧 wire，下一条实际发出并获 ACK，而非仅能解密。 | 0.1–0.25 / 0 / 0 |
+
+A1、A3、A5、A8、B2 的 Round 2 设计裁决不变。真实发送者仍按 D:167 验收，D:215 将当前 E2E 回归口径明确为 14 个已有场景，不代签 #8。D:106 的负例若要断言源行仍在，应在**不删除实际源行**时传错键或制造冲突；物理删除只可证明缺行被报告，不能证明该行仍在。
+
+轮次记录：11 → 6 → 3，未触发 R9 的“第 3 轮问题数不降”。本次委派标为 Round 3/7；仓库硬上限是 7，冻结的 live spec S:7 和 `meta.md` 仍记本计划预算 3。两种口径不互相替代；本记录不自行追加轮次。以上是完整设计/规格的静态复审，未运行测试、模型或 E2E，无独立人工签收，也不关闭 0006 的 #14 产品验收。
