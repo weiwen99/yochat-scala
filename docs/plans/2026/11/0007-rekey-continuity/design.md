@@ -115,3 +115,53 @@
 - G3：重绑定后正文只出现一次，seq 不重置，新消息不超车。
 - G4：无新表/wire/header/config；无静默失败。
 - G5：不引入 #8/10k、UI 自动化或新调度器。
+
+## 9. Round 1 review 修订（取代上文冲突处）
+
+### 9.1 7A 候选与事务版本（A1）
+
+`RebindOutgoing` 增加 `expectedSessionVersion: Long`；运行时为**每一条**旧 pending 从 `Store.loadSession(newSessionId)` 取得当前 version，按 `(seq,id)` 串行处理：处理一条并在 `PersistRebound` 提交后才能生成下一条。`PersistRebound` 也携带 `expectedSessionVersion`；store 读取新 session 行后要求 `current.version == expectedSessionVersion` 且 `current.generation == lock`，否则 `StaleGeneration`，候选不发布、不发送。
+
+`RebindPending` 由运行时**同步内联**执行，不排到普通命令队列尾部；在新命令进入事件循环前完成旧项迁移，避免新 `UserSend` 先消耗 ratchet `n`。这是 7A 的顺序门。
+
+### 9.2 源消息键与终态（A2/A3）
+
+- 重绑定 SQL 使用旧五元键并附加 `state IN (Pending, Sent)`；`Pending` 和 `Sent` 都可重发，`Delivered/Failed` 不重封。
+- 同一事务先复核旧 session 存在且仍为源 session；`Sql.changed == 0` 时若行已是终态则幂等无操作，否则整笔失败，不发布候选、不发送。
+- 旧 `Failed` 行不进入迁移集合，也不参与 `pump` 的阻塞谓词；阻塞集合只包含 `Persisting/Queued/InFlight/Sent` 且属于旧 session 的 outgoing。
+
+### 9.3 Timer 与投递门（A4）
+
+- cutover 立即取消旧 session 的 `Delivery`/`Retry` timer；
+- `TimerFired(Message)` 在 `sendNow` 前复核 message 仍在当前 outgoing、代次匹配、其 session 仍是当前发送路径；旧回调不发送旧 wire、不消耗新尝试次数；
+- `pump` 的阻塞谓词与 9.2 的非终态集合一致，`Failed` 不阻塞后续消息。
+
+### 9.4 恢复与旧 rekey timer（A6/A7）
+
+- `AppStateRestore` 不再用“旧 session 有 `rekey`”直接恢复未完成握手 timer；只有新 session 仍为 Pending 且旧 session 未 Active 时才安装 timer。
+- 旧 session 的 rekey 超时不能删除已 Active 的新 session；`deletePendingProgram`/retire 前检查目标 phase 和是否仍有未确认行。
+- 应答方已 Active、ConfirmAck 丢失：发起方只重发 Confirm（现有控制路径），应答方对已 Active 的 Confirm 重新生成 ACK；发起方不得因此重新初始化 ratchet。若 ACK 永久丢失，最终进入既有有界 `RekeyFailed`，保留已 Active 的新 session 和可重发记录，显式失败，不自动删行。
+- 恢复崩溃切点按 review 的三个场景：未提交 rebind、部分提交、已发未 ACK；每项测试重开后 next wire 可解且不重复推进。
+
+### 9.5 授权与序号（A8）
+
+重绑定发送前检查 `relationshipUsable(contact)`、`bindingEstablished`、未锁定和身份存在；失败时保留旧 pending 并显式失败。`seq == 1` 的 binding 使用**原 message.seq**生成，不读取新 session 的 `nextSeq`；后续 seq 不带 binding。
+
+### 9.6 7B 可见性（B1/B2）
+
+- `lastNotification` 更新不依赖 notification queue 是否满；`StartRekey` 入队失败时同步写 `rekey-failed` 到该 Ref，并保留 `fatal` 作为独立公开出口，不要求向满队列再投事件。
+- 7B E2E 必须用**真超时**：只启动一笔 rekey，代理丢失控制响应，等待原 pending 超时，再从 `/api/state` 读 `rekey-failed`；连续两次显式 POST 不算证据。
+- 锁定状态下 `/api/session` 的 locked JSON notification 为 null；错误体仍 code-only。
+
+### 9.7 7C 限频口径（C1）
+
+本计划把 60s/3 预算明确限定为**本端发起**的 rekey（自动或显式 `StartRekey`）；对端请求的 `RekeyRequestReceived` 不扣本端发起预算，只受既有 per-session attempts/cooldown 约束。设计不再声称全局或双方总计。
+
+- 固定 60s 窗口，跨成功 cutover 不重置；
+- 同一 runtime 生命周期内有效；锁/解锁、进程重启会重建 `AppState`，预算清零，列为已知约束；
+- 第 4 次本地发起失败可见；59,999ms 不放行，60,000ms 后新窗口允许；
+- 测试区分本地发起与对端请求两种角色。
+
+### 9.8 修订后 7A 验收
+
+E2E 必须让 **A 服务本身** 在自动 rekey 前 `sendMessage` 并消费序号 k；旧持久行在重绑定后仍为同一 row id，B 只显示一次原正文，A 收到 ACK 后 `Delivered`；随后 `sendMessage` k+1 也按序送达。仅观察 Active session、仅新正文、或注入帧都不算 7A 通过。
