@@ -43,8 +43,8 @@
 
 ### `./check.sh`
 
-- 结果：全绿（91.16s）；`core.test` 145、`store.test` 24、`transport.test` 7、`server.test` 7；Q1–Q6 `QUINT_CHECKS PASS`；spike 100 条 + reconnect `ok=true`。
-- 回执：`TENK_REPLAY messages=10000 elapsed_ms=12467 outgoing=0 next_seq=10001`；`STORE_THROUGHPUT inserts=1000 reads=1000 insert_ms=1772 read_ms=177 total_ms=1949`。
+- 结果：全绿（89.41s）；`core.test` 145、`store.test` 24、`transport.test` 7、`server.test` 7；Q1–Q6 `QUINT_CHECKS PASS`；spike 100 条 + reconnect `ok=true`。
+- 回执：`TENK_REPLAY messages=10000 elapsed_ms=13063 outgoing=0 next_seq=10001`；`STORE_THROUGHPUT inserts=1000 reads=1000 insert_ms=1604 read_ms=126 total_ms=1730`。
 - `server.e2e` 不在 `check.sh` 内，已独立运行。
 
 ## 未关闭与限制
