@@ -52,3 +52,4 @@ Every plan must name the old documents it supersedes. A plan that only adds docu
 ## Current plan
 
 - `docs/plans/2026/11/0001-yochat-rewrite/` — the rewrite design; live spec at `.scratch/yochat-rewrite/spec.md`.
+- `docs/plans/2026/11/0002-m3-structural-hardening/` — draft closure plan for the nine M3 review round-1 risks; live spec at `.scratch/yochat-m3-structural-hardening/spec.md`.
