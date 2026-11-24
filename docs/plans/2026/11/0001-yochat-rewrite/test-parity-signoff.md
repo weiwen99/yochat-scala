@@ -12,6 +12,8 @@
 - 拆分组签字器：`tools/t1_apply_split.py`
 - 生成器：`tools/t1_inventory_gen.py`
 - 拆分组应用器：`tools/t1_apply_split.py`
+- 自动初判：`test-parity-split-groups-reviewed.csv`
+- 仅需人工决定：`test-parity-human-decisions.md`（5 组 + 6 需求）
 - 校验器：`tools/t1_signoff_check.py`
 
 ## 1. 清点口径

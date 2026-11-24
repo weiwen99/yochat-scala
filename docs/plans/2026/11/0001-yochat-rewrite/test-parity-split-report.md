@@ -61,6 +61,12 @@ python3 tools/t1_apply_split.py --apply  # 26 组都签完后写入逐测试行
 python3 tools/t1_signoff_check.py
 ```
 
+## 自动初判结果
+
+- 26 组中 21 组 `human_required=no`，AI 建议 `ACCEPT_PORT/REWRITE`。
+- 5 组需要人工：`T1G-001`、`T1G-020`、`T1G-021`、`T1G-022`、`T1G-023`。
+- 另加 6 个需求级裁决；完整清单见 `test-parity-human-decisions.md`。
+
 ## 仍需人工重点看
 
 - `T1G-001` 非 S1 OMIT 组：234 条/38 个子批，按关键词自动分类；必须审阅 `test-parity-split.csv` 中 `NON_S1_CANDIDATE` 的样例行，接受后才能整体 OMIT。
