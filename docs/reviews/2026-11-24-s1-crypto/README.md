@@ -13,7 +13,7 @@ before the first authenticated new-session Data. M8 (byte-unbounded queues) and 
 mismatch) remain open. No external reviewer has been commissioned and none has signed this package.
 The external cryptographic gate is **open**.
 
-Baseline: source `db84f70` on top of `6884926`; packet `43c6830` plus rounds 2–14. `manifest.sha256` covers the source snapshot
+Baseline: source `e2001ad` on top of `6884926`; packet `43c6830` plus rounds 2–14. `manifest.sha256` covers the source snapshot
 and this packet's docs; it is regenerated at each packet revision and verified before handoff. The
 final `./check.sh` receipt is in `remediation-2026-11-24.md`.
 

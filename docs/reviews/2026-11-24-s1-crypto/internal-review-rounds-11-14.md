@@ -1,12 +1,12 @@
 # Internal reviewer rounds 11–14
 
 Status: internal, non-signing. The external cryptographic gate remains **open**. Source baseline:
-`db84f70` on top of `6884926`; this note records the added rounds 11–14 and their closures. The
+`e2001ad` on top of `6884926`; this note records the added rounds 11–14 and their closures. The
 earlier rounds are in `internal-review-rounds-4-10.md`.
 
 ## R11 findings and closure
 
-| ID | Finding | Closure at `db84f70` |
+| ID | Finding | Closure at `e2001ad` |
 | --- | --- | --- |
 | R11-1 | Ancestor outgoing could be rebound A→C after B retired. | `pointsToRetired` walks the direct-successor chain and durably fails every stranded ancestor message. Successful rebind, skipped rebind, rejected rebind, and recovery all use it. |
 | R11-2 | Handshake deadline was timer-map-only and drifted across retries/reconnect. | `RekeyState.deadlineMs` is persisted in `sessions.state` (codec v3); start/respond set it once; retry/recovery use the minimum of retry cadence and the original deadline; inbound Accept/Confirm/Ack and duplicate Request check the deadline at consumption. |
@@ -33,8 +33,8 @@ earlier rounds are in `internal-review-rounds-4-10.md`.
 
 ## Verification
 
-- `./check.sh` at `db84f70`: PASS (570.17 s); E2E 17/17, 1k 3,955 ms, 10k 30,779 ms; cold start
-  p50 1,205 ms / p95 1,288 ms; idle 745.8 MB; UI smoke 100/100.
+- `./check.sh` at `e2001ad`: PASS (582.48 s); E2E 17/17, 1k 4,356 ms, 10k 29,958 ms; cold start
+  p50 1,202 ms / p95 1,218 ms; idle 745.3 MB; UI smoke 100/100.
 - Targeted tests added: `InternalReviewSpec` stale Confirm/Delivery tokens, offline restart/reconnect,
   missed retry, late Ack, legacy zero deadline, responder first-Data, rejected rebind retirement;
   `StateCodecSpec` v3 Ack/deadline and legacy migration; `AppRuntimeSpec` startup retirement with

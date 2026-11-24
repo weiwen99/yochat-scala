@@ -3,7 +3,7 @@
 Status: internal, non-signing. The 10-round review budget is exhausted. The external cryptographic
 gate remains **open**; this is not an external audit or signature.
 
-Source baseline: `db84f70` (cumulative R3–R14 fixes); rounds 11–14 close the R11 blocker list.
+Source baseline: `e2001ad` (cumulative R3–R14 fixes); rounds 11–14 close the R11 blocker list.
 Reviewers: read-only `reviewer` agents R4–R10; they did not edit files.
 
 ## Closed during rounds 4–10
@@ -52,7 +52,7 @@ The earlier R10 list remains historical and is superseded by R11 for the final b
 
 - `./check.sh` at `926d3ff`: PASS (572.17 s); E2E 17/17, 1k 3,860 ms, 10k 28,670 ms; cold start
   p50 1,189 ms / p95 1,203 ms; idle 742.9 MB; UI smoke 100/100.
-- Final `./check.sh` at `db84f70`: PASS (570.17 s); E2E 17/17, 10k 30,779 ms; receipt in
+- Final `./check.sh` at `e2001ad`: PASS (582.48 s); E2E 17/17, 10k 29,958 ms; receipt in
   `internal-review-rounds-11-14.md`.
 - MUnit reports inspected: core/store/server/transport all 0 failed.
 - No external KAT or independent cryptographic proof.
