@@ -1,5 +1,5 @@
 # S1 external crypto review source manifest
-# Commit: 6884926
+# Source commit: 6884926; packet revision: 2026-11-24 (internal review added; source files unchanged)
 # Format: SHA-256  path
 8682530d18e0f17d9ac2a001924399b48240f7513c466af7e7ce30359bca8553  build.mill
 26fbb9d888cd649590083315c4fd179abc78cb78e59f51a89363e9b19238028e  check.sh
@@ -95,12 +95,14 @@ e2e72b8d20c13c2b17e4684e6c1aaba575c297bf2ca801aabeb65210dafb6904  docs/plans/202
 c7cdd0f2c6f52f384bf78f6e223d41459808b6eb362b66180f4f50247ea5d1c3  docs/plans/2026/11/0008-s1-e2e-performance/impl.md
 fb4219a56bea06198597f2e2c208eec5129560eef025147d1a1bbb1a976d5122  docs/plans/2026/11/0008-s1-e2e-performance/meta.md
 15352d9c4970a7153076cfd97b645c075ce901030004506aec47ddae397fb118  docs/plans/2026/11/0008-s1-e2e-performance/review.md
-407a722604f7e82aba1a22699537462467a19ed912c3ba57643d5035b48a8600  docs/reviews/2026-11-24-s1-crypto/README.md
+ed1004da7cee3f10de1bc68961ab3c4ba7afb7dd36e21f23dd1896002a8c8dfe  docs/reviews/2026-11-24-s1-crypto/README.md
 806acdebe6f6682f3f4a8859d5266d47ceaf28ddfd5b9d996945760d85f2473a  docs/reviews/2026-11-24-s1-crypto/evidence.md
 b7d3ca69296c0ee4d66d82e037d5cf1cb8611365fb4cc6dad52630039463eb00  docs/reviews/2026-11-24-s1-crypto/findings-template.md
+dc10cf129ac7eb8fb65cf2fbd233afcf8b44e7e55d82992e031b201c2cb4832e  docs/reviews/2026-11-24-s1-crypto/internal-review-2026-11-24.md
 2b9fba4815ca12da0ae0cdb76fd7ed87bb00e9f5017ff3368a7d9013b47fac36  docs/reviews/2026-11-24-s1-crypto/open-questions.md
 9d66198f9076b2cde1e05cda22f3af9597f51c72cfea828f7349f3e95cde4a53  docs/reviews/2026-11-24-s1-crypto/protocol.md
 a5ed6c0bb43f73ff967d92d27b3bcf18023a4e11efcff4b2385df83fa0efc0ec  docs/reviews/2026-11-24-s1-crypto/reviewer-checklist.md
+752f32db0bc2860a746d70981879bef639e558527f4afb5b800c053ead05f449  docs/reviews/2026-11-24-s1-crypto/reviewer-worksheet.md
 56e32457e8fa41aa5dbe60248d87fb3545bcaff253c81cf3f93cba7556531038  docs/reviews/2026-11-24-s1-crypto/scope.md
 f4758bbd3a93ac4c828ca9a4f0e7d26e2189a4b8ec58822e8f247810127c9454  docs/reviews/2026-11-24-s1-crypto/source-map.md
 7e56c4df444eb81eb8705ea3934cc8615275f6f37690d4f10f46680e04eb6c0d  docs/reviews/2026-11-24-s1-crypto/storage.md
