@@ -1,7 +1,7 @@
 # Internal review remediation status
 
 Status: internal, non-signing. The external cryptographic gate is **still open**.
-Source baseline: `bb152f8` (round-3 fix commit on top of `6884926`; packet commit `b3871bd`).
+Source baseline: `7d0a68b` (R3 fix commit on top of `6884926`; packet commit `b3871bd`).
 The original findings are in `internal-review-2026-11-24.md`; this file records only what changed.
 
 ## Round-2 verification and round-3 closure
@@ -25,6 +25,12 @@ items and strengthens the two weak tests:
   Active and the test observes `RekeyFailed`.
 - **M6 test (now probative)**: two accept calls run in `IO.both`; exactly one succeeds and the contact
   stays `Confirmed` (not `AccountMismatch`).
+- **R3-N1 (CLOSED)**: a successful last-message rebind removes the old session from AppState and its
+  rekey timers in the same published candidate; a late old-session frame finds no session and cannot
+  trigger a `PersistInbound` missing-row failure. Tested by `InternalReviewSpec` R3-N1.
+- **R3-N2 (CLOSED)**: `RebindOutgoing` suppresses retirement when the target new session still has
+  `retireOldOnFirstData=true` (responder). The old row is removed only by the first authenticated new
+  Data via `ResponderFirstData`; tested by `InternalReviewSpec` R3-N2.
 
 ## Round-3 re-review (`bb152f8`)
 
@@ -73,8 +79,9 @@ closures are verified, but the same cutover path has two further defects:
 - `./mill core.test`: SUCCESS; all core MUnit classes including the new `InternalReviewSpec` cases.
 - `./mill store.test`: SUCCESS; `InternalReviewStoreSpec` both cases pass.
 - `./mill server.test`: SUCCESS; `HttpApiSpec` and `AppEffectExecutorSpec` include the new tests.
-- `./mill server.e2e`: 17/17; E2E#8 1k = 4,543 ms; PERF#10K = 30,424 ms.
-- `./check.sh`: PASS (578.49 s).
-- Per-suite MUnit: core 93, store 27, server 12, transport 7; 0 failed.
+- `./mill server.e2e`: 17/17 on the last full run; E2E#8 under concurrent full-gate load was
+  5,780 ms (one load-flake), isolated E2E#8 = 4,251 ms; PERF#10K = 36,933 ms in the loaded run.
+- `./check.sh`: R3 full run stopped at that 1k load-flake; a clean re-run is required before handoff.
+- Per-suite MUnit: core/store/server/transport suites all 0 failed; focused new specs pass.
 - Desktop gate: cold start p50 = 1,276 ms, p95 = 1,291 ms, idle 752.5 MB; UI smoke
   delivered=100, received=100, reciprocal=1.

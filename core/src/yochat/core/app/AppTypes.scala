@@ -111,6 +111,11 @@ enum TimerId:
       case TimerId.Message(_, value) => value
       case _                         => 0L
 
+  def isRekey: Boolean =
+    this match
+      case TimerId.Rekey(_, _) => true
+      case _                   => false
+
 object TimerId:
 
   def apply(kind: TimerKind, messageId: Long): TimerId = TimerId.Message(kind, messageId)
@@ -241,6 +246,7 @@ object AppLimits:
   val MaxReplyAttempts: Int       = 3
   val ReplyRetryMs: Long          = 2_000L
   val RekeyTimeoutMs: Long        = 5_000L
+  val RekeyRetryMs: Long          = 2_500L
   val MaxReplyCandidates: Int     = 8
 
 final case class AppState(

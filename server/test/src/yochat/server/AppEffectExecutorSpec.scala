@@ -251,7 +251,7 @@ class AppEffectExecutorSpec extends FunSuite:
                             1L,
                             -1L
                           ),
-                          AppEffect.PersistAttempt(message)
+                          AppEffect.PersistAttempt(message.copy(sessionId = newId))
                         )
                       )
       yield assertEquals(result, Right(Vector(1L)))

@@ -734,6 +734,7 @@ object Application:
         session.conversationId == active.conversationId &&
           session.state.sessionId != active.state.sessionId &&
           session.state.phase == SessionPhase.ReadOnly &&
+          session.state.rekey.exists(_.newSessionId.contains(active.state.sessionId)) &&
           !hasRebindableOutgoing(state, session.state.sessionId)
       )
       .map(_.state.sessionId)
@@ -1016,13 +1017,17 @@ object Application:
             val message                        =
               BufferedMessage(messageId, session.state.peerUserPub, frame.header.devicePub, frame.header.seq, payload.body, frame)
             val inbound                        = conversation.accept(message)
+            val effectiveActive                =
+              if firstData && inbound.disposition == InboundDisposition.Overflow then nextSession else active
             val (finalSession, controlEffects) =
-              controlResponse(state, sessionId, active, inbound.conversation, inbound.gap, responseNonce)
+              controlResponse(state, sessionId, effectiveActive, inbound.conversation, inbound.gap, responseNonce)
             val withSession                    = state.copy(
               sessions = state.sessions.updated(sessionId, finalSession),
               conversations = state.conversations.updated(inbound.conversation.id, inbound.conversation)
             )
-            val retired                        = if firstData then retirementCandidates(state, finalSession) else Vector.empty
+            val retired                        =
+              if firstData && inbound.disposition != InboundDisposition.Overflow then retirementCandidates(state, finalSession)
+              else Vector.empty
             val next                           = retired.foldLeft(withSession)((current, id) => current.copy(sessions = current.sessions - id))
             val inboundEffects                 =
               inbound.disposition match
@@ -1030,7 +1035,12 @@ object Application:
                   if retired.nonEmpty then Vector(AppEffect.PersistInboundAndRetire(message, finalSession, retired))
                   else Vector(AppEffect.PersistInbound(message, finalSession))
                 case InboundDisposition.Buffered  =>
-                  Vector(AppEffect.PersistInbound(message, finalSession), AppEffect.Notify(Notification.Waiting))
+                  if retired.nonEmpty then
+                    Vector(
+                      AppEffect.PersistInboundAndRetire(message, finalSession, retired),
+                      AppEffect.Notify(Notification.Waiting)
+                    )
+                  else Vector(AppEffect.PersistInbound(message, finalSession), AppEffect.Notify(Notification.Waiting))
                 case InboundDisposition.Duplicate =>
                   if firstData && retired.nonEmpty then
                     Vector(

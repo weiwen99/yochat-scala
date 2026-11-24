@@ -102,7 +102,7 @@ class HttpApiSpec extends FunSuite:
       val program = for
         relay  <- RelayServer.start(0)
         alice  <- HttpServerFixture.start(aliceDir, relay.port)
-        bob    <- HttpServerFixture.start(bobDir, relay.port)
+        bob    <- HttpServerFixture.start(bobDir, relay.port, idleTimeoutMs = 5_000L)
       yield (relay, alice, bob)
       program.use { case (_, alice, bob) =>
         for
@@ -122,7 +122,7 @@ class HttpApiSpec extends FunSuite:
           contact    <- state.toOption.flatMap(_.contacts.keys.headOption) match
                           case Some(value) => IO.pure(value)
                           case None        => IO.raiseError(new AssertionError("missing contact"))
-          _          <- bob.service.lock
+          _          <- IO.sleep(5_200.millis)
           safety     <- postStatus(s"http://127.0.0.1:${bob.port}/api/contacts/${contact.bytes.toHex}/safety", ujson.Obj())
         yield
           val (first, second) = results
