@@ -1,5 +1,5 @@
 # S1 external crypto review source manifest
-# Source commit: 926d3ff; packet: 43c6830 + rounds 4-11
+# Source commit: 056a619; packet: 43c6830 + rounds 4-11
 # Format: SHA-256  path
 8682530d18e0f17d9ac2a001924399b48240f7513c466af7e7ce30359bca8553  build.mill
 26fbb9d888cd649590083315c4fd179abc78cb78e59f51a89363e9b19238028e  check.sh
@@ -52,8 +52,8 @@ c670da21150471d31b93f3a3dc7aac59782ba69a38a566987a0a3cc07bfe3e72  core/src/yocha
 09f40a6f5846b5c41740944de6b3c54e361895bc8ba3714ae28bd91855ba6f94  core/src/yochat/core/WireFrame.scala
 210497d480b5fdd97c4cd599abf9055c20013c699f0aae1db941e50a48f1f161  core/src/yochat/core/X25519Private.scala
 b7f8312dc1c3674907d21268120401670ea2e2e778a43378fee3a72f909ca46d  core/src/yochat/core/X25519Public.scala
-43482314b22390e7915019b64b01d406b00633c3616cc9b20c0037c2d172853d  core/src/yochat/core/app/AppEvent.scala
-8fd8f807b5205ec22eb4b05966f5d42d71da88d75fed3cc39d18fb9d5811dba7  core/src/yochat/core/app/AppStep.scala
+ad81607b5e9e57417a4ae65baa3651f66138345326c5c6200153fe04a3c8d55c  core/src/yochat/core/app/AppEvent.scala
+8e2057440e7b6ce129c3fd24a7a8e7d6731bc3e84a60bfedf47349a5a3628b75  core/src/yochat/core/app/AppStep.scala
 ebdac722bdbf66150bcae8acd1fd386fa5f50c317ae1edc3d4c396e7f89b2d0d  core/src/yochat/core/app/AppTypes.scala
 eb799e7ce64ccc368d2581b53233da4ccb028dd08e3d5b59cb3d7da16aea7409  core/test/src/yochat/core/CryptoVectorsSpec.scala
 6e339d1a46476f0a3aa90331d2282405b0ddcfbacf4a9f7efc664836371dd77f  core/test/src/yochat/core/DataPayloadSpec.scala
@@ -96,13 +96,13 @@ e2e72b8d20c13c2b17e4684e6c1aaba575c297bf2ca801aabeb65210dafb6904  docs/plans/202
 c7cdd0f2c6f52f384bf78f6e223d41459808b6eb362b66180f4f50247ea5d1c3  docs/plans/2026/11/0008-s1-e2e-performance/impl.md
 fb4219a56bea06198597f2e2c208eec5129560eef025147d1a1bbb1a976d5122  docs/plans/2026/11/0008-s1-e2e-performance/meta.md
 15352d9c4970a7153076cfd97b645c075ce901030004506aec47ddae397fb118  docs/plans/2026/11/0008-s1-e2e-performance/review.md
-4318eee6b9e1ec2ba7bc3ff37ea7c5e21dcc2346334ca5de37d74cabf86b7ae6  docs/reviews/2026-11-24-s1-crypto/README.md
+968d5fd80dd9bec892f9eb407c1a1a6094ad75b7c7cde62aabb1000e06a50d16  docs/reviews/2026-11-24-s1-crypto/README.md
 22e60b3fa8d77ec2ff162824d0d167b5ca4142f72318b225e4135681ad32b519  docs/reviews/2026-11-24-s1-crypto/evidence.md
 b7d3ca69296c0ee4d66d82e037d5cf1cb8611365fb4cc6dad52630039463eb00  docs/reviews/2026-11-24-s1-crypto/findings-template.md
 3553cb7560a65a72b1dfb22decafaef1cd8a9806262bc5bf0ee7a96f3c8d9fd4  docs/reviews/2026-11-24-s1-crypto/internal-review-2026-11-24.md
 a12c83c269a7008d76c7eee5b04b054fa262b408188ca0fdd3051912af3b6232  docs/reviews/2026-11-24-s1-crypto/internal-review-round2-2026-11-24.md
 9141d6a2f167e0c49a0c8c80a486c76b56cabc73756cc1e9459b72f12bff94ee  docs/reviews/2026-11-24-s1-crypto/internal-review-round3-2026-11-24.md
-898c84cc8494c5e6ec5b99ee46efe4b36562b2d335cae4b090c88cffd75be3bb  docs/reviews/2026-11-24-s1-crypto/internal-review-rounds-4-10.md
+a8fb9edc37b7492526906e06d6938d68ad524bb37bfa408b31ab59dbc7f41a94  docs/reviews/2026-11-24-s1-crypto/internal-review-rounds-4-10.md
 2b9fba4815ca12da0ae0cdb76fd7ed87bb00e9f5017ff3368a7d9013b47fac36  docs/reviews/2026-11-24-s1-crypto/open-questions.md
 9d66198f9076b2cde1e05cda22f3af9597f51c72cfea828f7349f3e95cde4a53  docs/reviews/2026-11-24-s1-crypto/protocol.md
 32dc3bf232cecfdd7570b51b2b29c9055b842d8609c5eca241158803d0e5d7aa  docs/reviews/2026-11-24-s1-crypto/remediation-2026-11-24.md
@@ -127,8 +127,8 @@ c24dea85199921193863337f9559059f791ad1a995c09fe7d2fa809ad1e6d0a6  models/traces/
 54d10666a98ada1fd50e70a56095fbe7094176388a3c787c491a1289dd4ed23f  models/traces/q4_reconnect.itf.json
 71b4efdc5186e7578be741fbf3df7a1525bcc3d0f8e8fd502e7e90188c0c6526  models/traces/q5_rekey.itf.json
 6a835690ecaf2c290a4df64a1fd879b2e1138a038fc51537797fccbf4cccce9f  server/src/yochat/server/ApiJson.scala
-185d572ebdfbec46f9573ac73e751d3b283a213ca84dfe19d9a055afeffcc8bd  server/src/yochat/server/AppEffectExecutor.scala
-94718385051735cf8cfd4dc24891014b30e36ecc319b1858c87acb9a53247913  server/src/yochat/server/AppRuntime.scala
+ee76888e754e952d36e5b63b7bc25b5f3d32f052f85f0da7bf9c20d09db53994  server/src/yochat/server/AppEffectExecutor.scala
+7388cc15cd9bd2172151ed97f6ae95f87ffcb6c441fce6effb6e1ce3ffd7690c  server/src/yochat/server/AppRuntime.scala
 3e6e357859c60697b6566809b22e2f2571f73a4b64eb0db2c8936e76bc595897  server/src/yochat/server/AppService.scala
 a9d8ea9322b2998aee88019d9ce9406609ffa26484bdc03af7282111d49fa97e  server/src/yochat/server/AppStateRestore.scala
 2e9c9301df506907448f4d75ccbd9d25b8cf44dd31dc903cb9939f8764405421  server/src/yochat/server/EventHub.scala
