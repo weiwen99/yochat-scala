@@ -27,6 +27,7 @@ enum AppEvent:
   case RebindOutgoing(messageId: Long, newSessionId: SessionId, nonce: Nonce, nowMs: Long)
   case RecoverRebinds
   case RecoverRekey(oldSessionId: SessionId, nonce: Nonce, nowMs: Long)
+  case RekeyConfirmRetry(oldSessionId: SessionId, nonce: Nonce, nowMs: Long)
   case Pump(nowMs: Long)
   case SendSucceeded(messageId: Long, generation: Long)
   case SendFailed(messageId: Long, generation: Long, nowMs: Long)

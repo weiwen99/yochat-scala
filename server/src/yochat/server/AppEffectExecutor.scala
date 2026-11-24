@@ -84,8 +84,9 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
   def executeAll(effects: Vector[AppEffect]): IO[Either[AppExecutionError, Vector[Long]]] =
     effects.foldLeft(IO.pure[Either[AppExecutionError, Vector[Long]]](Right(Vector.empty))) { (accumulator, effect) =>
       accumulator.flatMap {
-        case Left(error)    => IO.pure(Left(error))
-        case Right(skipped) =>
+        case Left(error)                        => IO.pure(Left(error))
+        case Right(skipped) if skipped.nonEmpty => IO.pure(Right(skipped))
+        case Right(skipped)                     =>
           effect match
             case AppEffect.PersistRebound(message, session, oldSessionId, oldSeq, expectedVersion) =>
               persistRebound(message, session, oldSessionId, oldSeq, expectedVersion).map {

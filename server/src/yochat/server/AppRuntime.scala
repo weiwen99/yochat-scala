@@ -379,7 +379,24 @@ object AppRuntime:
   ): IO[Unit] =
     command match
       case RuntimeCommand.App(event)             =>
-        applyEvent(transport, event, queue, stateRef, random, executor, fatal, clock, onState) *>
+        val applied = event match
+          case AppEvent.TimerFired(TimerId.Rekey(sessionId, RekeyTimerStage.Confirm), _, nowMs) =>
+            random.nonce.flatMap(nonce =>
+              applyEvent(
+                transport,
+                AppEvent.RekeyConfirmRetry(sessionId, nonce, nowMs),
+                queue,
+                stateRef,
+                random,
+                executor,
+                fatal,
+                clock,
+                onState
+              )
+            )
+          case _                                                                                =>
+            applyEvent(transport, event, queue, stateRef, random, executor, fatal, clock, onState)
+        applied *>
           (event match
             case AppEvent.Unlock(_, _, _) =>
               resumeGaps(queue, stateRef, random, clock) *> queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRebinds)).void *>

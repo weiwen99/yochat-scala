@@ -28,9 +28,9 @@ Performance gates are hard but are not evidence of cryptographic security.
 | Check | Result |
 | --- | --- |
 | `./check.sh` | full run completed ~400s; format, compile, core/store/transport/server tests and DICE passed |
-| `server.test` | 399 tests, 0 failed (latest full run) |
-| `core.test` | 145 tests, 0 failed; protocol property/replay/vector tests included |
-| `store.test` | 24 tests, 0 failed; AEAD, high-water, generation, restart/crash tests |
+| `server.test` | `./mill server.test` SUCCESS. The `399/399` line is a Mill task index, not a test count; per-suite MUnit totals are the receipt. |
+| `core.test` | `./mill core.test` SUCCESS; protocol property/replay/vector tests included. The `145/145` line is a Mill task index, not a test count. |
+| `store.test` | `./mill store.test` SUCCESS; AEAD, high-water, generation, restart/crash tests. The `198/198` line is a Mill task index, not a test count. |
 | `transport.test` | 7 tests, 0 failed; relay/reconnect |
 | `server.e2e` | 17/17 PASS; two separate server JVM processes, real relay, separate SQLite data dirs |
 | UI smoke | 2 windows / 100 messages each direction, 0 API failures; restart/reconnect/rekey smoke |
@@ -42,6 +42,9 @@ Performance gates are hard but are not evidence of cryptographic security.
 Exact machine/toolchain: macOS arm64, JDK 25, Mill, repo commit `6884926`; UI counts from Playwright
 smoke, not a screenshot-only claim. Numbers are historical receipts, not reproducible guarantees on
 another host.
+
+Mill prints `N/N` (a task counter) even for `testOnly` of a single class, so it is not a test count.
+Report per-suite MUnit totals, or the actual number of tests, in any final receipt.
 
 ## What the tests cover
 

@@ -1,14 +1,16 @@
 # S1 external cryptography review
 
-Status: **not ready for external review**. The internal adversarial review found 3 BLOCKER and
-9 MAJOR defects. B1–B3 and M1–M7 are fixed in source `fce56e8`; M8 (byte-unbounded queues) and M9
-(key-source/ADR mismatch) remain open. No external reviewer has been commissioned and none has signed
-this package. The external cryptographic gate is **open**.
+Status: **not ready for external review**. Round 1 found 3 BLOCKER and 9 MAJOR defects. Round 2
+verified B2, M1, M2, M3, M5, and the B1 read paths, but found B1 writes, B3 retry, and M7 batch
+still open. Round 3 closes those three items and strengthens the M4/M6 tests. M8 (byte-unbounded
+queues) and M9 (key-source/ADR mismatch) remain open. No external reviewer has been commissioned and
+none has signed this package. The external cryptographic gate is **open**.
 
-Baseline: source `fce56e8` on top of `6884926`; packet `b3871bd` plus this remediation record.
-`manifest.sha256` covers the source snapshot and this packet's docs; it is regenerated at each packet
-revision and verified before handoff. The full `./check.sh` gate passed at source `fce56e8`
-(17/17 E2E, 1k 4,622 ms, 10k 34,006 ms, UI smoke 100/100).
+Baseline: round-3 source commit (the commit containing this packet) on top of `6884926`; packet
+`43c6830` plus the round-2 note and round-3 remediation. `manifest.sha256` covers the source snapshot
+and this packet's docs; it is regenerated at each packet revision and verified before handoff. The
+final `./check.sh` receipt is in `remediation-2026-11-24.md`.
+
 Scope: the S1 two-party, one-device-each, relay-only YoChat implementation.
 
 This package is for an independent cryptography reviewer. It describes the design as implemented,
@@ -25,13 +27,14 @@ identifies what has and has not been tested, and records known limits. Findings 
 6. `open-questions.md` — questions we want the reviewer to answer.
 7. `internal-review-2026-11-24.md` — internal adversarial review; non-signing input, 3 BLOCKER /
    9 MAJOR. Read this before the checklist.
-8. `remediation-2026-11-24.md` — closure status for B1–B3/M1–M7 and the two remaining MAJOR items.
-9. `reviewer-worksheet.md` — the 33 questions mapped to code and tests, with the independent
-   verification each one still needs.
-10. `reviewer-checklist.md` — sign-off checklist.
-11. `findings-template.md` — required finding format.
-12. `source-map.md` — where each implementation concern lives.
-13. `manifest.sha256` — source files covered by this snapshot.
+8. `internal-review-round2-2026-11-24.md` — re-review of the first fixes; historical input.
+9. `remediation-2026-11-24.md` — round-2 corrections and round-3 closure/evidence.
+10. `reviewer-worksheet.md` — the 33 questions mapped to code and tests, with the independent
+    verification each one still needs.
+11. `reviewer-checklist.md` — sign-off checklist.
+12. `findings-template.md` — required finding format.
+13. `source-map.md` — where each implementation concern lives.
+14. `manifest.sha256` — source files covered by this snapshot.
 
 ## Boundary
 

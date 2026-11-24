@@ -250,7 +250,8 @@ class AppEffectExecutorSpec extends FunSuite:
                             fixture.sessionId,
                             1L,
                             -1L
-                          )
+                          ),
+                          AppEffect.PersistAttempt(message)
                         )
                       )
       yield assertEquals(result, Right(Vector(1L)))

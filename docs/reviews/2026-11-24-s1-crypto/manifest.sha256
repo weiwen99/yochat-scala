@@ -1,5 +1,5 @@
 # S1 external crypto review source manifest
-# Source commit: fce56e8; packet baseline: b3871bd + remediation
+# Source commit: fce56e8 (on 6884926); packet revision: 2026-11-24 round 2
 # Format: SHA-256  path
 8682530d18e0f17d9ac2a001924399b48240f7513c466af7e7ce30359bca8553  build.mill
 26fbb9d888cd649590083315c4fd179abc78cb78e59f51a89363e9b19238028e  check.sh
@@ -96,13 +96,14 @@ e2e72b8d20c13c2b17e4684e6c1aaba575c297bf2ca801aabeb65210dafb6904  docs/plans/202
 c7cdd0f2c6f52f384bf78f6e223d41459808b6eb362b66180f4f50247ea5d1c3  docs/plans/2026/11/0008-s1-e2e-performance/impl.md
 fb4219a56bea06198597f2e2c208eec5129560eef025147d1a1bbb1a976d5122  docs/plans/2026/11/0008-s1-e2e-performance/meta.md
 15352d9c4970a7153076cfd97b645c075ce901030004506aec47ddae397fb118  docs/plans/2026/11/0008-s1-e2e-performance/review.md
-78d3bea6e390e5e139c76a9e018da8fa75d3a8375229b6d2cab128adb25738b5  docs/reviews/2026-11-24-s1-crypto/README.md
-806acdebe6f6682f3f4a8859d5266d47ceaf28ddfd5b9d996945760d85f2473a  docs/reviews/2026-11-24-s1-crypto/evidence.md
+f4110d7a2fb350438c4f795686ac64b01194870e9f5888091bdd76206438f8fe  docs/reviews/2026-11-24-s1-crypto/README.md
+a959e645fc7875dbf1b3411a2cabfd51628a79fe15bb27216ff0b5df662d5aa1  docs/reviews/2026-11-24-s1-crypto/evidence.md
 b7d3ca69296c0ee4d66d82e037d5cf1cb8611365fb4cc6dad52630039463eb00  docs/reviews/2026-11-24-s1-crypto/findings-template.md
 3553cb7560a65a72b1dfb22decafaef1cd8a9806262bc5bf0ee7a96f3c8d9fd4  docs/reviews/2026-11-24-s1-crypto/internal-review-2026-11-24.md
+a12c83c269a7008d76c7eee5b04b054fa262b408188ca0fdd3051912af3b6232  docs/reviews/2026-11-24-s1-crypto/internal-review-round2-2026-11-24.md
 2b9fba4815ca12da0ae0cdb76fd7ed87bb00e9f5017ff3368a7d9013b47fac36  docs/reviews/2026-11-24-s1-crypto/open-questions.md
 9d66198f9076b2cde1e05cda22f3af9597f51c72cfea828f7349f3e95cde4a53  docs/reviews/2026-11-24-s1-crypto/protocol.md
-c9a9b947f5d6d8144a4feae379791c09ecd2468f3390d633c73221e565501bdb  docs/reviews/2026-11-24-s1-crypto/remediation-2026-11-24.md
+0bf3fbd320088db00988cba385614bf027372b14bf015c8617cbb9a58339db2d  docs/reviews/2026-11-24-s1-crypto/remediation-2026-11-24.md
 a5ed6c0bb43f73ff967d92d27b3bcf18023a4e11efcff4b2385df83fa0efc0ec  docs/reviews/2026-11-24-s1-crypto/reviewer-checklist.md
 752f32db0bc2860a746d70981879bef639e558527f4afb5b800c053ead05f449  docs/reviews/2026-11-24-s1-crypto/reviewer-worksheet.md
 56e32457e8fa41aa5dbe60248d87fb3545bcaff253c81cf3f93cba7556531038  docs/reviews/2026-11-24-s1-crypto/scope.md

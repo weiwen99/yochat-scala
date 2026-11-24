@@ -82,6 +82,14 @@ class HttpApiSpec extends FunSuite:
           _        = assertEquals(state, 401)
           messages <- getStatus(s"$base/api/conversations/${"00" * 32}/messages")
           _        = assertEquals(messages, 401)
+          invite   <- postStatus(
+                        s"$base/api/invitations",
+                        ujson.Obj("channelLabel" -> "test", "channelAccount" -> "@alice", "note" -> "locked", "ttlHours" -> 24)
+                      )
+          _        = assertEquals(invite, 401)
+          after    <- getJson(s"$base/api/session")
+          _        = assertEquals(after("unlocked").bool, false)
+          _        = assert(!after.obj.contains("invitations"))
         yield ()
       }.unsafeRunSync()
     finally deleteTree(directory)
@@ -106,12 +114,14 @@ class HttpApiSpec extends FunSuite:
           invitation <- received match
                           case Right(value) => IO.pure(ByteVector.fromValidHex(value("id").str))
                           case Left(error)  => IO.raiseError(new AssertionError(error.code))
-          first      <- bob.service.acceptInvitation(invitation, "test", "@bob", "reply")
-          second     <- bob.service.acceptInvitation(invitation, "test", "@bob", "reply")
+          results    <- IO.both(
+                          bob.service.acceptInvitation(invitation, "test", "@bob", "reply"),
+                          bob.service.acceptInvitation(invitation, "test", "@bob", "reply")
+                        )
           state      <- bob.service.state
         yield
-          assert(first.isRight, first.left.map(_.code).toString)
-          assert(second.isLeft)
+          val (first, second) = results
+          assertEquals(Vector(first.isRight, second.isRight).count(identity), 1)
           assertEquals(state.toOption.flatMap(_.contacts.values.headOption).map(_.confirmation), Some(ContactConfirmation.Confirmed))
       }.unsafeRunSync()
     finally
@@ -124,6 +134,16 @@ class HttpApiSpec extends FunSuite:
       val request  = HttpRequest.newBuilder(URI.create(url)).GET().build()
       val response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString())
       response.statusCode()
+    }
+
+  private def postStatus(url: String, body: Value): IO[Int] =
+    IO.blocking {
+      val request = HttpRequest
+        .newBuilder(URI.create(url))
+        .header("Content-Type", "application/json")
+        .POST(HttpRequest.BodyPublishers.ofString(ujson.write(body)))
+        .build()
+      HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString()).statusCode()
     }
 
   private def getJson(url: String): IO[Value] =

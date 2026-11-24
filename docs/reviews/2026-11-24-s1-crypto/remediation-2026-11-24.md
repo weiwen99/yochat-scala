@@ -4,7 +4,29 @@ Status: internal, non-signing. The external cryptographic gate is **still open**
 Source baseline: `fce56e8` (fix commit on top of `6884926`; packet commit `b3871bd`).
 The original findings are in `internal-review-2026-11-24.md`; this file records only what changed.
 
-## Closed findings
+## Round-2 verification and round-3 closure
+
+Round 2 correctly found that the first remediation was incomplete. Round 3 closes the three remaining
+items and strengthens the two weak tests:
+
+- **B1-write (CLOSED)**: all mutating `AppService` methods go through `withUnlockedEither`; the pure
+  kernel rejects mutating events while locked; `stateJson`/`messagesJson` gate on one state read.
+  `HttpApiSpec` tests the locked invitation POST; `InternalReviewSpec` tests locked safety/invitation
+  events.
+- **B3 retry (CLOSED)**: `RekeyTimerStage.Confirm` carries a Confirm retry. The runtime translates a
+  fired Confirm timer into a fresh-nonce `RekeyConfirmRetry`; the core persists and sends a new
+  Confirm, then arms the Initiator abort timer. Recovery is Online-only and timer-guarded, so
+  Unlock+reconnect do not double-send. `InternalReviewSpec` covers immediate recovery, duplicate
+  recovery, and the retry.
+- **M7 skipped batch (CLOSED)**: `executeAll` stops the fold as soon as it sees a non-empty skipped
+  set; the runtime removes the skipped id and enqueues `Pump`. The executor test now passes
+  `PersistRebound(Skipped)` followed by `PersistAttempt` and still returns `Right(Vector(id))`.
+- **M4 test (now probative)**: a fresh epoch/id is constructed during the cooldown; the session stays
+  Active and the test observes `RekeyFailed`.
+- **M6 test (now probative)**: two accept calls run in `IO.both`; exactly one succeeds and the contact
+  stays `Confirmed` (not `AccountMismatch`).
+
+## Closed findings (round-1 claims)
 
 | ID | Closure | Regression evidence |
 | --- | --- | --- |
@@ -27,9 +49,10 @@ The original findings are in `internal-review-2026-11-24.md`; this file records 
 
 ## Verification run
 
-- `./check.sh`: PASS (588.63 s) on the `fce56e8` source tree.
-- `./mill core.test`: 145/145.
-- `./mill store.test`: 198/198.
-- `./mill server.test`: 399/399.
-- `./mill server.e2e`: 17/17; E2E#8 1k = 4,622 ms; PERF#10K = 34,006 ms.
-- desktop gate: cold start p50 = 1,544 ms, p95 = 1,646 ms, idle 744.5 MB; UI smoke delivered=100, received=100, reciprocal=1.
+- `./mill core.test`: SUCCESS; all core MUnit classes including the new `InternalReviewSpec` cases.
+- `./mill store.test`: SUCCESS; `InternalReviewStoreSpec` both cases pass.
+- `./mill server.test`: SUCCESS; `HttpApiSpec` and `AppEffectExecutorSpec` include the new tests.
+- `./mill server.e2e`: final round-3 receipt pending the gate.
+- `./check.sh`: final gate in progress; exact PASS/time and MUnit totals will be appended.
+- Desktop gate receipt from the prior pass: cold start p50 = 1,544 ms, p95 = 1,646 ms, idle 744.5 MB;
+  UI smoke delivered=100, received=100, reciprocal=1.

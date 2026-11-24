@@ -93,7 +93,7 @@ enum TimerKind:
   case Delivery, Retry
 
 enum RekeyTimerStage:
-  case Initiator, Responder
+  case Initiator, Responder, Confirm
 
 enum TimerId:
   case Message(timerKind: TimerKind, outgoingId: Long)

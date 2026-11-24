@@ -122,15 +122,14 @@ final class AppService private (
 
   def stateJson: IO[Either[ServiceError, Value]] =
     withRunningEither { running =>
-      requireUnlocked(running).flatMap {
-        case Left(error) => IO.pure(Left(error))
-        case Right(_)    =>
+      unlockedState(running).flatMap {
+        case Left(error)  => IO.pure(Left(error))
+        case Right(state) =>
           for
-            appState     <- running.runtime.state
             fatal        <- running.runtime.fatalError
             online       <- running.relay.isOnline
             notification <- running.runtime.lastNotification
-            json         <- ApiJson.state(config, running.store, appState, online, fatal, notification)
+            json         <- ApiJson.state(config, running.store, state, online, fatal, notification)
           yield Right(json)
       }
     }
@@ -156,7 +155,7 @@ final class AppService private (
 
   def messages(conversationId: ByteVector, limit: Int): IO[Either[ServiceError, List[MessageRecord]]] =
     withRunningEither { running =>
-      requireUnlocked(running).flatMap {
+      unlockedState(running).flatMap {
         case Left(error) => IO.pure(Left(error))
         case Right(_)    =>
           running.store
@@ -167,12 +166,10 @@ final class AppService private (
 
   def messagesJson(conversationId: ByteVector, limit: Int): IO[Either[ServiceError, Value]] =
     withRunningEither { running =>
-      requireUnlocked(running).flatMap {
-        case Left(error) => IO.pure(Left(error))
-        case Right(_)    =>
-          for
-            state   <- running.runtime.state
-            records <- running.store.listRecentMessages(conversationId, math.min(1_000, limit + AppLimits.MaxBuffered))
+      unlockedState(running).flatMap {
+        case Left(error)  => IO.pure(Left(error))
+        case Right(state) =>
+          for records <- running.store.listRecentMessages(conversationId, math.min(1_000, limit + AppLimits.MaxBuffered))
           yield records
             .map { values =>
               val localUser    = running.store.identity.userPublic.bytes
@@ -195,7 +192,7 @@ final class AppService private (
     ttlMs: Long,
     note: String
   ): IO[Either[ServiceError, Value]] =
-    withRunningEither { running =>
+    withUnlockedEither { running =>
       running.runtime
         .createInvitation(channelLabel, channelAccount, expectedAccount, ttlMs, note)
         .map(invitation => Right(ApiJson.invitation(invitation)))
@@ -203,7 +200,7 @@ final class AppService private (
     }
 
   def receiveInvitation(text: String, expectedAccount: Option[String]): IO[Either[ServiceError, Value]] =
-    withRunningEither { running =>
+    withUnlockedEither { running =>
       running.runtime
         .receiveInvitation(text, expectedAccount)
         .map(invitation => Right(ApiJson.invitation(invitation)))
@@ -217,7 +214,7 @@ final class AppService private (
     note: String
   ): IO[Either[ServiceError, Value]] =
     mutex.permit.use { _ =>
-      withRunningEither { running =>
+      withUnlockedEither { running =>
         running.runtime
           .acceptInvitation(invitationId, channelLabel, channelAccount, note)
           .map(result => Right(ujson.Obj("replyText" -> result.text, "invitationId" -> invitationId.toHex)))
@@ -226,7 +223,7 @@ final class AppService private (
     }
 
   def rejectInvitation(invitationId: ByteVector): IO[Either[ServiceError, Unit]] =
-    withRunningEither { running =>
+    withUnlockedEither { running =>
       running.runtime.submit(AppEvent.RejectInvitation(invitationId)).map {
         case true  => Right(())
         case false => Left(ServiceError.SessionUnavailable)
@@ -237,7 +234,7 @@ final class AppService private (
     AppService.publicKey(user).flatMap {
       case Left(error)    => IO.pure(Left(error))
       case Right(userPub) =>
-        withRunningEither { running =>
+        withUnlockedEither { running =>
           running.runtime.submit(AppEvent.SetContactAlias(userPub, alias)).map {
             case true  => Right(())
             case false => Left(ServiceError.SessionUnavailable)
@@ -249,7 +246,7 @@ final class AppService private (
     AppService.publicKey(user).flatMap {
       case Left(error)    => IO.pure(Left(error))
       case Right(userPub) =>
-        withRunningEither { running =>
+        withUnlockedEither { running =>
           running.runtime.submit(AppEvent.SafetyVerified(userPub, clock.millis())).map {
             case true  => Right(())
             case false => Left(ServiceError.SessionUnavailable)
@@ -258,7 +255,7 @@ final class AppService private (
     }
 
   def sendMessage(conversationId: ByteVector, body: String): IO[Either[ServiceError, Long]] =
-    withRunningEither { running =>
+    withUnlockedEither { running =>
       running.runtime
         .sendMessage(conversationId, body)
         .map(id => Right(id))
@@ -269,7 +266,7 @@ final class AppService private (
     SessionId.from(sessionId) match
       case Left(_)      => IO.pure(Left(ServiceError.BadRequest("session-id")))
       case Right(value) =>
-        withRunningEither { running =>
+        withUnlockedEither { running =>
           running.runtime
             .startRekey(value)
             .map(_ => Right(()))
@@ -305,8 +302,16 @@ final class AppService private (
         }
     }
 
-  private def requireUnlocked(running: Running): IO[Either[ServiceError, Unit]] =
-    running.runtime.state.map(state => if state.lock.isUnlocked then Right(()) else Left(ServiceError.Locked))
+  private def unlockedState(running: Running): IO[Either[ServiceError, AppState]] =
+    running.runtime.state.map(state => if state.lock.isUnlocked then Right(state) else Left(ServiceError.Locked))
+
+  private def withUnlockedEither[A](action: Running => IO[Either[ServiceError, A]]): IO[Either[ServiceError, A]] =
+    withRunningEither { running =>
+      unlockedState(running).flatMap {
+        case Left(error) => IO.pure(Left(error))
+        case Right(_)    => action(running)
+      }
+    }
 
   private def withRunning[A](action: Running => IO[A]): IO[Either[ServiceError, A]] =
     AppService.readRef(sessionRef).flatMap {

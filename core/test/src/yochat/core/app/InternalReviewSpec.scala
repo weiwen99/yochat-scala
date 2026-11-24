@@ -2,7 +2,7 @@ package yochat.core.app
 
 import munit.FunSuite
 
-import yochat.core.{ControlExtension, Crypto, SessionPhase, TestKeys}
+import yochat.core.{ControlExtension, Crypto, RekeyRequest, SessionPhase, TestKeys}
 
 class InternalReviewSpec extends FunSuite:
 
@@ -89,7 +89,7 @@ class InternalReviewSpec extends FunSuite:
     val peers = AppTestSupport.connected
     val cutover = completeCutover(peers, peers.aliceState)
     val (recovered, effects) = Application.step(
-      cutover.aliceAccepted,
+      cutover.aliceAccepted.copy(timers = Map.empty),
       AppEvent.RecoverRekey(cutover.oldSessionId, TestKeys.nonce(90), 100L)
     )
     assert(effects.exists {
@@ -97,10 +97,56 @@ class InternalReviewSpec extends FunSuite:
       case _                                             => false
     })
     assert(effects.exists {
-      case AppEffect.StartTimer(timer, _) => timer == TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Initiator)
+      case AppEffect.StartTimer(timer, _) => timer == TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Confirm)
       case _                              => false
     })
     assertEquals(recovered.sessions(cutover.newSessionId).state.phase, SessionPhase.Pending)
+    val (_, duplicateRecoveryEffects) = Application.step(
+      recovered,
+      AppEvent.RecoverRekey(cutover.oldSessionId, TestKeys.nonce(98), 150L)
+    )
+    assert(!duplicateRecoveryEffects.exists { case AppEffect.SendRekeyConfirm(_, _, _) => true; case _ => false })
+    val (retried, retryEffects) = Application.step(
+      recovered,
+      AppEvent.RekeyConfirmRetry(cutover.oldSessionId, TestKeys.nonce(96), 200L)
+    )
+    assert(retryEffects.exists {
+      case AppEffect.SendRekeyConfirm(sessionId, _, _) => sessionId == cutover.newSessionId
+      case _                                             => false
+    })
+    assert(retryEffects.exists {
+      case AppEffect.StartTimer(timer, _) => timer == TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Initiator)
+      case _                              => false
+    })
+    assertEquals(retried.sessions(cutover.newSessionId).state.phase, SessionPhase.Pending)
+    val offline = cutover.aliceAccepted.copy(connection = ConnectionState.Offline)
+    val (_, offlineEffects) = Application.step(
+      offline,
+      AppEvent.RecoverRekey(cutover.oldSessionId, TestKeys.nonce(97), 300L)
+    )
+    assert(!offlineEffects.exists { case AppEffect.SendRekeyConfirm(_, _, _) => true; case _ => false })
+  }
+
+  test("B1-write: a locked kernel rejects safety and invitation mutations") {
+    val peers = AppTestSupport.connected
+    val locked = peers.aliceState.copy(
+      lock = LockState.Locked(1L),
+      idleDeadline = None,
+      contacts = peers.aliceState.contacts.map { case (id, contact) => id -> contact.copy(safetyVerified = false) },
+      sessions = peers.aliceState.sessions.map { case (id, session) => id -> session.copy(state = session.state.copy(safetyVerified = false)) }
+    )
+    val (afterSafety, safetyEffects) = Application.step(
+      locked,
+      AppEvent.SafetyVerified(peers.bob.user.publicKey, 1L)
+    )
+    assert(!afterSafety.contacts.values.head.safetyVerified)
+    assertEquals(safetyEffects, Vector.empty)
+    val (afterInvite, inviteEffects) = Application.step(
+      locked,
+      AppEvent.InvitationCreated(peers.invitation, peers.aliceEphemeral.privateKey, peers.aliceEphemeral.privateKey, None, 1L)
+    )
+    assertEquals(afterInvite.invitations, locked.invitations)
+    assertEquals(inviteEffects, Vector.empty)
   }
 
   test("M1: an ACK cannot deliver a never-sent queued message") {
@@ -181,9 +227,21 @@ class InternalReviewSpec extends FunSuite:
       bobStarted,
       AppEvent.TimerFired(TimerId.Rekey(oldSessionId, RekeyTimerStage.Responder), 0L, 5_001L)
     )
+    val freshRequest = RekeyRequest
+      .create(
+        oldSessionId,
+        request.epoch + 1L,
+        TestKeys.rekeyId(32),
+        AppTestSupport.xpair(35).publicKey,
+        peers.alice.device.publicKey,
+        peers.alice.device.privateKey,
+        TestKeys.nonce(33),
+        peers.aliceState.sessions(oldSessionId).state.rekeyBase
+      )
+      .fold(error => fail(error.toString), identity)
     val (after, effects) = Application.step(
       aborted,
-      AppEvent.RekeyRequestReceived(oldSessionId, request, AppTestSupport.xpair(33), AppTestSupport.xpair(34), TestKeys.nonce(32), 5_002L)
+      AppEvent.RekeyRequestReceived(oldSessionId, freshRequest, AppTestSupport.xpair(33), AppTestSupport.xpair(34), TestKeys.nonce(32), 5_002L)
     )
     assertEquals(after.sessions(oldSessionId).state.phase, SessionPhase.Active)
     assert(effects.contains(AppEffect.Notify(Notification.RekeyFailed)))
