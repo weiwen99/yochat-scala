@@ -52,7 +52,8 @@ items and strengthens the two weak tests:
 - `./mill core.test`: SUCCESS; all core MUnit classes including the new `InternalReviewSpec` cases.
 - `./mill store.test`: SUCCESS; `InternalReviewStoreSpec` both cases pass.
 - `./mill server.test`: SUCCESS; `HttpApiSpec` and `AppEffectExecutorSpec` include the new tests.
-- `./mill server.e2e`: 17/17; E2E#8 1k = 4,069 ms; PERF#10K = 32,719 ms.
-- `./check.sh`: PASS (577.52 s).
-- Desktop gate: cold start p50 = 1,279 ms, p95 = 1,315 ms, idle 749.9 MB; UI smoke
+- `./mill server.e2e`: 17/17; E2E#8 1k = 4,543 ms; PERF#10K = 30,424 ms.
+- `./check.sh`: PASS (578.49 s).
+- Per-suite MUnit: core 93, store 27, server 12, transport 7; 0 failed.
+- Desktop gate: cold start p50 = 1,276 ms, p95 = 1,291 ms, idle 752.5 MB; UI smoke
   delivered=100, received=100, reciprocal=1.
