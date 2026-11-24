@@ -287,7 +287,8 @@ object Application:
                   (pumped, effects ++ more)
         case AppEvent.ConnectionChanged(online, nowMs)                                                    =>
           if !online then
-            val cancelled = state.timers.keys.toVector.map(AppEffect.CancelTimer.apply)
+            val retained  = state.timers.filter { case (timer, _) => timer.isRekey }
+            val cancelled = state.timers.keys.toVector.filterNot(_.isRekey).map(AppEffect.CancelTimer.apply)
             val idle      = idleTimers(state)
             val queued    = state.outgoing.map { case (id, value) =>
               val nextState =
@@ -299,7 +300,7 @@ object Application:
             (
               state.copy(
                 connection = ConnectionState.Offline,
-                timers = startedTimers(idle),
+                timers = startedTimers(idle) ++ retained,
                 outgoing = queued
               ),
               cancelled ++ idle
@@ -623,24 +624,26 @@ object Application:
                           Rekey.confirm(complete.newSession, identity.device.publicKey, identity.device.privateKey, control, confirmNonce) match
                             case Left(_)        => (state, Vector(AppEffect.Notify(Notification.RekeyFailed)))
                             case Right(confirm) =>
-                              val oldSession = value.copy(state = complete.state)
-                              val newSession = AppSession(
+                              val oldSession   = value.copy(state = complete.state)
+                              val newSession   = AppSession(
                                 confirm.state,
                                 value.conversationId,
                                 value.nextSeq,
                                 bindingEstablished = value.bindingEstablished
                               )
-                              val deadline   = saturatingAdd(nowMs, AppLimits.RekeyTimeoutMs)
-                              val timer      = TimerId.Rekey(sessionId, RekeyTimerStage.Confirm)
-                              val next       = state.copy(
+                              val requestTimer = TimerId.Rekey(sessionId, RekeyTimerStage.Initiator)
+                              val deadline     = saturatingAdd(nowMs, AppLimits.RekeyRetryMs)
+                              val timer        = TimerId.Rekey(sessionId, RekeyTimerStage.Confirm)
+                              val next         = state.copy(
                                 sessions = state.sessions.updated(sessionId, oldSession).updated(newSession.state.sessionId, newSession),
-                                timers = state.timers.updated(timer, deadline)
+                                timers = (state.timers - requestTimer).updated(timer, deadline)
                               )
                               (
                                 next,
                                 Vector(
                                   AppEffect
                                     .PersistHandshake(None, None, Vector(oldSession, newSession), None, None, Vector.empty, Vector.empty),
+                                  AppEffect.CancelTimer(requestTimer),
                                   AppEffect.SendRekeyConfirm(newSession.state.sessionId, newSession.state.peerDevicePub, confirm.frame),
                                   AppEffect.StartTimer(timer, deadline)
                                 )

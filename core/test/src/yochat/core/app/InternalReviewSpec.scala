@@ -88,6 +88,10 @@ class InternalReviewSpec extends FunSuite:
   test("B3: a persisted initiator Accepted state resends a fresh Confirm after restart") {
     val peers = AppTestSupport.connected
     val cutover = completeCutover(peers.aliceState, peers.bobState)
+    assert(!cutover.aliceAccepted.timers.contains(TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Initiator)))
+    assert(cutover.aliceAccepted.timers.contains(TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Confirm)))
+    val (disconnected, _) = Application.step(cutover.aliceAccepted, AppEvent.ConnectionChanged(online = false, nowMs = 90L))
+    assert(disconnected.timers.contains(TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Confirm)))
     val (recovered, effects) = Application.step(
       cutover.aliceAccepted.copy(timers = Map.empty),
       AppEvent.RecoverRekey(cutover.oldSessionId, TestKeys.nonce(90), 100L)
@@ -161,6 +165,12 @@ class InternalReviewSpec extends FunSuite:
       case AppEffect.PersistHandshake(_, _, _, _, _, retired, _) => retired.exists(_._1 == cutover.oldSessionId)
       case _                                                       => false
     })
+    val (_, lateFrames) = AppTestSupport.sendFrames(peers.bob, peers.bobState.sessions.values.head.state, 1, "@bob", "@alice")
+    val (_, lateEffects) = Application.step(
+      after,
+      AppEvent.InboundFrame(102L, cutover.oldSessionId, lateFrames.head, None, TestKeys.nonce(102), 80L)
+    )
+    assertEquals(lateEffects, Vector.empty)
   }
 
   test("R3-N2: responder does not retire old before first new-session Data") {
