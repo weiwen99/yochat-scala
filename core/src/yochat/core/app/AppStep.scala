@@ -122,9 +122,11 @@ object Application:
                     if active.state.phase == SessionPhase.Active &&
                       isDirectPredecessor(current, old.state.sessionId, active.state.sessionId) =>
                   (current, effects :+ AppEffect.RebindPending(old.state.sessionId, active.state.sessionId))
-                case Some(pending) if pending.state.phase == SessionPhase.Pending || pending.state.phase == SessionPhase.ReadOnly =>
+                case Some(pending)
+                    if (pending.state.phase == SessionPhase.Pending || pending.state.phase == SessionPhase.ReadOnly) &&
+                      !chainReachesMissing(current, pending.state.sessionId) =>
                   (current, effects)
-                case _                                                                                                            =>
+                case _ =>
                   val failed = current.outgoing.values
                     .filter(_.sessionId == old.state.sessionId)
                     .toVector
@@ -822,6 +824,8 @@ object Application:
         else
           state.sessions.get(newSessionId) match
             case None                                                                                                                    => (state, Vector.empty)
+            case Some(value) if value.state.phase == SessionPhase.ReadOnly                                                               =>
+              (state, Vector.empty)
             case Some(value) if nowMs > 0L && expiredRekey(state, newSessionId, nowMs).isDefined && !ackReceivedFor(state, newSessionId) =>
               if value.state.phase == SessionPhase.Active then (state, Vector.empty)
               else
@@ -841,7 +845,10 @@ object Application:
                           rekey = session.state.rekey.map(_.copy(ackReceived = true))
                         )
                       )
-                      current.copy(sessions = current.sessions.updated(session.state.sessionId, updated))
+                      current.copy(
+                        sessions = current.sessions.updated(session.state.sessionId, updated),
+                        rekeyRetryMissed = current.rekeyRetryMissed - session.state.sessionId
+                      )
                     }
                   val active                           = value.copy(state = result.state, retireOldOnFirstData = false)
                   val retired                          = retirementCandidates(acked, active)
@@ -921,11 +928,25 @@ object Application:
     if state.timers.contains(timer) then state else state.copy(timers = state.timers.updated(timer, nowMs))
 
   private def failAncestorMessages(state: AppState, retired: Vector[SessionId]): (AppState, Vector[AppEffect]) =
-    val messages = state.outgoing.values.toVector.filter(message => pointsToRetired(state, message.sessionId, retired))
+    val messages = state.outgoing.values.toVector.filter(message =>
+      message.state != OutgoingState.Failed && pointsToRetired(state, message.sessionId, retired)
+    )
     messages.foldLeft((state, Vector.empty[AppEffect])) { case ((current, effects), message) =>
       val (next, added) = failRebind(current, message)
       (next, effects ++ added)
     }
+
+  private def chainReachesMissing(state: AppState, sessionId: SessionId): Boolean =
+    def loop(current: SessionId, seen: Set[SessionId]): Boolean =
+      if seen.contains(current) then false
+      else
+        state.sessions.get(current) match
+          case None          => true
+          case Some(session) =>
+            session.state.rekey.flatMap(_.newSessionId) match
+              case Some(next) => loop(next, seen + current)
+              case None       => false
+    loop(sessionId, Set.empty)
 
   private def pointsToRetired(state: AppState, sessionId: SessionId, retired: Vector[SessionId]): Boolean =
     def loop(current: SessionId, seen: Set[SessionId]): Boolean =
