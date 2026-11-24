@@ -194,15 +194,15 @@
   "signatures": [
     {
       "role": "T1 owner",
-      "name": "",
-      "date": "",
-      "root_sha256": ""
+      "name": "weiwen99",
+      "date": "2026-11-24",
+      "root_sha256": "ef2bad18eb6161970ceaf76361b9728fdf48a960c8d267f359a5c41e56ac621a"
     },
     {
       "role": "product/security",
-      "name": "",
-      "date": "",
-      "root_sha256": ""
+      "name": "weiwen99",
+      "date": "2026-11-24",
+      "root_sha256": "ef2bad18eb6161970ceaf76361b9728fdf48a960c8d267f359a5c41e56ac621a"
     }
   ],
   "root_sha256": "ef2bad18eb6161970ceaf76361b9728fdf48a960c8d267f359a5c41e56ac621a"

@@ -41,12 +41,6 @@ def main():
     if seen != set(split_by_id):
         print("T1_SPLIT_CHECK FAIL split batch not covered exactly once")
         return 1
-    if pending:
-        print(f"T1_SPLIT_CHECK PENDING groups={len(groups)} pending_groups={pending} split_batches={len(split)} s1_tests={sum(1 for t in tests if t['requirement_ids'])}")
-        return 1
-    if not args.apply:
-        print(f"T1_SPLIT_CHECK PASS groups={len(groups)} split_batches={len(split)} (dry-run; use --apply)")
-        return 0
     if args.bulk_sign:
         missing = [g["group_id"] for g in groups if g["decision"] not in ALLOWED]
         if missing:
@@ -59,7 +53,15 @@ def main():
         with GROUPS.open("w", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=groups[0].keys())
             w.writeheader(); w.writerows(groups)
+        pending = sum(1 for g in groups if g["decision"] not in ALLOWED or not g["signed_by"] or not g["signed_at"])
         print(f"T1_SPLIT_SIGN groups={len(groups)} signer={name} date={date}")
+
+    if pending:
+        print(f"T1_SPLIT_CHECK PENDING groups={len(groups)} pending_groups={pending} split_batches={len(split)} s1_tests={sum(1 for t in tests if t['requirement_ids'])}")
+        return 1
+    if not args.apply:
+        print(f"T1_SPLIT_CHECK PASS groups={len(groups)} split_batches={len(split)} (dry-run; use --apply)")
+        return 0
     group_for = {}
     for group in groups:
         for sid in group["split_batch_ids"].split():

@@ -1,6 +1,6 @@
 # S1 测试等价清单（T1）
 
-- 状态：per-test inventory generated 2026-11-24；append-only，等待人工签字。需求级映射仍为 40 行；逐测试 CSV 与签字材料见 `test-parity-signoff.md`。标 `PARTIAL`/`NOT YET` 的需求行仍必须先裁决。
+- 状态：T1 已由 weiwen99 于 2026-11-24 总签；逐测试决策已写入。5 个 `PARTIAL`、1 个 `NOT YET` 已按总签材料接受（含 `P7X1`/`QZGW` 两个 GAP），不是新的测试通过回执。
 - 范围：ADR-0003 的 S1，只映射 KEEP 功能；S2/S3/D 不映射。
 - 旧基线：`/Users/weiwen/projects/yochat-reference` 当前只读检出。
 - 方法：仅静态扫描与读文件；**本文不声称任何测试通过，未运行构建、测试、lint 或 Quint**。
