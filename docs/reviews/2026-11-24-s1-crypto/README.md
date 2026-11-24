@@ -1,6 +1,8 @@
 # S1 external cryptography review
 
-Status: **candidate for external review; not signed**. R3-N1 and R3-N2 are **closed** in rounds 4–10
+Status: **candidate for external review; owner sign-off recorded, not externally signed**. The
+repository owner confirmed acceptance with known limits on 2026-11-25
+(`reviewer-checklist.md`). This is not an independent external reviewer signature. R3-N1 and R3-N2 are **closed** in rounds 4–10
 (`internal-review-rounds-4-10.md`); the round-3 report is historical input. R11–R14 closed the
 remaining deadline, timer-installation, Skipped, legacy-upgrade, Ack/retirement, ancestor, and
 offline-recovery items (`internal-review-rounds-11-14.md`). Known limits remain: M8 (byte-unbounded

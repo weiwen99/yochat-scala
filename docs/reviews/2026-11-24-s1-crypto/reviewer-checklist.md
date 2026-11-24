@@ -1,7 +1,11 @@
 # Reviewer checklist and sign-off
 
 Reviewer: ____________________  Organization: ____________________  Date: ____________
-Baseline commit: `6884926`  Manifest verified: yes / no
+Baseline commit: `e2001ad`  Manifest verified: yes / no
+
+> This checklist records both an independent reviewer signature and the repository owner decision.
+> The owner decision below is an acceptance record, not a substitute for the independent reviewer
+> signature required to close the external cryptographic gate.
 
 ## Entry checks
 
@@ -50,4 +54,13 @@ Baseline commit: `6884926`  Manifest verified: yes / no
 - [ ] FAIL — blocking design/implementation issue; release stopped.
 
 Reviewer signature: ____________________  Date: ____________
-Repository owner decision: ____________________  Date: ____________
+
+Repository owner decision: **Accepted with known limits** — repository owner confirmed signing in
+the handoff session on 2026-11-25. Accepted limits: M8 (queue byte budget), M9 (key-source/ADR
+mismatch), store retirement guard `Pending`-only, missing runtime multi-row `Migrated`/`Skipped` and
+mid-batch store-failure coverage, and absence of an independent external KAT/signature.
+Date: 2026-11-25
+
+> This owner decision does not fill the independent reviewer line. The external cryptographic gate
+> remains open until a human or institution with no conflict of interest signs above after verifying
+> the manifest, reproducing the evidence, and answering `open-questions.md`.
