@@ -1,13 +1,14 @@
 # S1 external cryptography review
 
-Status: **not ready for external review**. An internal adversarial review (`internal-review-2026-11-24.md`)
-found 3 BLOCKER and 9 MAJOR defects, including two rekey/cutover failures that Plan 0007 required to be
-fixed and one idle-lock HTTP leak. No external reviewer has been commissioned and none has signed this
-package. The external cryptographic gate is **open**.
+Status: **not ready for external review**. The internal adversarial review found 3 BLOCKER and
+9 MAJOR defects. B1–B3 and M1–M7 are fixed in source `fce56e8`; M8 (byte-unbounded queues) and M9
+(key-source/ADR mismatch) remain open. No external reviewer has been commissioned and none has signed
+this package. The external cryptographic gate is **open**.
 
-Baseline: source `main` at `6884926` (2026-11-24); packet at `21991d3` plus the uncommitted internal
-review and worksheet. `manifest.sha256` covers the source snapshot and this packet's docs (178 entries
-at this revision; source files unchanged from `6884926`; verified).
+Baseline: source `fce56e8` on top of `6884926`; packet `b3871bd` plus this remediation record.
+`manifest.sha256` covers the source snapshot and this packet's docs; it is regenerated at each packet
+revision and verified before handoff. The full `./check.sh` gate passed at source `fce56e8`
+(17/17 E2E, 1k 4,622 ms, 10k 34,006 ms, UI smoke 100/100).
 Scope: the S1 two-party, one-device-each, relay-only YoChat implementation.
 
 This package is for an independent cryptography reviewer. It describes the design as implemented,
@@ -23,13 +24,14 @@ identifies what has and has not been tested, and records known limits. Findings 
 5. `evidence.md` — tests, vectors, models, performance receipts and commands.
 6. `open-questions.md` — questions we want the reviewer to answer.
 7. `internal-review-2026-11-24.md` — internal adversarial review; non-signing input, 3 BLOCKER /
-   9 MAJOR. Read this before the checklist: several rows are already known failures.
-8. `reviewer-worksheet.md` — the 33 questions mapped to code and tests, with the independent
+   9 MAJOR. Read this before the checklist.
+8. `remediation-2026-11-24.md` — closure status for B1–B3/M1–M7 and the two remaining MAJOR items.
+9. `reviewer-worksheet.md` — the 33 questions mapped to code and tests, with the independent
    verification each one still needs.
-9. `reviewer-checklist.md` — sign-off checklist.
-10. `findings-template.md` — required finding format.
-11. `source-map.md` — where each implementation concern lives.
-12. `manifest.sha256` — source files covered by this snapshot.
+10. `reviewer-checklist.md` — sign-off checklist.
+11. `findings-template.md` — required finding format.
+12. `source-map.md` — where each implementation concern lives.
+13. `manifest.sha256` — source files covered by this snapshot.
 
 ## Boundary
 
@@ -53,7 +55,7 @@ S1 is not a production-audited messenger. The following are deliberately outside
 ## Gate closure
 
 The external cryptographic gate is open. This package becomes ready for an external reviewer only
-after B1–B3 and M1–M7 are fixed and re-tested; the fixed source gets a new commit and a new manifest.
+after M8/M9 are resolved and the fixed source gets a new commit and manifest.
 A human or institution with no conflict of interest then verifies the manifest, reproduces the
 evidence, answers `open-questions.md`, and signs `reviewer-checklist.md`. No internal review and no
 AI-generated document can close this gate.

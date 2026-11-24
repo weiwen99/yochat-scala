@@ -1,5 +1,8 @@
 # Internal adversarial review — S1 crypto and cutover
 
+Closure status: B1–B3 and M1–M7 are fixed in source `fce56e8`; see `remediation-2026-11-24.md`.
+M8 and M9 remain open, so this is still **not ready for external review**.
+
 **Status: internal, non-signing. This is NOT the independent external cryptographic review and cannot
 close that gate.** The external gate stays open regardless of what follows.
 
