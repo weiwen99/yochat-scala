@@ -1,8 +1,8 @@
 # S1 external cryptography review
 
-Status: **not ready for external review**. The 10-round internal review budget is exhausted;
-remediation rounds 4–10 closed the original blockers and several cutover/recovery defects, but R10
-still reports five P1 plus one P2 blocker (see `internal-review-rounds-4-10.md`). Round 1 found 3 BLOCKER and 9 MAJOR defects. Round 2
+Status: **candidate for external review; not signed**. Internal rounds 11–14 closed the remaining
+deadline, timer-installation, Skipped, legacy-upgrade, Ack/retirement, and offline-recovery items;
+M8/M9 remain open and no external signature exists (see `internal-review-rounds-11-14.md`). Round 1 found 3 BLOCKER and 9 MAJOR defects. Round 2
 verified B2, M1, M2, M3, M5, and the B1 read paths, but found B1 writes, B3 retry, and M7 batch
 still open. Round 3 closes those three items and strengthens the M4/M6 tests. A round-3 re-review of
 `bb152f8` (`internal-review-round3-2026-11-24.md`) verified those closures, but found two further
@@ -13,8 +13,7 @@ before the first authenticated new-session Data. M8 (byte-unbounded queues) and 
 mismatch) remain open. No external reviewer has been commissioned and none has signed this package.
 The external cryptographic gate is **open**.
 
-Baseline: source `056a619` on top of `6884926`; packet `43c6830` plus the round-2 note and
-round-3 remediation. `manifest.sha256` covers the source snapshot
+Baseline: source `db84f70` on top of `6884926`; packet `43c6830` plus rounds 2–14. `manifest.sha256` covers the source snapshot
 and this packet's docs; it is regenerated at each packet revision and verified before handoff. The
 final `./check.sh` receipt is in `remediation-2026-11-24.md`.
 
@@ -40,10 +39,12 @@ identifies what has and has not been tested, and records known limits. Findings 
     R3-N1 (old session store/app split) and R3-N2 (responder retirement evidence) open.
 11. `reviewer-worksheet.md` — the 33 questions mapped to code and tests, with the independent
     verification each one still needs.
-12. `reviewer-checklist.md` — sign-off checklist.
-13. `findings-template.md` — required finding format.
-14. `source-map.md` — where each implementation concern lives.
-15. `manifest.sha256` — source files covered by this snapshot.
+12. `internal-review-rounds-11-14.md` — rounds 11–14: deadline/timer/Skipped/legacy closure and
+    remaining limits.
+13. `reviewer-checklist.md` — sign-off checklist.
+14. `findings-template.md` — required finding format.
+15. `source-map.md` — where each implementation concern lives.
+16. `manifest.sha256` — source files covered by this snapshot.
 
 ## Boundary
 
