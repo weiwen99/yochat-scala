@@ -34,9 +34,9 @@ Performance gates are hard but are not evidence of cryptographic security.
 | `transport.test` | 7 tests, 0 failed; relay/reconnect |
 | `server.e2e` | 17/17 PASS; two separate server JVM processes, real relay, separate SQLite data dirs |
 | UI smoke | 2 windows / 100 messages each direction, 0 API failures; restart/reconnect/rekey smoke |
-| 1k gate | 1,000 data messages: p50 892 ms, p95 1,098 ms, end-to-end under 5 s |
-| 10k gate | 10,000 data messages: 40,567 ms, under 60 s; ACK window 32 |
-| cold start | p50 1,312 ms, p95 1,791 ms (Electron+JVM); idle memory ~719.3 MB |
+| 1k gate | 1,000 data messages: 4,069 ms end-to-end, under 5 s |
+| 10k gate | 10,000 data messages: 32,719 ms, under 60 s; ACK window 32 |
+| cold start | p50 1,279 ms, p95 1,315 ms (Electron+JVM); idle memory 749.9 MB |
 | `server.bench` | 10k appends + 20 full restores; not an E2E substitute |
 
 Exact machine/toolchain: macOS arm64, JDK 25, Mill, repo commit `6884926`; UI counts from Playwright

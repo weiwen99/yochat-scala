@@ -1,7 +1,7 @@
 # Internal review remediation status
 
 Status: internal, non-signing. The external cryptographic gate is **still open**.
-Source baseline: `fce56e8` (fix commit on top of `6884926`; packet commit `b3871bd`).
+Source baseline: `bb152f8` (round-3 fix commit on top of `6884926`; packet commit `b3871bd`).
 The original findings are in `internal-review-2026-11-24.md`; this file records only what changed.
 
 ## Round-2 verification and round-3 closure
@@ -52,7 +52,7 @@ items and strengthens the two weak tests:
 - `./mill core.test`: SUCCESS; all core MUnit classes including the new `InternalReviewSpec` cases.
 - `./mill store.test`: SUCCESS; `InternalReviewStoreSpec` both cases pass.
 - `./mill server.test`: SUCCESS; `HttpApiSpec` and `AppEffectExecutorSpec` include the new tests.
-- `./mill server.e2e`: final round-3 receipt pending the gate.
-- `./check.sh`: final gate in progress; exact PASS/time and MUnit totals will be appended.
-- Desktop gate receipt from the prior pass: cold start p50 = 1,544 ms, p95 = 1,646 ms, idle 744.5 MB;
-  UI smoke delivered=100, received=100, reciprocal=1.
+- `./mill server.e2e`: 17/17; E2E#8 1k = 4,069 ms; PERF#10K = 32,719 ms.
+- `./check.sh`: PASS (577.52 s).
+- Desktop gate: cold start p50 = 1,279 ms, p95 = 1,315 ms, idle 749.9 MB; UI smoke
+  delivered=100, received=100, reciprocal=1.

@@ -6,8 +6,8 @@ still open. Round 3 closes those three items and strengthens the M4/M6 tests. M8
 queues) and M9 (key-source/ADR mismatch) remain open. No external reviewer has been commissioned and
 none has signed this package. The external cryptographic gate is **open**.
 
-Baseline: round-3 source commit (the commit containing this packet) on top of `6884926`; packet
-`43c6830` plus the round-2 note and round-3 remediation. `manifest.sha256` covers the source snapshot
+Baseline: source `bb152f8` on top of `6884926`; packet `43c6830` plus the round-2 note and
+round-3 remediation. `manifest.sha256` covers the source snapshot
 and this packet's docs; it is regenerated at each packet revision and verified before handoff. The
 final `./check.sh` receipt is in `remediation-2026-11-24.md`.
 
