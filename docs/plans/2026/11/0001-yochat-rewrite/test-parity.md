@@ -218,7 +218,8 @@ S1 只冻结 5 个新模型。下表先列每个新模型的性质来源与显�
 - 批量签字：`test-parity-split-groups.csv`（26 组，覆盖 629 条；不必逐行手工签）；`test-parity-batches.csv` 是拆分前输入。
 - AI 初审与异常：`test-parity-batches-reviewed.csv`、`test-parity-exceptions.md`（19 个 clean 候选、39 个异常待裁决）。
 - 自动拆分：`test-parity-split-report.md`（81 个 split 子批 → 26 个签字组 + 6 个需求裁决）。
-- 自动初判：`test-parity-split-groups-reviewed.csv`；仅剩 `test-parity-human-decisions.md` 的 11 项。
+- 自动初判：`test-parity-split-groups-reviewed.csv`；仅剩 `test-parity-human-decisions.md` 的 11 项（用户已接受）。
+- 总签：`test-parity-final-signoff.md`、`test-parity-final-manifest.json`（root `ef2bad18eb6161970ceaf76361b9728fdf48a960c8d267f359a5c41e56ac621a`）。
 - 签字说明：`test-parity-signoff.md`。
 - 生成器：`tools/t1_inventory_gen.py`（默认读 `~/projects/yochat-reference`，可用 `YOCHAT_REFERENCE` 覆盖）。
 - 校验器：`tools/t1_signoff_check.py`；未完成签字时列出 629 个 S1 候选中的缺失 decision 并退出 1。

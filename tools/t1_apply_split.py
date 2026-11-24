@@ -20,6 +20,7 @@ def read(path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--bulk-sign", nargs=2, metavar=("NAME", "DATE"), help="sign all groups with one T1-owner attestation")
     args = parser.parse_args()
     tests = read(TESTS)
     split = read(SPLIT)
@@ -46,6 +47,19 @@ def main():
     if not args.apply:
         print(f"T1_SPLIT_CHECK PASS groups={len(groups)} split_batches={len(split)} (dry-run; use --apply)")
         return 0
+    if args.bulk_sign:
+        missing = [g["group_id"] for g in groups if g["decision"] not in ALLOWED]
+        if missing:
+            print("T1_SPLIT_SIGN failed: missing decisions " + " ".join(missing))
+            return 1
+        name, date = args.bulk_sign
+        for group in groups:
+            group["signed_by"] = name
+            group["signed_at"] = date
+        with GROUPS.open("w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=groups[0].keys())
+            w.writeheader(); w.writerows(groups)
+        print(f"T1_SPLIT_SIGN groups={len(groups)} signer={name} date={date}")
     group_for = {}
     for group in groups:
         for sid in group["split_batch_ids"].split():

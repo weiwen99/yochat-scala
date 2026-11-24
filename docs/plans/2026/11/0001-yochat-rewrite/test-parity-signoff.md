@@ -13,7 +13,8 @@
 - 生成器：`tools/t1_inventory_gen.py`
 - 拆分组应用器：`tools/t1_apply_split.py`
 - 自动初判：`test-parity-split-groups-reviewed.csv`
-- 仅需人工决定：`test-parity-human-decisions.md`（5 组 + 6 需求）
+- 仅需人工决定：`test-parity-human-decisions.md`（5 组 + 6 需求；用户已接受）
+- 总签材料：`test-parity-final-signoff.md`、`test-parity-final-manifest.json`（root `ef2bad18eb6161970ceaf76361b9728fdf48a960c8d267f359a5c41e56ac621a`）
 - 校验器：`tools/t1_signoff_check.py`
 
 ## 1. 清点口径
@@ -73,7 +74,7 @@ AI 初审把 58 批分成 19 个 `CLEAN_CANDIDATE` 和 39 个 `EXCEPTION`。异�
 每组记录 `row_ids_sha256`，固定该组包含的子批及测试行；组内测试不可能在不改哈希的情况下被静默增删。审阅时先看 `test-parity-split-report.md` 和异常清单，填写组的 `decision, signed_by, signed_at`；然后运行：
 
 ```sh
-python3 tools/t1_apply_split.py --apply
+python3 tools/t1_apply_split.py --bulk-sign "姓名" "2026-11-24" --apply
 python3 tools/t1_signoff_check.py
 ```
 

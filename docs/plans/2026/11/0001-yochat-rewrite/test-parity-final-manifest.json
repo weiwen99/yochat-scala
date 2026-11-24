@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "base": "595f2f5",
+  "groups": [
+    {
+      "group_id": "T1G-001",
+      "decision": "ACCEPT_OMIT",
+      "test_count": "234",
+      "row_ids_sha256": "81d974cb4f9e2bc63b1f94fb2d9160515efa71b0a8c6f210116334c4745140db"
+    },
+    {
+      "group_id": "T1G-002",
+      "decision": "ACCEPT_PORT",
+      "test_count": "20",
+      "row_ids_sha256": "2b5ed228bc4a0357a0cbf9933ba109636e37771a8470f63f3edcdad239b495c7"
+    },
+    {
+      "group_id": "T1G-003",
+      "decision": "ACCEPT_PORT",
+      "test_count": "42",
+      "row_ids_sha256": "30e381987fa18202f6319df1293e9448b25948b9caffc31a8a5fd6775d3e54ab"
+    },
+    {
+      "group_id": "T1G-004",
+      "decision": "ACCEPT_PORT",
+      "test_count": "9",
+      "row_ids_sha256": "f31a50211f665f0c434ea95e1eac63eb6ca74217e193abfc695fd9c82810552d"
+    },
+    {
+      "group_id": "T1G-005",
+      "decision": "ACCEPT_PORT",
+      "test_count": "12",
+      "row_ids_sha256": "7e4b1a232146fa17945437c79b35c8114aa1122a5220b383dbdefa516bb9c877"
+    },
+    {
+      "group_id": "T1G-006",
+      "decision": "ACCEPT_PORT",
+      "test_count": "19",
+      "row_ids_sha256": "0192747b00aaad6bea9bc02e9168cc08af112679a80bfcf1ebda05bb96d8bb21"
+    },
+    {
+      "group_id": "T1G-007",
+      "decision": "ACCEPT_REWRITE",
+      "test_count": "7",
+      "row_ids_sha256": "cfc268be48282611f2b45006e2ce7b5f214757b25443e96b554f255bd5309777"
+    },
+    {
+      "group_id": "T1G-008",
+      "decision": "ACCEPT_REWRITE",
+      "test_count": "23",
+      "row_ids_sha256": "953ff79d35c3bf676aa84743876d25bf74a1e0c5d4debc8b1fe37d8f21ff4447"
+    },
+    {
+      "group_id": "T1G-009",
+      "decision": "ACCEPT_REWRITE",
+      "test_count": "10",
+      "row_ids_sha256": "3d99b1090126528d347cb99c49d907e58913cdd844bf4488872da61c1686e583"
+    },
+    {
+      "group_id": "T1G-010",
+      "decision": "ACCEPT_REWRITE",
+      "test_count": "9",
+      "row_ids_sha256": "983c0f342f4bd7b6820303dcea19c07f67f4d6ea13105799cc05bc59e521301f"
+    },
+    {
+      "group_id": "T1G-011",
+      "decision": "ACCEPT_PORT",
+      "test_count": "8",
+      "row_ids_sha256": "54dbce10387ccb3190c58dba027ccd71001955c580db9dd5ed3af5ec76b3791a"
+    },
+    {
+      "group_id": "T1G-012",
+      "decision": "ACCEPT_PORT",
+      "test_count": "2",
+      "row_ids_sha256": "e53a68c55316f79cd962c68fc430516fc814925470992fd65263302af8961d67"
+    },
+    {
+      "group_id": "T1G-013",
+      "decision": "ACCEPT_REWRITE",
+      "test_count": "7",
+      "row_ids_sha256": "147d5ce31b8584006e5cbe343f29815c9667fbb4d13bd6fd8df77b206e9e0f42"
+    },
+    {
+      "group_id": "T1G-014",
+      "decision": "ACCEPT_PORT",
+      "test_count": "6",
+      "row_ids_sha256": "d9e66730c1e897da5f5052473f26298ce6aaa24d7dd5d8c3a479bee73f7e5c2d"
+    },
+    {
+      "group_id": "T1G-015",
+      "decision": "ACCEPT_PORT",
+      "test_count": "9",
+      "row_ids_sha256": "01ba0a699df51b7be2f5dc2ad355750bb8620c608a28c1d0ce957e358588c687"
+    },
+    {
+      "group_id": "T1G-016",
+      "decision": "ACCEPT_PORT",
+      "test_count": "10",
+      "row_ids_sha256": "7853618713729acaa165d37261c5dae64595a8bacf5b166daa8abc4cd7caa478"
+    },
+    {
+      "group_id": "T1G-017",
+      "decision": "ACCEPT_PORT",
+      "test_count": "1",
+      "row_ids_sha256": "206954d0f4f75a08d7c73c556fe257112aee496917a4c48a9aa6705dde63c75b"
+    },
+    {
+      "group_id": "T1G-018",
+      "decision": "ACCEPT_PORT",
+      "test_count": "9",
+      "row_ids_sha256": "8467b9793a28316011073b0649bc773a7231629e444a1616d278bcf373b22e42"
+    },
+    {
+      "group_id": "T1G-019",
+      "decision": "ACCEPT_PORT",
+      "test_count": "14",
+      "row_ids_sha256": "66ce36739a5fe03e14065a7f8d37084a054ef47bb4fe01964ee8f8683eafda02"
+    },
+    {
+      "group_id": "T1G-020",
+      "decision": "ACCEPT_REWRITE",
+      "test_count": "17",
+      "row_ids_sha256": "b6ef840d1653dc36de7ea16745467237bd42953f4b87f56e76a7870389495c6e"
+    },
+    {
+      "group_id": "T1G-021",
+      "decision": "ACCEPT_PORT",
+      "test_count": "71",
+      "row_ids_sha256": "55cf7e2b686ef98d3fb4cf69b5052aedd3fdf7ed0fcd7dc4fddb270a9c6ce869"
+    },
+    {
+      "group_id": "T1G-022",
+      "decision": "ACCEPT_PORT",
+      "test_count": "4",
+      "row_ids_sha256": "4a4b34e8d125a62dbc75386a8d805d18aa1dd579cdb18957286d8c74fb9a216e"
+    },
+    {
+      "group_id": "T1G-023",
+      "decision": "ACCEPT_PORT",
+      "test_count": "16",
+      "row_ids_sha256": "532bc8825bdfa50f20ce75a85d9a4a16bce74b20cf8e2f785c18460610319535"
+    },
+    {
+      "group_id": "T1G-024",
+      "decision": "ACCEPT_REWRITE",
+      "test_count": "54",
+      "row_ids_sha256": "222d1e4313fb0259a86cdc0d33df15e27741726d777171330fc9dd1e3b47bb6d"
+    },
+    {
+      "group_id": "T1G-025",
+      "decision": "ACCEPT_REWRITE",
+      "test_count": "13",
+      "row_ids_sha256": "fdecda8c6e5c25c73c7636df5290e5733d0d88405559c4a0e1e32f0c32728ae0"
+    },
+    {
+      "group_id": "T1G-026",
+      "decision": "ACCEPT_REWRITE",
+      "test_count": "3",
+      "row_ids_sha256": "3b928af521c0fe43b083a332c2e2d9d8a56dc3185c1de00ff1abe06367ee2bbf"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "JW13382752N6T1XR",
+      "decision": "ACCEPT_EXISTING_EVIDENCE",
+      "rationale": "T1G-021 chat-flow + E2E#3/UI; accepted by user"
+    },
+    {
+      "id": "DCNS38550F4AY1K5",
+      "decision": "ACCEPT_REWRITE",
+      "rationale": "T1G-020 two-party ratchet; accepted by user"
+    },
+    {
+      "id": "RYGFPP529TDA9R6X",
+      "decision": "ACCEPT_PORT",
+      "rationale": "T1G-023 admission; accepted by user"
+    },
+    {
+      "id": "P7X1QGZCYA41GAQT",
+      "decision": "ACCEPT_GAP",
+      "rationale": "No participant-unreadability test; RelaySpec opaque forwarding + relay-only scope; accepted gap"
+    },
+    {
+      "id": "MXHYRG96W0VKB031",
+      "decision": "ACCEPT_PORT",
+      "rationale": "T1G-022/023 silent unauthorized handling; accepted by user"
+    },
+    {
+      "id": "QZGW3CN8BHBB0F6N",
+      "decision": "ACCEPT_GAP",
+      "rationale": "S1 has no discovery/address payload; new address test deferred; accepted gap"
+    }
+  ],
+  "signatures": [
+    {
+      "role": "T1 owner",
+      "name": "",
+      "date": "",
+      "root_sha256": ""
+    },
+    {
+      "role": "product/security",
+      "name": "",
+      "date": "",
+      "root_sha256": ""
+    }
+  ],
+  "root_sha256": "ef2bad18eb6161970ceaf76361b9728fdf48a960c8d267f359a5c41e56ac621a"
+}
