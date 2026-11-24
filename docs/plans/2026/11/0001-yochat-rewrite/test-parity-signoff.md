@@ -5,11 +5,13 @@
 - 新实现基线：`f7df53d`
 - 旧实现基线：`/Users/weiwen/projects/yochat-reference`（只读；静态扫描）
 - 逐测试文件：`test-parity-tests.csv`（2,774 行；629 条 S1 候选）
-- 批量签字文件：`test-parity-batches.csv`（58 个批次；**不需要逐条签 629 次**）
+- 批量签字文件：`test-parity-split-groups.csv`（**26 个签字组**；不需要逐条签 629 次）
 - AI 初审：`test-parity-batches-reviewed.csv`（19 个 clean 候选、39 个异常待裁决）
 - 异常清单：`test-parity-exceptions.md`（先审这一份，不要直接签原始 58 批）
+- 自动拆分结果：`test-parity-split-report.md`（81 个 split 子批 → 26 个签字组）
+- 拆分组签字器：`tools/t1_apply_split.py`
 - 生成器：`tools/t1_inventory_gen.py`
-- 批量应用器：`tools/t1_apply_batches.py`
+- 拆分组应用器：`tools/t1_apply_split.py`
 - 校验器：`tools/t1_signoff_check.py`
 
 ## 1. 清点口径
@@ -58,20 +60,22 @@ AI 初审把 58 批分成 19 个 `CLEAN_CANDIDATE` 和 39 个 `EXCEPTION`。异�
 
 ## 3. 批量签字（推荐）
 
-629 条 S1 候选按 `(source, requirement_ids)` 归并为 **58 个批次**：
+629 条 S1 候选先拆为 81 个测试子批，再归并为 **26 个签字组**：
 
-| 批量文件 | 批次数 | 覆盖 S1 行 |
+| 文件 | 组数 | 覆盖 S1 行 |
 | --- | ---: | ---: |
-| `test-parity-batches.csv` | 58 | 629 |
+| `test-parity-split-groups.csv` | 26（25 S1 + 1 OMIT） | 629 |
+| `test-parity-split.csv` | 81 个 split 子批 | 629 |
+| `test-parity-split-membership.csv` | 629 | 629 |
 
-每批记录 `batch_sha256`，固定该批的 `row_id`/source/test/requirement；批内测试不可能在不改哈希的情况下被静默增删。审阅时按 source 看一次旧测试文件/片段，填写该批的 `batch_decision, signed_by, signed_at`；然后运行：
+每组记录 `row_ids_sha256`，固定该组包含的子批及测试行；组内测试不可能在不改哈希的情况下被静默增删。审阅时先看 `test-parity-split-report.md` 和异常清单，填写组的 `decision, signed_by, signed_at`；然后运行：
 
 ```sh
-python3 tools/t1_apply_batches.py --apply
+python3 tools/t1_apply_split.py --apply
 python3 tools/t1_signoff_check.py
 ```
 
-应用器只从已完整签名的批次展开到逐测试行；不会覆盖已有的冲突行决策。这样人工签字约 **58 个批次 + 6 个需求行裁决**，而不是 629 行。
+应用器只从已完整签名的组展开到逐测试行；不会覆盖已有的冲突行决策。这样人工签字约 **26 个组 + 6 个需求行裁决**，而不是 629 行。`test-parity-batches.csv` 是拆分前输入，不再直接作为签字单位。
 
 ## 4. CSV 字段与签字规则
 
