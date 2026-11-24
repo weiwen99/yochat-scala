@@ -168,7 +168,7 @@ class InternalReviewSpec extends FunSuite:
     val (_, lateFrames) = AppTestSupport.sendFrames(peers.bob, peers.bobState.sessions.values.head.state, 1, "@bob", "@alice")
     val (_, lateEffects) = Application.step(
       after,
-      AppEvent.InboundFrame(102L, cutover.oldSessionId, lateFrames.head, None, TestKeys.nonce(102), 80L)
+      AppEvent.InboundFrame(102L, cutover.oldSessionId, lateFrames.head, Some(AppTestSupport.xpair(103)), TestKeys.nonce(102), 80L)
     )
     assertEquals(lateEffects, Vector.empty)
   }

@@ -190,6 +190,7 @@ object Application:
               if Set(OutgoingState.Persisting, OutgoingState.Sent, OutgoingState.Queued, OutgoingState.InFlight).contains(message.state)
               session   <- state.sessions.get(newSessionId)
               if session.state.phase == SessionPhase.Active && session.bindingEstablished
+              if isDirectPredecessor(state, message.sessionId, newSessionId)
               contact   <- state.contacts.get(session.state.peerUserPub)
               envelope  <- outboundPayload(identity, contact, message.body, message.seq)
               encrypted <-
@@ -728,6 +729,12 @@ object Application:
                         rebindOlds.map(id => AppEffect.RebindPending(id, newSessionId))
                     )
 
+  private def isDirectPredecessor(state: AppState, oldSessionId: SessionId, newSessionId: SessionId): Boolean =
+    state.sessions
+      .get(oldSessionId)
+      .flatMap(_.state.rekey.flatMap(_.newSessionId))
+      .contains(newSessionId)
+
   private def hasRebindableOutgoing(state: AppState, sessionId: SessionId): Boolean =
     state.outgoing.values.exists(value => value.sessionId == sessionId && value.state != OutgoingState.Failed)
 
@@ -1145,6 +1152,7 @@ object Application:
         session.state.rekey
           .filter(rekey =>
             rekeyTimerAllowed(state, rekey) &&
+              !state.timers.keys.exists(_.rekeySessionId.contains(session.state.sessionId)) &&
               !(rekey.role == RekeyRole.Initiator &&
                 rekey.phase == RekeyPhase.Accepted &&
                 rekey.newSessionId.exists(id => state.sessions.get(id).exists(_.state.phase == SessionPhase.Pending)))
@@ -1163,7 +1171,9 @@ object Application:
       )
 
   private def rekeyTimerAllowed(state: AppState, rekey: RekeyState): Boolean =
-    rekey.newSessionId.forall(id => state.sessions.get(id).forall(_.state.phase != SessionPhase.Active))
+    rekey.newSessionId match
+      case None     => true
+      case Some(id) => state.sessions.get(id).exists(_.state.phase == SessionPhase.Pending)
 
   private def retryReply(state: AppState, invitationId: ByteVector, timer: TimerId): (AppState, Vector[AppEffect]) =
     state.invitations.get(invitationId) match
@@ -1181,31 +1191,33 @@ object Application:
     timer: TimerId,
     nowMs: Long
   ): (AppState, Vector[AppEffect]) =
-    state.sessions.get(sessionId) match
-      case None        => (state.copy(timers = state.timers - timer), Vector.empty)
-      case Some(value) =>
-        value.state.rekey match
-          case Some(rekey) if timerStage(rekey.role) == stage =>
-            if !rekeyTimerAllowed(state, rekey) then (state.copy(timers = state.timers - timer), Vector.empty)
-            else
-              Rekey.abort(value.state, nowMs).toOption match
-                case None          => (state.copy(timers = state.timers - timer), Vector(AppEffect.Notify(Notification.RekeyFailed)))
-                case Some(aborted) =>
-                  val active          = value.copy(state = aborted)
-                  val pendingSessions = rekey.newSessionId.toVector
-                  val next            = state.copy(
-                    sessions = pendingSessions.foldLeft(state.sessions.updated(sessionId, active))((map, id) => map - id),
-                    timers = state.timers - timer
-                  )
-                  (
-                    next,
-                    Vector(
-                      AppEffect.PersistHandshake(None, None, Vector(active), None, None, Vector.empty, pendingSessions),
-                      AppEffect.CancelTimer(timer),
-                      AppEffect.Notify(Notification.RekeyFailed)
+    if !state.timers.contains(timer) then (state, Vector.empty)
+    else
+      state.sessions.get(sessionId) match
+        case None        => (state.copy(timers = state.timers - timer), Vector.empty)
+        case Some(value) =>
+          value.state.rekey match
+            case Some(rekey) if timerStage(rekey.role) == stage =>
+              if !rekeyTimerAllowed(state, rekey) then (state.copy(timers = state.timers - timer), Vector.empty)
+              else
+                Rekey.abort(value.state, nowMs).toOption match
+                  case None          => (state.copy(timers = state.timers - timer), Vector(AppEffect.Notify(Notification.RekeyFailed)))
+                  case Some(aborted) =>
+                    val active          = value.copy(state = aborted)
+                    val pendingSessions = rekey.newSessionId.toVector
+                    val next            = state.copy(
+                      sessions = pendingSessions.foldLeft(state.sessions.updated(sessionId, active))((map, id) => map - id),
+                      timers = state.timers - timer
                     )
-                  )
-          case _                                              => (state.copy(timers = state.timers - timer), Vector.empty)
+                    (
+                      next,
+                      Vector(
+                        AppEffect.PersistHandshake(None, None, Vector(active), None, None, Vector.empty, pendingSessions),
+                        AppEffect.CancelTimer(timer),
+                        AppEffect.Notify(Notification.RekeyFailed)
+                      )
+                    )
+            case _                                              => (state.copy(timers = state.timers - timer), Vector.empty)
 
   private def timerStage(role: RekeyRole): RekeyTimerStage =
     role match

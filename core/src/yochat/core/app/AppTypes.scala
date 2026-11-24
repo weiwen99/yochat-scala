@@ -116,6 +116,11 @@ enum TimerId:
       case TimerId.Rekey(_, _) => true
       case _                   => false
 
+  def rekeySessionId: Option[SessionId] =
+    this match
+      case TimerId.Rekey(sessionId, _) => Some(sessionId)
+      case _                           => None
+
 object TimerId:
 
   def apply(kind: TimerKind, messageId: Long): TimerId = TimerId.Message(kind, messageId)
