@@ -647,7 +647,7 @@ object AppRuntime:
                             .contains(message.state)
                       )
                       .toVector
-                      .sortBy(_.id)
+                      .sortBy(message => (message.seq, message.id))
                       .headOption match
                       case None        => IO.unit
                       case Some(value) =>
@@ -669,16 +669,18 @@ object AppRuntime:
                           }
                         }
                   }
-                loop *> applyEvent(
-                  transport,
-                  AppEvent.Pump(clock.millis()),
-                  queue,
-                  stateRef,
-                  random,
-                  executor,
-                  fatal,
-                  clock,
-                  onState
+                loop *> IO.defer(
+                  applyEvent(
+                    transport,
+                    AppEvent.Pump(clock.millis()),
+                    queue,
+                    stateRef,
+                    random,
+                    executor,
+                    fatal,
+                    clock,
+                    onState
+                  )
                 )
               case _                                                         =>
                 executor.execute(effect).flatMap {
@@ -822,12 +824,17 @@ object AppRuntime:
                                  expectedControl(state, frame.header.sessionId, RekeyRole.Responder) match
                                    case None           => IO.pure(None)
                                    case Some(expected) =>
-                                     IO.pure(Some(AppEvent.RekeyConfirmReceived(frame.header.sessionId, frame, expected, nonce, newDh, now)))
+                                     IO.pure(
+                                       Some(
+                                         AppEvent.RekeyConfirmReceived(frame.header.sessionId, frame, expected, nonce, newDh, clock.millis())
+                                       )
+                                     )
                                case MessageKind.RekeyConfirmAck                              =>
                                  expectedControl(state, frame.header.sessionId, RekeyRole.Initiator) match
                                    case None           => IO.pure(None)
                                    case Some(expected) =>
-                                     random.x25519.map(dh => Some(AppEvent.RekeyAckReceived(frame.header.sessionId, frame, expected, dh, now)))
+                                     random.x25519
+                                       .map(dh => Some(AppEvent.RekeyAckReceived(frame.header.sessionId, frame, expected, dh, clock.millis())))
                   yield event
         case RelayPayload.Reply(text)         => replyEvent(state, from, text, now, random)
         case RelayPayload.RekeyRequest(bytes) =>

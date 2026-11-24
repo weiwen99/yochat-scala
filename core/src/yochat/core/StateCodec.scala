@@ -5,7 +5,15 @@ import scodec.bits.ByteVector
 /** Canonical state blob for the encrypted `sessions.state` column. Storage AAD binding is ADR-0007's job. */
 object StateCodec:
 
-  val Version: Int = 2
+  val Version: Int = 3
+
+  /** Version-1 rows predate the persisted handshake deadline. Treat them as already expired so a restart can recover instead of extending a
+    * handshake forever. This is a format migration, not a live deadline; the next write persists the normalized value.
+    */
+  def migrateLegacyDeadline(state: RatchetState): RatchetState =
+    state.rekey match
+      case Some(rekey) if rekey.deadlineMs <= 0L => state.copy(rekey = Some(rekey.copy(deadlineMs = 1L)))
+      case _                                     => state
 
   def encode(state: RatchetState): Either[CoreError, ByteVector] =
     if state.retiredDh.size > S1Limits.MaxRetiredRatchets then
@@ -52,7 +60,7 @@ object StateCodec:
     val reader = CanonicalReader(value)
     for
       (version, r1)        <- reader.u8
-      _                    <- if version == 1 || version == Version then Right(()) else Left(CoreError.InvalidVersion(version))
+      _                    <- if version >= 1 && version <= Version then Right(()) else Left(CoreError.InvalidVersion(version))
       (sessionRaw, r2)     <- r1.fixed(SessionId.Length)
       sessionId            <- SessionId.from(sessionRaw)
       (peerUserRaw, r3)    <- r2.fixed(Ed25519Public.Length)
@@ -88,7 +96,7 @@ object StateCodec:
       _                    <- r24.finish
       _                    <- if failures <= S1Limits.MaxRekeyFailures.toLong then Right(()) else Left(CoreError.InvalidState)
       _                    <- if attempts <= S1Limits.MaxRekeyAttempts.toLong then Right(()) else Left(CoreError.InvalidState)
-      _                    <- if version == 1 || rekey.forall(_.deadlineMs > 0L) then Right(()) else Left(CoreError.InvalidState)
+      _                    <- if version <= 2 || rekey.forall(_.deadlineMs > 0L) then Right(()) else Left(CoreError.InvalidState)
     yield RatchetState(
       sessionId = sessionId,
       peerUserPub = peerUserPub,
@@ -197,7 +205,7 @@ object StateCodec:
         writeOptionKey(writer, value.localRatchetKey.map(key => key.privateKey.bytes ++ key.publicKey.bytes))
         writeOptionKey(writer, value.newSessionId.map(_.bytes))
         writeOptionBytes(writer, value.cachedAccept)
-        writer.u64(value.deadlineMs)
+        writer.u64(value.deadlineMs).u8(if value.ackReceived then 1 else 0)
 
   private def readRekey(reader: CanonicalReader, version: Int): Either[CoreError, (Option[RekeyState], CanonicalReader)] =
     reader.u8.flatMap {
@@ -222,7 +230,9 @@ object StateCodec:
           (newSession, r6)   <- readOptionKey(r5, SessionId.from)
           (cachedAccept, r7) <- readOptionBytesPrefixed(r6, 1_048_576)
           (deadlineMs, r8)   <- if version >= 2 then r7.u64 else Right((0L, r7))
-        yield (Some(RekeyState(role, id, epoch, phase, localKey, newSession, cachedAccept, deadlineMs)), r8)
+          (ackRaw, r9)       <- if version >= 3 then r8.u8 else Right((0, r8))
+          ackReceived        <- if ackRaw == 0 || ackRaw == 1 then Right(ackRaw == 1) else Left(CoreError.InvalidEncoding)
+        yield (Some(RekeyState(role, id, epoch, phase, localKey, newSession, cachedAccept, deadlineMs, ackReceived)), r9)
       case _         => Left(CoreError.InvalidEncoding)
     }
 

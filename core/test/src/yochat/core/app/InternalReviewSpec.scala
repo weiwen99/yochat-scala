@@ -94,7 +94,7 @@ class InternalReviewSpec extends FunSuite:
     assert(!cutover.aliceAccepted.timers.contains(TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Initiator)))
     assert(cutover.aliceAccepted.timers.contains(TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Confirm)))
     val (disconnected, _) = Application.step(cutover.aliceAccepted, AppEvent.ConnectionChanged(online = false, nowMs = 90L))
-    assert(!disconnected.timers.contains(TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Confirm)))
+    assert(disconnected.timers.contains(TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Confirm)))
     val (recovered, effects) = Application.step(
       cutover.aliceAccepted.copy(timers = Map.empty),
       AppEvent.RecoverRekey(cutover.oldSessionId, TestKeys.nonce(90), 100L)
@@ -380,11 +380,10 @@ class InternalReviewSpec extends FunSuite:
     val confirm = TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Confirm)
     val original = cutover.aliceAccepted.timers(confirm)
     val (offline, _) = Application.step(cutover.aliceAccepted, AppEvent.ConnectionChanged(online = false, nowMs = 10L))
-    assert(!offline.timers.contains(confirm))
-    assert(offline.suspendedRekeyTimers.contains(confirm))
+    assert(offline.timers.contains(confirm))
     val (online, onlineEffects) = Application.step(offline, AppEvent.ConnectionChanged(online = true, nowMs = 20L))
     assertEquals(online.timers.get(confirm), Some(original))
-    assert(onlineEffects.exists { case AppEffect.StartTimer(`confirm`, value, _) => value == original; case _ => false })
+    assert(!onlineEffects.exists { case AppEffect.StartTimer(`confirm`, _, _) => true; case _ => false })
     assert(!onlineEffects.exists { case AppEffect.SendRekeyConfirm(_, _, _) => true; case _ => false })
     val (offline2, _) = Application.step(online, AppEvent.ConnectionChanged(online = false, nowMs = 30L))
     val (online2, effects2) = Application.step(offline2, AppEvent.ConnectionChanged(online = true, nowMs = 40L))
@@ -430,6 +429,8 @@ class InternalReviewSpec extends FunSuite:
     )
     assert(after.sessions(cutover.oldSessionId).state.rekey.isEmpty)
     assert(!after.sessions.contains(cutover.newSessionId))
+    assert(!after.timers.contains(TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Confirm)))
+    assert(!after.timerInstallations.contains(TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Confirm)))
     assert(effects.exists { case AppEffect.Notify(Notification.RekeyFailed) => true; case _ => false })
   }
 
@@ -470,4 +471,94 @@ class InternalReviewSpec extends FunSuite:
     )
     assertEquals(stale, retried)
     assert(staleEffects.isEmpty)
+  }
+
+  test("R11: Confirm retry at the deadline aborts without sending") {
+    val peers = AppTestSupport.connected
+    val cutover = completeCutover(peers.aliceState, peers.bobState)
+    val deadline = cutover.aliceAccepted.sessions(cutover.oldSessionId).state.rekey.map(_.deadlineMs).getOrElse(fail("missing deadline"))
+    val (after, effects) = Application.step(
+      cutover.aliceAccepted,
+      AppEvent.RekeyConfirmRetry(cutover.oldSessionId, TestKeys.nonce(125), deadline)
+    )
+    assert(after.sessions(cutover.oldSessionId).state.rekey.isEmpty)
+    assert(!effects.exists { case AppEffect.SendRekeyConfirm(_, _, _) => true; case _ => false })
+    assert(effects.exists { case AppEffect.Notify(Notification.RekeyFailed) => true; case _ => false })
+  }
+
+  test("R11: rekey expires locally while disconnected") {
+    val peers = AppTestSupport.connected
+    val cutover = completeCutover(peers.aliceState, peers.bobState)
+    val (offline, _) = Application.step(cutover.aliceAccepted, AppEvent.ConnectionChanged(online = false, nowMs = 10L))
+    val (aborted, effects) = Application.step(
+      offline,
+      AppEvent.RekeyConfirmRetry(cutover.oldSessionId, TestKeys.nonce(126), 5_000L)
+    )
+    assert(aborted.sessions(cutover.oldSessionId).state.rekey.isEmpty)
+    assert(aborted.sessions(cutover.oldSessionId).state.phase == SessionPhase.Active)
+    assert(!effects.exists { case AppEffect.SendRekeyConfirm(_, _, _) => true; case _ => false })
+    assert(effects.exists { case AppEffect.Notify(Notification.RekeyFailed) => true; case _ => false })
+  }
+
+  test("R11: a previously valid Delivery installation cannot fire after rebind") {
+    val peers = AppTestSupport.connected
+    val cutover = completeCutover(startWithOutgoing(peers.aliceState), peers.bobState)
+    val delivery = TimerId(TimerKind.Delivery, 1L)
+    val oldInstallation = cutover.aliceAcked.timerInstallations(delivery)
+    val (rebound, rebindEffects) = Application.step(
+      cutover.aliceAcked,
+      AppEvent.RebindOutgoing(1L, cutover.newSessionId, TestKeys.nonce(127))
+    )
+    assert(!rebound.timers.contains(delivery))
+    assert(rebindEffects.exists { case AppEffect.CancelTimer(`delivery`) => true; case _ => false })
+    val (stale, staleEffects) = Application.step(
+      rebound,
+      AppEvent.TimerFiredAt(delivery, rebound.outgoing(1L).generation, 5_000L, oldInstallation)
+    )
+    assertEquals(stale, rebound)
+    assert(staleEffects.isEmpty)
+
+    val (pumped, pumpEffects) = Application.step(rebound, AppEvent.Pump(50L))
+    val newInstallation = pumpEffects.collectFirst {
+      case AppEffect.StartTimer(`delivery`, _, value) => value
+    }.getOrElse(fail("missing replacement delivery installation"))
+    val (retried, retryEffects) = Application.step(
+      pumped,
+      AppEvent.TimerFiredAt(delivery, pumped.outgoing(1L).generation, 5_050L, newInstallation)
+    )
+    assert(retryEffects.exists { case AppEffect.SendWire(_, 1L, _, _) => true; case _ => false })
+    assertEquals(retried.outgoing(1L).sessionId, cutover.newSessionId)
+  }
+
+  test("R11: a rejected last rebind retires the predecessor") {
+    val peers = AppTestSupport.connected
+    val cutover = completeCutover(startWithOutgoing(peers.aliceState), peers.bobState)
+    val contact = cutover.aliceAcked.contacts.values.head.copy(confirmation = ContactConfirmation.AccountMismatch)
+    val rejected = cutover.aliceAcked.copy(contacts = cutover.aliceAcked.contacts.updated(contact.userPub, contact))
+    val (after, effects) = Application.step(
+      rejected,
+      AppEvent.RebindOutgoing(1L, cutover.newSessionId, TestKeys.nonce(128))
+    )
+    assert(!after.sessions.contains(cutover.oldSessionId))
+    assert(effects.exists {
+      case AppEffect.PersistHandshake(_, _, _, _, _, retire, _) => retire.exists(_._1 == cutover.oldSessionId)
+      case _                                                     => false
+    })
+    assert(effects.exists { case AppEffect.Notify(Notification.MessageFailed) => true; case _ => false })
+  }
+
+  test("R11: an active successor without a local Ack does not retire the initiator") {
+    val peers = AppTestSupport.connected
+    val cutover = completeCutover(peers.aliceState, peers.bobState)
+    val newActive = cutover.aliceAccepted.sessions(cutover.newSessionId).copy(state =
+      cutover.aliceAccepted.sessions(cutover.newSessionId).state.copy(phase = SessionPhase.Active)
+    )
+    val state = cutover.aliceAccepted
+      .copy(outgoing = Map.empty, sessions = cutover.aliceAccepted.sessions.updated(cutover.newSessionId, newActive))
+    val (after, effects) = Application.step(state, AppEvent.RecoverRetirements)
+    assert(after.sessions.contains(cutover.oldSessionId))
+    assert(!effects.exists {
+      case AppEffect.PersistHandshake(_, _, _, _, _, retire, _) => retire.exists(_._1 == cutover.oldSessionId)
+      case _                                                     => false
+    })
   }

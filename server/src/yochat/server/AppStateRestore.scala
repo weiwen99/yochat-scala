@@ -3,7 +3,7 @@ package yochat.server
 import cats.effect.IO
 import scodec.bits.ByteVector
 
-import yochat.core.{Ed25519KeyPair, Ed25519Public, Invitation, WireFrame}
+import yochat.core.{Ed25519KeyPair, Ed25519Public, Invitation, StateCodec, WireFrame}
 import yochat.core.app.*
 import yochat.store.{
   ContactData,
@@ -128,21 +128,32 @@ object AppStateRestore:
     conversation match
       case None     => Left(StorageError.NotFound("session-conversation"))
       case Some(id) =>
-        val maxOutbound = snapshot.messages.values.flatten
+        val maxOutbound   = snapshot.messages.values.flatten
           .filter(message => message.conversationId == id && message.state != MessageState.Received)
           .map(_.seq)
           .maxOption
           .getOrElse(0L)
-        val nextSeq     = if maxOutbound == Long.MaxValue then Long.MaxValue else maxOutbound + 1L
-        val retireOld   = snapshot.sessions.exists { other =>
+        val nextSeq       = if maxOutbound == Long.MaxValue then Long.MaxValue else maxOutbound + 1L
+        val successorData = snapshot.messages.values.flatten.exists(message =>
+          message.sessionId == record.state.sessionId && message.state == MessageState.Received
+        )
+        val retireOld     = !successorData && snapshot.sessions.exists { other =>
           other.state.sessionId != record.state.sessionId &&
           other.state.rekey.exists(rekey =>
             rekey.role == yochat.core.RekeyRole.Responder && rekey.newSessionId.contains(record.state.sessionId)
           )
         }
-        val hasData     = snapshot.messages.get(id).exists(_.nonEmpty)
-        val bound       = snapshot.bindings.contains(id) || !hasData
-        Right(AppSession(record.state, id, math.max(1L, nextSeq), retireOldOnFirstData = retireOld, bindingEstablished = bound))
+        val hasData       = snapshot.messages.get(id).exists(_.nonEmpty)
+        val bound         = snapshot.bindings.contains(id) || !hasData
+        Right(
+          AppSession(
+            StateCodec.migrateLegacyDeadline(record.state),
+            id,
+            math.max(1L, nextSeq),
+            retireOldOnFirstData = retireOld,
+            bindingEstablished = bound
+          )
+        )
 
   private def outgoingFrom(
     snapshot: StoreSnapshot,

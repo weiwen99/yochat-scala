@@ -49,7 +49,8 @@ class StateCodecSpec extends munit.FunSuite:
           Some(x25519(seed(9))),
           None,
           Some(ByteVector.fill(20)(7.toByte)),
-          42_000L
+          42_000L,
+          ackReceived = true
         )
       ),
       rekeyFailures = 2,
@@ -69,7 +70,7 @@ class StateCodecSpec extends munit.FunSuite:
     assert(StateCodec.decode(encoded.dropRight(1)).isLeft)
     assert(StateCodec.decode(encoded.drop(1)).isLeft)
     assert(StateCodec.decode(encoded :+ 0.toByte).isLeft)
-    assert(StateCodec.decode(ByteVector(3) ++ encoded.drop(1)).isLeft)
+    assert(StateCodec.decode(ByteVector(4) ++ encoded.drop(1)).isLeft)
   }
 
   test("state encoder rejects oversized skipped and retired collections") {
@@ -84,7 +85,7 @@ class StateCodecSpec extends munit.FunSuite:
     assert(StateCodec.encode(tooManySkipped).isLeft)
   }
 
-  test("v2 rejects a rekey state without a positive deadline") {
+  test("v3 rejects a rekey state without a positive deadline") {
     val state = sample()
     val rekey = RekeyState(
       RekeyRole.Initiator,
@@ -97,4 +98,10 @@ class StateCodecSpec extends munit.FunSuite:
       0L
     )
     assert(StateCodec.encode(state.copy(rekey = Some(rekey))).isLeft)
+  }
+
+  test("legacy zero deadlines migrate to an already-expired value") {
+    val state = sample()
+    val rekey = RekeyState(RekeyRole.Initiator, TestKeys.rekeyId(1), 3L, RekeyPhase.Accepted, None, None, None, 0L)
+    assertEquals(StateCodec.migrateLegacyDeadline(state.copy(rekey = Some(rekey))).rekey.map(_.deadlineMs), Some(1L))
   }

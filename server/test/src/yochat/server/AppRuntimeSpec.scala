@@ -9,7 +9,7 @@ import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import scodec.bits.ByteVector
 
-import yochat.core.{Ed25519Public, SessionPhase}
+import yochat.core.{Ed25519Public, RekeyId, RekeyPhase, RekeyRole, RekeyState, SessionId, SessionPhase}
 import yochat.core.app.*
 import yochat.store.*
 import yochat.transport.{RelayClient, RelayServer}
@@ -170,6 +170,51 @@ class AppRuntimeSpec extends FunSuite:
     finally
       deleteTree(directoryA)
       deleteTree(directoryB)
+  }
+
+
+  test("startup retires an eligible initiator predecessor without peer traffic") {
+    val directory = Files.createTempDirectory("yochat-runtime-recover-")
+    try
+      val fixture = ExecutorTestSupport.fixture()
+      val oldId   = fixture.sessionId
+      val newId   = SessionId.from(ByteVector.fill(32)(0x55.toByte)).fold(error => fail(error.toString), identity)
+      val rekey   = RekeyState(
+        RekeyRole.Initiator,
+        RekeyId.from(ByteVector.fill(RekeyId.Length)(7.toByte)).fold(error => fail(error.toString), identity),
+        1L,
+        RekeyPhase.Accepted,
+        None,
+        Some(newId),
+        None,
+        1_000L,
+        ackReceived = true
+      )
+      val oldState   = fixture.state.copy(phase = SessionPhase.ReadOnly, rekey = Some(rekey))
+      val newState   = fixture.state.copy(sessionId = newId, phase = SessionPhase.Active, rekey = None)
+      val program    = for
+        server <- RelayServer.start(0)
+        store  <- openStore(directory, masterA)
+        _      <- Resource.eval(store.insertContact(fixture.peerUser, ExecutorTestSupport.contactData(), 0L))
+        _      <- Resource.eval(store.createConversation(fixture.conversationId, fixture.peerUser, 0L))
+        _      <- Resource.eval(store.insertSession(oldState, 0L))
+        _      <- Resource.eval(store.insertSession(newState, 0L))
+        relay  <- RelayClient.connect("127.0.0.1", server.port, store.identity.devicePublic)
+        runtime <- AppRuntime.start(store, relay, queueCapacity = 64)
+      yield (server, store, runtime)
+      program.use { case (_, store, runtime) =>
+        for
+          retired <- runtime.awaitState(state => !state.sessions.contains(oldId), 5.seconds)
+          _       <- if retired then IO.unit else IO.raiseError(new AssertionError("predecessor was not retired"))
+          state   <- runtime.state
+          _       <- if state.sessions.contains(newId) then IO.unit else IO.raiseError(new AssertionError("successor missing"))
+          loaded  <- store.loadSession(oldId)
+          _       <- loaded match
+                       case Left(yochat.store.StorageError.NotFound(_)) => IO.unit
+                       case other                                        => IO.raiseError(new AssertionError(s"old row still present: $other"))
+        yield ()
+      }.unsafeRunSync()
+    finally deleteTree(directory)
   }
 
   private def requireAwait(runtime: AppRuntime, predicate: AppState => Boolean, timeout: FiniteDuration, label: String): IO[Unit] =

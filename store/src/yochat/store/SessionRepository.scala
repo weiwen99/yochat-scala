@@ -138,7 +138,7 @@ private[store] object SessionRepository:
           updates  <- sessions.foldLeft(FC.pure(Vector.empty[PreparedUpdate])) { (acc, record) =>
                         acc.flatMap { values =>
                           if record.generation == lock then FC.pure(values)
-                          else prepareUpdate(runtime, record, record.state, lock, now).map(values :+ _)
+                          else prepareUpdate(runtime, record, StateCodec.migrateLegacyDeadline(record.state), lock, now).map(values :+ _)
                         }
                       }
           _        <- updates.foldLeft(FC.unit)((acc, update) => acc.flatMap(_ => writeRow(update)))
