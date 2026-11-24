@@ -1,6 +1,6 @@
 # M8/M9 closure
 
-Status: closed on the M8/M9 source commit; the manifest records the exact hash. The owner risk-acceptance packet remains non-external.
+Status: closed at source `6a81640`; the manifest records the exact hash. The owner risk-acceptance packet remains non-external.
 This note records the two findings that previously blocked external handoff.
 
 ## M8 — byte-bounded inbound queues
@@ -35,7 +35,8 @@ This note records the two findings that previously blocked external handoff.
 
 - `./mill transport.test` — ByteBudgetSpec 2/2, RelaySpec 7/7.
 - `./mill server.test` — 8/8 test classes; AppRuntimeSpec 2/2.
-- Full `./check.sh` and E2E are recorded after the final source commit.
+- Full `./check.sh` at `6a81640`: PASS (563.99 s); E2E 17/17, 1k 3,795 ms, 10k 28,744 ms;
+  cold start p50 1,194 ms / p95 1,208 ms; idle 742.5 MB; UI smoke 100/100.
 
 ## Residual
 

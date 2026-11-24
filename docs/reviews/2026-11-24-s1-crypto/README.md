@@ -11,10 +11,10 @@ mismatch) are closed in `m8-m9-closure.md`. Remaining accepted limits: the store
 counts only `Pending` and not an unrepresented `Sent` row, and runtime multi-row
 `Migrated`/`Skipped` plus mid-batch store-failure coverage is missing.
 
-Baseline: source `e2001ad` on top of `6884926`; packet `6acace9` plus this README correction. `manifest.sha256` covers the source snapshot
+Baseline: source `6a81640` on top of `6884926`; packet `6acace9` plus owner-signoff and M8/M9 corrections. `manifest.sha256` covers the source snapshot
 and this packet's docs; it is regenerated at each packet revision and verified before handoff. The
-final `./check.sh` receipt (PASS 582.48 s; E2E 17/17; 10k 29,958 ms) is in
-`internal-review-rounds-11-14.md`.
+final `./check.sh` receipt (PASS 563.99 s; E2E 17/17; 10k 28,744 ms) is in
+`m8-m9-closure.md`.
 
 Scope: the S1 two-party, one-device-each, relay-only YoChat implementation.
 
