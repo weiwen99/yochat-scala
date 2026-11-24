@@ -434,13 +434,31 @@ object AppRuntime:
       _              <- result match
                           case Left(error)    => fatal.set(Some(error))
                           case Right(skipped) =>
-                            val reconciled =
+                            val skippedTimers = current.timers.keys.filter(timer => skipped.contains(timer.messageId))
+                            val reconciled    =
                               if skipped.isEmpty then next
-                              else skipped.foldLeft(current)((state, messageId) => state.copy(outgoing = state.outgoing - messageId))
+                              else
+                                skipped.foldLeft(current) { (state, messageId) =>
+                                  state.copy(
+                                    outgoing = state.outgoing - messageId,
+                                    timers = state.timers -- skippedTimers
+                                  )
+                                }
                             stateRef.set(reconciled) *> onState(reconciled) *>
                               feedPersisted(durable, transport, queue, stateRef, random, executor, fatal, clock, onState) *>
                               (if skipped.isEmpty then executeExternal(external, transport, queue, stateRef, random, executor, fatal, clock, onState)
-                               else queue.tryOffer(RuntimeCommand.App(AppEvent.Pump(clock.millis()))).void)
+                               else
+                                 applyEvent(
+                                   transport,
+                                   AppEvent.Pump(clock.millis()),
+                                   queue,
+                                   stateRef,
+                                   random,
+                                   executor,
+                                   fatal,
+                                   clock,
+                                   onState
+                                 ))
     yield ()
 
   private def feedPersisted(

@@ -233,7 +233,8 @@ object Application:
                 peerDevicePub = session.state.peerDevicePub,
                 seq = message.seq,
                 wire = wire,
-                state = OutgoingState.Queued
+                state = OutgoingState.Queued,
+                attempts = 0
               )
               val nextSession             = session.copy(state = nextRatchet, nextSeq = math.max(session.nextSeq, message.seq + 1L))
               val next                    = state.copy(
@@ -269,7 +270,11 @@ object Application:
                 retiredState,
                 Vector(AppEffect.PersistRebound(rebound, nextSession, message.sessionId, message.seq, -1L)) ++ retirement ++ pumpedEffects
               )
-            ).getOrElse((state, Vector.empty))
+            ).getOrElse(
+              state.outgoing.get(messageId) match
+                case Some(message) => failRebind(state, message)
+                case None          => (state, Vector.empty)
+            )
         case AppEvent.SendSucceeded(messageId, generation)                                                =>
           if state.connection != ConnectionState.Online || !state.lock.isUnlocked then (state, Vector.empty)
           else
@@ -767,6 +772,23 @@ object Application:
       .flatMap(_.state.rekey.flatMap(_.newSessionId))
       .contains(newSessionId)
 
+  private def failRebind(state: AppState, message: OutgoingMessage): (AppState, Vector[AppEffect]) =
+    val failed = message.copy(state = OutgoingState.Failed)
+    (
+      trimFailed(state.copy(outgoing = state.outgoing.updated(message.id, failed))),
+      Vector(
+        AppEffect.UpdateMessageState(
+          message.conversationId,
+          message.sessionId,
+          message.authorPub,
+          message.devicePub,
+          message.seq,
+          MessageTransition.Failed
+        ),
+        AppEffect.Notify(Notification.MessageFailed)
+      )
+    )
+
   private def hasRebindableOutgoing(state: AppState, sessionId: SessionId): Boolean =
     state.outgoing.values.exists(value => value.sessionId == sessionId && value.state != OutgoingState.Failed)
 
@@ -921,7 +943,10 @@ object Application:
         .filter(value =>
           value.state == OutgoingState.Queued &&
             !state.timers.contains(TimerId(TimerKind.Retry, value.id)) &&
-            activeSession(state, value.conversationId).exists(_.state.sessionId == value.sessionId)
+            activeSession(state, value.conversationId).exists(session =>
+              session.state.sessionId == value.sessionId &&
+                state.contacts.get(session.state.peerUserPub).exists(relationshipUsable)
+            )
         )
         .toVector
         .sortBy(value => (value.seq, value.id))
@@ -1242,13 +1267,20 @@ object Application:
                       timers = state.timers - timer
                     )
                     val (pumped, pumpedEffects) = pump(next, nowMs)
+                    val rebinds                 = pumped.sessions.values.toVector
+                      .filter(session =>
+                        session.state.sessionId != sessionId &&
+                          session.state.rekey.flatMap(_.newSessionId).contains(sessionId) &&
+                          hasRebindableOutgoing(pumped, session.state.sessionId)
+                      )
+                      .map(session => AppEffect.RebindPending(session.state.sessionId, sessionId))
                     (
                       pumped,
                       Vector(
                         AppEffect.PersistHandshake(None, None, Vector(active), None, None, Vector.empty, pendingSessions),
                         AppEffect.CancelTimer(timer),
                         AppEffect.Notify(Notification.RekeyFailed)
-                      ) ++ pumpedEffects
+                      ) ++ rebinds ++ pumpedEffects
                     )
             case _                                              => (state.copy(timers = state.timers - timer), Vector.empty)
 

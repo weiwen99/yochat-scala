@@ -353,7 +353,8 @@ private[store] object MessageRepository:
                                               )
                                             )
                               changed    <- sql"""UPDATE messages
-                                               |SET session_id = ${state.sessionId.bytes.toArray}, seq = $seq, body = ${sealedBody.toArray}, wire = ${wire.toArray}
+                                               |SET session_id = ${state.sessionId.bytes.toArray}, seq = $seq, body = ${sealedBody.toArray}, wire = ${wire.toArray},
+                                               |    state = ${MessageState.code(MessageState.Pending)}, attempts = 0
                                                |WHERE conversation_id = ${conversationId.toArray} AND session_id = ${oldSessionId.bytes.toArray}
                                                |  AND author_pub = ${authorPub.bytes.toArray} AND device_pub = ${devicePub.bytes.toArray}
                                                |  AND seq = $oldSeq""".stripMargin.update.run
