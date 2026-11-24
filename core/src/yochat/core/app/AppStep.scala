@@ -93,12 +93,21 @@ object Application:
         case AppEvent.RecoverRebinds                                                                      =>
           if !state.lock.isUnlocked then (state, Vector.empty)
           else
-            val effects = state.sessions.values.toVector
+            val (next, effects) = state.sessions.values.toVector
               .filter(session => session.state.phase != SessionPhase.Active && hasRebindableOutgoing(state, session.state.sessionId))
-              .flatMap { old =>
-                activeSession(state, old.conversationId).map(active => AppEffect.RebindPending(old.state.sessionId, active.state.sessionId))
+              .foldLeft((state, Vector.empty[AppEffect])) { case ((current, effects), old) =>
+                activeSession(current, old.conversationId) match
+                  case Some(active) if isDirectPredecessor(current, old.state.sessionId, active.state.sessionId) =>
+                    (current, effects :+ AppEffect.RebindPending(old.state.sessionId, active.state.sessionId))
+                  case _                                                                                         =>
+                    val failed = current.outgoing.map {
+                      case (id, message) if message.sessionId == old.state.sessionId =>
+                        id -> message.copy(state = OutgoingState.Failed)
+                      case other                                                     => other
+                    }
+                    (trimFailed(current.copy(outgoing = failed)), effects :+ AppEffect.Notify(Notification.MessageFailed))
               }
-            (state, effects)
+            (next, effects)
         case AppEvent.Pump(nowMs)                                                                         =>
           if !state.lock.isUnlocked then (state, Vector.empty) else pump(state, nowMs)
         case AppEvent.RecoverRekey(oldSessionId, nonce, nowMs)                                            =>
@@ -128,7 +137,7 @@ object Application:
                             )
                             .toOption
               timer     = TimerId.Rekey(oldSessionId, RekeyTimerStage.Confirm)
-              deadline  = saturatingAdd(nowMs, AppLimits.RekeyTimeoutMs)
+              deadline  = saturatingAdd(nowMs, AppLimits.RekeyRetryMs)
               updated   = pending.copy(state = confirm.state)
             yield (
               state.copy(
@@ -142,38 +151,35 @@ object Application:
               )
             )).getOrElse((state, Vector.empty))
         case AppEvent.RekeyConfirmRetry(oldSessionId, nonce, nowMs)                                       =>
-          if !state.lock.isUnlocked || state.connection != ConnectionState.Online then
-            val timer = TimerId.Rekey(oldSessionId, RekeyTimerStage.Confirm)
-            (
-              state.copy(timers = state.timers.updated(timer, saturatingAdd(nowMs, AppLimits.RekeyTimeoutMs))),
-              Vector(AppEffect.StartTimer(timer, saturatingAdd(nowMs, AppLimits.RekeyTimeoutMs)))
-            )
+          val armedConfirm = TimerId.Rekey(oldSessionId, RekeyTimerStage.Confirm)
+          if !state.timers.contains(armedConfirm) then (state, Vector.empty)
+          else if !state.lock.isUnlocked || state.connection != ConnectionState.Online then
+            (state.copy(timers = state.timers - armedConfirm), Vector.empty)
           else
             (for
-              identity    <- state.identity
-              old         <- state.sessions.get(oldSessionId)
-              rekey       <- old.state.rekey
+              identity  <- state.identity
+              old       <- state.sessions.get(oldSessionId)
+              rekey     <- old.state.rekey
               if rekey.role == RekeyRole.Initiator && rekey.phase == RekeyPhase.Accepted
-              newId       <- rekey.newSessionId
-              pending     <- state.sessions.get(newId)
+              newId     <- rekey.newSessionId
+              pending   <- state.sessions.get(newId)
               if pending.state.phase == SessionPhase.Pending
-              confirm     <- Rekey
-                               .confirm(
-                                 pending.state,
-                                 identity.device.publicKey,
-                                 identity.device.privateKey,
-                                 ControlExtension(rekey.epoch, rekey.id),
-                                 nonce
-                               )
-                               .toOption
-              confirmTimer = TimerId.Rekey(oldSessionId, RekeyTimerStage.Confirm)
-              abortTimer   = TimerId.Rekey(oldSessionId, RekeyTimerStage.Initiator)
-              deadline     = saturatingAdd(nowMs, AppLimits.RekeyTimeoutMs)
-              updated      = pending.copy(state = confirm.state)
+              confirm   <- Rekey
+                             .confirm(
+                               pending.state,
+                               identity.device.publicKey,
+                               identity.device.privateKey,
+                               ControlExtension(rekey.epoch, rekey.id),
+                               nonce
+                             )
+                             .toOption
+              abortTimer = TimerId.Rekey(oldSessionId, RekeyTimerStage.Initiator)
+              deadline   = saturatingAdd(nowMs, AppLimits.RekeyTimeoutMs)
+              updated    = pending.copy(state = confirm.state)
             yield (
               state.copy(
                 sessions = state.sessions.updated(newId, updated),
-                timers = state.timers - confirmTimer + (abortTimer -> deadline)
+                timers = state.timers - armedConfirm + (abortTimer -> deadline)
               ),
               Vector(
                 AppEffect.PersistHandshake(None, None, Vector(updated), None, None, Vector.empty, Vector.empty),
@@ -699,6 +705,7 @@ object Application:
                       .filter(session =>
                         session.conversationId == active.conversationId &&
                           session.state.sessionId != newSessionId &&
+                          isDirectPredecessor(state, session.state.sessionId, newSessionId) &&
                           hasRebindableOutgoing(state, session.state.sessionId)
                       )
                       .map(_.state.sessionId)
