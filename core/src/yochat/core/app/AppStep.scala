@@ -209,9 +209,18 @@ object Application:
                 outgoing = state.outgoing.updated(messageId, rebound)
               )
               val (pumped, pumpedEffects) = pump(next, nowMs)
+              val retireOld               = !session.retireOldOnFirstData && !hasRebindableOutgoing(next, message.sessionId)
+              val retiredState            =
+                if retireOld then
+                  pumped.copy(
+                    sessions = pumped.sessions - message.sessionId,
+                    timers = pumped.timers - TimerId.Rekey(message.sessionId, RekeyTimerStage.Initiator) -
+                      TimerId.Rekey(message.sessionId, RekeyTimerStage.Responder) -
+                      TimerId.Rekey(message.sessionId, RekeyTimerStage.Confirm)
+                  )
+                else pumped
               val retirement              =
-                if hasRebindableOutgoing(next, message.sessionId) then Vector.empty
-                else
+                if retireOld then
                   Vector(
                     AppEffect.PersistHandshake(
                       None,
@@ -223,8 +232,9 @@ object Application:
                       Vector.empty
                     )
                   )
+                else Vector.empty
               (
-                pumped,
+                retiredState,
                 Vector(AppEffect.PersistRebound(rebound, nextSession, message.sessionId, message.seq, -1L)) ++ retirement ++ pumpedEffects
               )
             ).getOrElse((state, Vector.empty))

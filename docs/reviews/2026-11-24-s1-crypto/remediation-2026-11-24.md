@@ -26,6 +26,23 @@ items and strengthens the two weak tests:
 - **M6 test (now probative)**: two accept calls run in `IO.both`; exactly one succeeds and the contact
   stays `Confirmed` (not `AccountMismatch`).
 
+## Round-3 re-review (`bb152f8`)
+
+`internal-review-round3-2026-11-24.md` re-reviewed the round-3 fixes. The named B1-write, B3 and M7
+closures are verified, but the same cutover path has two further defects:
+
+- **R3-N1 (BLOCKER)**: after the last old outgoing is rebound, `RebindOutgoing` emits the old-session
+  retirement but does not remove the old session from `AppState`. The store row is deleted; a late
+  old-session Data is decrypted and then `PersistInbound` fails with `NotFound`, which sets fatal.
+- **R3-N2 (MAJOR, G12)**: the responder's rebind retirement uses `SessionRetirement.InitiatorAck`
+  even while the new session has `retireOldOnFirstData = true`; the old session is retired before
+  the first authenticated new-session Data. A lost ConfirmAck + abort leaves the two sides on
+  different sessions.
+- Minor: a `Skipped` rebind leaves the old session unretired (cleanup gap); the B3 runtime wiring
+  (`TimerFired(Confirm) → RekeyConfirmRetry`) and the B1 safety HTTP route are not directly tested;
+  one E2E#8 run under sequential load took 8,010 ms (isolated 4,234/4,262 ms) — a load flake with a
+  thin margin.
+
 ## Closed findings (round-1 claims)
 
 | ID | Closure | Regression evidence |
@@ -43,6 +60,10 @@ items and strengthens the two weak tests:
 
 ## Still open before external review
 
+- **R3-N1 (BLOCKER)**: the old session is deleted from the store but remains in `AppState` after the
+  last rebind; a late old-session Data fails `PersistInbound` and sets fatal. See round 3.
+- **R3-N2 (MAJOR, G12)**: the responder retires its old session with `InitiatorAck` before the first
+  new-session Data. See round 3.
 - **M8**: relay/runtime queues remain bounded by entry count, not bytes; 1 MiB frames can still consume the documented worst-case memory. No code change in this remediation.
 - **M9**: the implemented master-key path is still `safeStorage` → renderer IPC → `POST /api/unlock` JSON body → JVM; `storage.md` now describes this actual path and marks the deviation, but ADR-0007's one-shot pipe is not implemented. This is an implementation/ADR inconsistency for the owner to resolve before external review.
 - The packet must not be called “ready for external review” while M8/M9 are open and no human external reviewer has signed.

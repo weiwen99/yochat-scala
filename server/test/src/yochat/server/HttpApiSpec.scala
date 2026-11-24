@@ -119,10 +119,16 @@ class HttpApiSpec extends FunSuite:
                           bob.service.acceptInvitation(invitation, "test", "@bob", "reply")
                         )
           state      <- bob.service.state
+          contact    <- state.toOption.flatMap(_.contacts.keys.headOption) match
+                          case Some(value) => IO.pure(value)
+                          case None        => IO.raiseError(new AssertionError("missing contact"))
+          _          <- bob.service.lock
+          safety     <- postStatus(s"http://127.0.0.1:${bob.port}/api/contacts/${contact.bytes.toHex}/safety", ujson.Obj())
         yield
           val (first, second) = results
           assertEquals(Vector(first.isRight, second.isRight).count(identity), 1)
           assertEquals(state.toOption.flatMap(_.contacts.values.headOption).map(_.confirmation), Some(ContactConfirmation.Confirmed))
+          assertEquals(safety, 401)
       }.unsafeRunSync()
     finally
       deleteTree(aliceDir)

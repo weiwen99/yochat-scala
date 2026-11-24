@@ -16,17 +16,17 @@ class InternalReviewSpec extends FunSuite:
     newSessionId: yochat.core.SessionId
   )
 
-  private def startWithOutgoing(peers: AppTestSupport.Peers): AppState =
-    val conversation = peers.aliceState.sessions.values.head.conversationId
+  private def startWithOutgoing(state: AppState): AppState =
+    val conversation = state.sessions.values.head.conversationId
     val (persisting, _) = Application.step(
-      peers.aliceState,
+      state,
       AppEvent.UserSend(1L, conversation, Crypto.text("old-pending"), TestKeys.nonce(80), 0L)
     )
     val generation = persisting.outgoing(1L).generation
     val (queued, _) = Application.step(persisting, AppEvent.PersistOutboundSucceeded(1L, generation, 1L))
     queued
 
-  private def completeCutover(peers: AppTestSupport.Peers, alice0: AppState): Cutover =
+  private def completeCutover(alice0: AppState, bob0: AppState): Cutover =
     val oldSessionId = alice0.sessions.keys.head
     val r1 = AppTestSupport.xpair(6)
     val r2 = AppTestSupport.xpair(7)
@@ -37,7 +37,7 @@ class InternalReviewSpec extends FunSuite:
     )
     val request = startEffects.collectFirst { case AppEffect.SendRekeyRequest(_, _, value) => value }.getOrElse(fail("missing request"))
     val (bobStarted, bobStartEffects) = Application.step(
-      peers.bobState,
+      bob0,
       AppEvent.RekeyRequestReceived(oldSessionId, request, r2, r2Next, TestKeys.nonce(11), 0L)
     )
     val accept = bobStartEffects.collectFirst { case AppEffect.SendRekeyAccept(_, _, value) => value }.getOrElse(fail("missing accept"))
@@ -61,8 +61,8 @@ class InternalReviewSpec extends FunSuite:
 
   test("B2: an Active new session is not deleted by an old rekey timer") {
     val peers = AppTestSupport.connected
-    val alice0 = startWithOutgoing(peers)
-    val cutover = completeCutover(peers, alice0)
+    val alice0 = startWithOutgoing(peers.aliceState)
+    val cutover = completeCutover(alice0, peers.bobState)
     assertEquals(cutover.aliceAcked.sessions(cutover.newSessionId).state.phase, SessionPhase.Active)
     assert(cutover.aliceAcked.outgoing.values.exists(_.sessionId == cutover.oldSessionId))
 
@@ -87,7 +87,7 @@ class InternalReviewSpec extends FunSuite:
 
   test("B3: a persisted initiator Accepted state resends a fresh Confirm after restart") {
     val peers = AppTestSupport.connected
-    val cutover = completeCutover(peers, peers.aliceState)
+    val cutover = completeCutover(peers.aliceState, peers.bobState)
     val (recovered, effects) = Application.step(
       cutover.aliceAccepted.copy(timers = Map.empty),
       AppEvent.RecoverRekey(cutover.oldSessionId, TestKeys.nonce(90), 100L)
@@ -149,6 +149,35 @@ class InternalReviewSpec extends FunSuite:
     assertEquals(inviteEffects, Vector.empty)
   }
 
+  test("R3-N1: rebinding the last old message removes the old session") {
+    val peers = AppTestSupport.connected
+    val cutover = completeCutover(startWithOutgoing(peers.aliceState), peers.bobState)
+    val (after, effects) = Application.step(
+      cutover.aliceAcked,
+      AppEvent.RebindOutgoing(1L, cutover.newSessionId, TestKeys.nonce(99), 50L)
+    )
+    assert(!after.sessions.contains(cutover.oldSessionId))
+    assert(effects.exists {
+      case AppEffect.PersistHandshake(_, _, _, _, _, retired, _) => retired.exists(_._1 == cutover.oldSessionId)
+      case _                                                       => false
+    })
+  }
+
+  test("R3-N2: responder does not retire old before first new-session Data") {
+    val peers = AppTestSupport.connected
+    val bob0 = startWithOutgoing(peers.bobState)
+    val cutover = completeCutover(peers.aliceState, bob0)
+    val (after, effects) = Application.step(
+      cutover.bobConfirmed,
+      AppEvent.RebindOutgoing(1L, cutover.newSessionId, TestKeys.nonce(101), 70L)
+    )
+    assert(after.sessions.contains(cutover.oldSessionId))
+    assert(!effects.exists {
+      case AppEffect.PersistHandshake(_, _, _, _, _, retired, _) => retired.exists(_._1 == cutover.oldSessionId)
+      case _                                                       => false
+    })
+  }
+
   test("M1: an ACK cannot deliver a never-sent queued message") {
     val peers = AppTestSupport.connected
     val aliceSession = peers.aliceState.sessions.keys.head
@@ -204,9 +233,9 @@ class InternalReviewSpec extends FunSuite:
 
   test("M3: a Failed old message does not block retirement") {
     val peers = AppTestSupport.connected
-    val alice0 = startWithOutgoing(peers)
+    val alice0 = startWithOutgoing(peers.aliceState)
     val failed = alice0.copy(outgoing = alice0.outgoing.map { case (id, value) => id -> value.copy(state = OutgoingState.Failed, attempts = 3) })
-    val cutover = completeCutover(peers, failed)
+    val cutover = completeCutover(failed, peers.bobState)
     assert(!cutover.aliceAcked.sessions.contains(cutover.oldSessionId))
     assertEquals(cutover.aliceAcked.outgoing.get(1L).map(_.state), Some(OutgoingState.Failed))
   }

@@ -434,7 +434,9 @@ object AppRuntime:
       _              <- result match
                           case Left(error)    => fatal.set(Some(error))
                           case Right(skipped) =>
-                            val reconciled = skipped.foldLeft(next)((current, messageId) => current.copy(outgoing = current.outgoing - messageId))
+                            val reconciled =
+                              if skipped.isEmpty then next
+                              else skipped.foldLeft(current)((state, messageId) => state.copy(outgoing = state.outgoing - messageId))
                             stateRef.set(reconciled) *> onState(reconciled) *>
                               feedPersisted(durable, transport, queue, stateRef, random, executor, fatal, clock, onState) *>
                               (if skipped.isEmpty then executeExternal(external, transport, queue, stateRef, random, executor, fatal, clock, onState)
