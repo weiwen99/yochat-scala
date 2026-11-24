@@ -400,13 +400,13 @@ object AppRuntime:
           (event match
             case AppEvent.Unlock(_, _, _) =>
               resumeGaps(queue, stateRef, random, clock) *> queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRebinds)).void *>
-                recoverRekeys(queue, stateRef, random, clock)
+                recoverRekeys(transport, queue, stateRef, random, executor, fatal, clock, onState)
             case _                        => IO.unit)
       case RuntimeCommand.Connection(on, now)    =>
         applyEvent(transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, random, executor, fatal, clock, onState) *>
           (if on then
              resumeGaps(queue, stateRef, random, clock) *> queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRebinds)).void *>
-               recoverRekeys(queue, stateRef, random, clock)
+               recoverRekeys(transport, queue, stateRef, random, executor, fatal, clock, onState)
            else IO.unit)
       case RuntimeCommand.Inbound(from, payload) =>
         translateInbound(from, payload, messageIds, random, stateRef, clock).flatMap {
@@ -529,7 +529,10 @@ object AppRuntime:
                             fatal,
                             clock,
                             onState
-                          ) *> loop
+                          ) *> AppRuntime.readRef(fatal).flatMap {
+                            case Some(_) => IO.unit
+                            case None    => loop
+                          }
                         }
                   }
                 loop
@@ -544,10 +547,14 @@ object AppRuntime:
     }
 
   private def recoverRekeys(
+    transport: RelayAppTransport,
     queue: Queue[IO, RuntimeCommand],
     stateRef: Ref[IO, AppState],
     random: RuntimeRandom,
-    clock: Clock
+    executor: AppEffectExecutor,
+    fatal: Ref[IO, Option[AppExecutionError]],
+    clock: Clock,
+    onState: AppState => IO[Unit]
   ): IO[Unit] =
     AppRuntime.readRef(stateRef).flatMap { state =>
       if !state.lock.isUnlocked then IO.unit
@@ -564,7 +571,17 @@ object AppRuntime:
           .sortBy(_.bytes.toHex)
         pending.foldLeft(IO.unit) { (acc, oldSessionId) =>
           acc *> random.nonce.flatMap { nonce =>
-            queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRekey(oldSessionId, nonce, clock.millis()))).void
+            applyEvent(
+              transport,
+              AppEvent.RecoverRekey(oldSessionId, nonce, clock.millis()),
+              queue,
+              stateRef,
+              random,
+              executor,
+              fatal,
+              clock,
+              onState
+            )
           }
         }
     }

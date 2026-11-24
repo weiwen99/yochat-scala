@@ -104,9 +104,9 @@ object Application:
                       if active.state.phase == SessionPhase.Active &&
                         isDirectPredecessor(current, old.state.sessionId, active.state.sessionId) =>
                     (current, effects :+ AppEffect.RebindPending(old.state.sessionId, active.state.sessionId))
-                  case Some(pending) if pending.state.phase == SessionPhase.Pending =>
+                  case Some(pending) if pending.state.phase == SessionPhase.Pending || pending.state.phase == SessionPhase.ReadOnly =>
                     (current, effects)
-                  case _                                                            =>
+                  case _                                                                                                            =>
                     val failed = current.outgoing.values
                       .filter(_.sessionId == old.state.sessionId)
                       .toVector
@@ -222,6 +222,7 @@ object Application:
               if session.state.phase == SessionPhase.Active && session.bindingEstablished
               if isDirectPredecessor(state, message.sessionId, newSessionId)
               contact   <- state.contacts.get(session.state.peerUserPub)
+              if relationshipUsable(contact)
               envelope  <- outboundPayload(identity, contact, message.body, message.seq)
               encrypted <-
                 Ratchet.encryptUser(session.state, identity.device.publicKey, identity.device.privateKey, message.seq, nonce, envelope).toOption
@@ -1234,19 +1235,20 @@ object Application:
                 Rekey.abort(value.state, nowMs).toOption match
                   case None          => (state.copy(timers = state.timers - timer), Vector(AppEffect.Notify(Notification.RekeyFailed)))
                   case Some(aborted) =>
-                    val active          = value.copy(state = aborted)
-                    val pendingSessions = rekey.newSessionId.toVector
-                    val next            = state.copy(
+                    val active                  = value.copy(state = aborted)
+                    val pendingSessions         = rekey.newSessionId.toVector
+                    val next                    = state.copy(
                       sessions = pendingSessions.foldLeft(state.sessions.updated(sessionId, active))((map, id) => map - id),
                       timers = state.timers - timer
                     )
+                    val (pumped, pumpedEffects) = pump(next, nowMs)
                     (
-                      next,
+                      pumped,
                       Vector(
                         AppEffect.PersistHandshake(None, None, Vector(active), None, None, Vector.empty, pendingSessions),
                         AppEffect.CancelTimer(timer),
                         AppEffect.Notify(Notification.RekeyFailed)
-                      )
+                      ) ++ pumpedEffects
                     )
             case _                                              => (state.copy(timers = state.timers - timer), Vector.empty)
 
