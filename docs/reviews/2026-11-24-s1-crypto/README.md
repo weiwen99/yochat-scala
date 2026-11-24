@@ -1,21 +1,18 @@
 # S1 external cryptography review
 
-Status: **candidate for external review; not signed**. Internal rounds 11–14 closed the remaining
-deadline, timer-installation, Skipped, legacy-upgrade, Ack/retirement, and offline-recovery items;
-M8/M9 remain open and no external signature exists (see `internal-review-rounds-11-14.md`). Round 1 found 3 BLOCKER and 9 MAJOR defects. Round 2
-verified B2, M1, M2, M3, M5, and the B1 read paths, but found B1 writes, B3 retry, and M7 batch
-still open. Round 3 closes those three items and strengthens the M4/M6 tests. A round-3 re-review of
-`bb152f8` (`internal-review-round3-2026-11-24.md`) verified those closures, but found two further
-cutover defects: **R3-N1 (BLOCKER)** — after the last rebind, the old session row is deleted while
-the old `AppState` session remains, so a late old-session Data fails `PersistInbound` and sets the
-runtime fatal; **R3-N2 (MAJOR, G12)** — the responder retires its old session with `InitiatorAck`
-before the first authenticated new-session Data. M8 (byte-unbounded queues) and M9 (key-source/ADR
-mismatch) remain open. No external reviewer has been commissioned and none has signed this package.
+Status: **candidate for external review; not signed**. R3-N1 and R3-N2 are **closed** in rounds 4–10
+(`internal-review-rounds-4-10.md`); the round-3 report is historical input. R11–R14 closed the
+remaining deadline, timer-installation, Skipped, legacy-upgrade, Ack/retirement, ancestor, and
+offline-recovery items (`internal-review-rounds-11-14.md`). Known limits remain: M8 (byte-unbounded
+queues), M9 (key-source/ADR mismatch), the store retirement guard counts only `Pending` and not an
+unrepresented `Sent` row, runtime multi-row `Migrated`/`Skipped` plus mid-batch store-failure coverage
+is missing, and no external KAT/signature exists. No external reviewer has signed this package.
 The external cryptographic gate is **open**.
 
-Baseline: source `e2001ad` on top of `6884926`; packet `43c6830` plus rounds 2–14. `manifest.sha256` covers the source snapshot
+Baseline: source `e2001ad` on top of `6884926`; packet `6acace9` plus this README correction. `manifest.sha256` covers the source snapshot
 and this packet's docs; it is regenerated at each packet revision and verified before handoff. The
-final `./check.sh` receipt is in `remediation-2026-11-24.md`.
+final `./check.sh` receipt (PASS 582.48 s; E2E 17/17; 10k 29,958 ms) is in
+`internal-review-rounds-11-14.md`.
 
 Scope: the S1 two-party, one-device-each, relay-only YoChat implementation.
 
@@ -35,16 +32,17 @@ identifies what has and has not been tested, and records known limits. Findings 
    9 MAJOR. Read this before the checklist.
 8. `internal-review-round2-2026-11-24.md` — re-review of the first fixes; historical input.
 9. `remediation-2026-11-24.md` — round-2 corrections and round-3 closure/evidence.
-10. `internal-review-round3-2026-11-24.md` — re-review of `bb152f8`: the named closures verified;
-    R3-N1 (old session store/app split) and R3-N2 (responder retirement evidence) open.
+10. `internal-review-round3-2026-11-24.md` — historical re-review of `bb152f8`; R3-N1/R3-N2 were
+    later closed in rounds 4–10.
 11. `reviewer-worksheet.md` — the 33 questions mapped to code and tests, with the independent
     verification each one still needs.
-12. `internal-review-rounds-11-14.md` — rounds 11–14: deadline/timer/Skipped/legacy closure and
-    remaining limits.
-13. `reviewer-checklist.md` — sign-off checklist.
-14. `findings-template.md` — required finding format.
-15. `source-map.md` — where each implementation concern lives.
-16. `manifest.sha256` — source files covered by this snapshot.
+12. `internal-review-rounds-4-10.md` — closure of R3-N1/R3-N2 and the original blockers.
+13. `internal-review-rounds-11-14.md` — rounds 11–14: deadline/timer/Skipped/legacy/offline closure,
+    final gate receipt, and remaining limits.
+14. `reviewer-checklist.md` — sign-off checklist.
+15. `findings-template.md` — required finding format.
+16. `source-map.md` — where each implementation concern lives.
+17. `manifest.sha256` — source files covered by this snapshot.
 
 ## Boundary
 
@@ -67,8 +65,9 @@ S1 is not a production-audited messenger. The following are deliberately outside
 
 ## Gate closure
 
-The external cryptographic gate is open. This package becomes ready for an external reviewer only
-after M8/M9 are resolved and the fixed source gets a new commit and manifest.
-A human or institution with no conflict of interest then verifies the manifest, reproduces the
-evidence, answers `open-questions.md`, and signs `reviewer-checklist.md`. No internal review and no
-AI-generated document can close this gate.
+The external cryptographic gate is open. This package is ready to **hand** to an independent
+reviewer with the known limits above; it is not ready to be treated as signed or approved.
+A human or institution with no conflict of interest verifies the manifest, reproduces the evidence,
+answers `open-questions.md`, and signs `reviewer-checklist.md`. M8/M9 and any reviewer findings must
+be closed or explicitly accepted before signing. No internal review and no AI-generated document can
+close this gate.
