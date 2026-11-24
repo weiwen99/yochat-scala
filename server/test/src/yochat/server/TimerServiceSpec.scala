@@ -16,10 +16,10 @@ class TimerServiceSpec extends FunSuite:
       queue   <- Queue.bounded[IO, RuntimeCommand](8)
       state   <- Ref.of[IO, AppState](AppState.empty)
       service <- TimerService.create(queue, state, java.time.Clock.systemUTC())
-      _       <- service.start(TimerId.Idle, System.currentTimeMillis())
+      _       <- service.start(TimerId.Idle, System.currentTimeMillis(), 7L)
       command <- queue.take.timeout(5.seconds)
       _       <- command match
-                   case RuntimeCommand.App(yochat.core.app.AppEvent.TimerFired(TimerId.Idle, _, _)) => IO.unit
+                   case RuntimeCommand.App(yochat.core.app.AppEvent.TimerFiredAt(TimerId.Idle, _, _, 7L)) => IO.unit
                    case other => IO.raiseError(new AssertionError(s"unexpected command: $other"))
       _       <- IO.sleep(50.millis)
       count   <- service.activeCount

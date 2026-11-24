@@ -68,7 +68,7 @@ class AppEffectExecutorSpec extends FunSuite:
     ): IO[Unit] =
       state.update(_ :+ s"rekey-ack:$newSessionId")
 
-    def startTimer(timer: TimerId, deadlineMs: Long): IO[Unit] =
+    def startTimer(timer: TimerId, deadlineMs: Long, installationId: Long): IO[Unit] =
       state.update(_ :+ s"timer:${timer.kind}:${timer.messageId}:$deadlineMs")
 
     def cancelTimer(timer: TimerId): IO[Unit] =

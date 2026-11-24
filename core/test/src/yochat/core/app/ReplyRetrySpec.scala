@@ -31,7 +31,7 @@ class ReplyRetrySpec extends FunSuite:
     assertEquals(retry.invitations(id).replyAttempts, 1)
     assert(failedEffects.exists { case AppEffect.PersistInvitation(value) => value.replyAttempts == 1; case _ => false })
     assert(failedEffects.exists {
-      case AppEffect.StartTimer(TimerId.Reply(`id`), deadline) => deadline == 2_000L + AppLimits.ReplyRetryMs
+      case AppEffect.StartTimer(TimerId.Reply(`id`), deadline, _) => deadline == 2_000L + AppLimits.ReplyRetryMs
       case _                                                   => false
     })
 

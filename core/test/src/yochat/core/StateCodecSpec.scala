@@ -48,7 +48,8 @@ class StateCodecSpec extends munit.FunSuite:
           RekeyPhase.Requested,
           Some(x25519(seed(9))),
           None,
-          Some(ByteVector.fill(20)(7.toByte))
+          Some(ByteVector.fill(20)(7.toByte)),
+          42_000L
         )
       ),
       rekeyFailures = 2,
@@ -68,7 +69,7 @@ class StateCodecSpec extends munit.FunSuite:
     assert(StateCodec.decode(encoded.dropRight(1)).isLeft)
     assert(StateCodec.decode(encoded.drop(1)).isLeft)
     assert(StateCodec.decode(encoded :+ 0.toByte).isLeft)
-    assert(StateCodec.decode(ByteVector(2) ++ encoded.drop(1)).isLeft)
+    assert(StateCodec.decode(ByteVector(3) ++ encoded.drop(1)).isLeft)
   }
 
   test("state encoder rejects oversized skipped and retired collections") {
@@ -81,4 +82,19 @@ class StateCodecSpec extends munit.FunSuite:
     )
     assert(StateCodec.encode(tooManyRetired).isLeft)
     assert(StateCodec.encode(tooManySkipped).isLeft)
+  }
+
+  test("v2 rejects a rekey state without a positive deadline") {
+    val state = sample()
+    val rekey = RekeyState(
+      RekeyRole.Initiator,
+      TestKeys.rekeyId(1),
+      3L,
+      RekeyPhase.Requested,
+      Some(x25519(seed(9))),
+      None,
+      None,
+      0L
+    )
+    assert(StateCodec.encode(state.copy(rekey = Some(rekey))).isLeft)
   }

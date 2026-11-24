@@ -34,7 +34,7 @@ class AppLockSpec extends FunSuite:
       AppEvent.PersistOutboundSucceeded(7L, outgoing.generation, 10L)
     )
     assert(successEffects.exists { case AppEffect.SendWire(_, 7L, _, _: WireFrame) => true; case _ => false })
-    assert(successEffects.exists { case AppEffect.StartTimer(TimerId(TimerKind.Delivery, 7L), _) => true; case _ => false })
+    assert(successEffects.exists { case AppEffect.StartTimer(TimerId(TimerKind.Delivery, 7L), _, _) => true; case _ => false })
     assertEquals(queued.outgoing(7L).state, OutgoingState.InFlight)
   }
 
@@ -120,7 +120,7 @@ class AppLockSpec extends FunSuite:
       AppEvent.Unlock(peers.alice, nowMs = 100L, idleTimeoutMs = 1_000L)
     )
     assertEquals(unlocked.lock, LockState.Unlocked(0L))
-    assert(unlockEffects.contains(AppEffect.StartTimer(TimerId.Idle, 1_100L)))
+    assert(unlockEffects.contains(AppEffect.StartTimer(TimerId.Idle, 1_100L, 1L)))
     assertEquals(unlocked.idleDeadline, Some(1_100L))
     val (early, earlyEffects) = Application.step(unlocked, AppEvent.IdleTimeout(1_099L))
     assertEquals(early.lock, LockState.Unlocked(0L))

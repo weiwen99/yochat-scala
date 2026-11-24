@@ -24,14 +24,16 @@ enum AppEvent:
   case UserSend(messageId: Long, conversationId: ByteVector, body: ByteVector, nonce: Nonce, nowMs: Long)
   case PersistOutboundSucceeded(messageId: Long, generation: Long, nowMs: Long)
   case PersistOutboundFailed(messageId: Long, generation: Long, nowMs: Long)
-  case RebindOutgoing(messageId: Long, newSessionId: SessionId, nonce: Nonce, nowMs: Long)
+  case RebindOutgoing(messageId: Long, newSessionId: SessionId, nonce: Nonce)
   case RecoverRebinds
+  case RecoverRetirements
   case RecoverRekey(oldSessionId: SessionId, nonce: Nonce, nowMs: Long)
   case RekeyConfirmRetry(oldSessionId: SessionId, nonce: Nonce, nowMs: Long)
   case Pump(nowMs: Long)
   case SendSucceeded(messageId: Long, generation: Long)
   case SendFailed(messageId: Long, generation: Long, nowMs: Long)
   case TimerFired(timer: TimerId, generation: Long, nowMs: Long)
+  case TimerFiredAt(timer: TimerId, generation: Long, nowMs: Long, installationId: Long)
   case ConnectionChanged(online: Boolean, nowMs: Long)
 
   case InboundFrame(
@@ -83,9 +85,17 @@ enum AppEvent:
     frame: WireFrame,
     expected: ControlExtension,
     responseNonce: Nonce,
-    newDh: Option[X25519KeyPair]
+    newDh: Option[X25519KeyPair],
+    nowMs: Long = 0L
   )
-  case RekeyAckReceived(newSessionId: SessionId, frame: WireFrame, expected: ControlExtension, newDh: X25519KeyPair)
+
+  case RekeyAckReceived(
+    newSessionId: SessionId,
+    frame: WireFrame,
+    expected: ControlExtension,
+    newDh: X25519KeyPair,
+    nowMs: Long = 0L
+  )
 
 enum AppEffect:
   case PersistOutbound(message: OutgoingMessage, session: AppSession)
@@ -128,7 +138,7 @@ enum AppEffect:
   case SendRekeyConfirm(newSessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame)
   case SendRekeyConfirmAck(newSessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame)
   case StartRekey(sessionId: SessionId)
-  case StartTimer(timer: TimerId, deadlineMs: Long)
+  case StartTimer(timer: TimerId, deadlineMs: Long, installationId: Long = 0L)
   case Pump(nowMs: Long)
   case CancelTimer(timer: TimerId)
   case Notify(notification: Notification)

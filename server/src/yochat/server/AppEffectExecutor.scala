@@ -58,7 +58,7 @@ trait AppTransport:
     frame: WireFrame
   ): IO[Unit]
 
-  def startTimer(timer: TimerId, deadlineMs: Long): IO[Unit]
+  def startTimer(timer: TimerId, deadlineMs: Long, installationId: Long): IO[Unit]
 
   def cancelTimer(timer: TimerId): IO[Unit]
 
@@ -156,8 +156,8 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
         transportOnly(transport.sendRekeyConfirmAck(newSessionId, toDevice, frame))
       case AppEffect.StartRekey(_)                                                                                          =>
         IO.pure(Left(AppExecutionError.Unsupported("StartRekey")))
-      case AppEffect.StartTimer(timer, deadlineMs)                                                                          =>
-        transportOnly(transport.startTimer(timer, deadlineMs))
+      case AppEffect.StartTimer(timer, deadlineMs, installationId)                                                          =>
+        transportOnly(transport.startTimer(timer, deadlineMs, installationId))
       case AppEffect.CancelTimer(timer)                                                                                     =>
         transportOnly(transport.cancelTimer(timer))
       case AppEffect.Notify(notification)                                                                                   =>

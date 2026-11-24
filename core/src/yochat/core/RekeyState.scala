@@ -16,7 +16,8 @@ final case class RekeyState(
   phase: RekeyPhase,
   localRatchetKey: Option[X25519KeyPair],
   newSessionId: Option[SessionId],
-  cachedAccept: Option[ByteVector]
+  cachedAccept: Option[ByteVector],
+  deadlineMs: Long = 0L
 ):
 
   override def toString: String = s"RekeyState(role=$role, phase=$phase, epoch=$epoch)"

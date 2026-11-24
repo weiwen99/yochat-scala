@@ -33,7 +33,7 @@ class OutboxSpec extends FunSuite:
     val generation                 = persisting.outgoing(2L).generation
     val (queued, _)                = Application.step(persisting, AppEvent.PersistOutboundSucceeded(2L, generation, 1L))
     val (afterOne, oneEffects)     = Application.step(queued, AppEvent.SendFailed(2L, generation, 2L))
-    assert(oneEffects.exists { case AppEffect.StartTimer(TimerId(TimerKind.Retry, 2L), _) => true; case _ => false })
+    assert(oneEffects.exists { case AppEffect.StartTimer(TimerId(TimerKind.Retry, 2L), _, _) => true; case _ => false })
     val (afterTwo, twoEffects)     = Application.step(afterOne, AppEvent.TimerFired(TimerId(TimerKind.Retry, 2L), generation, 3L))
     assert(twoEffects.exists { case AppEffect.SendWire(_, 2L, _, _) => true; case _ => false })
     val (afterThree, threeEffects) = Application.step(afterTwo, AppEvent.SendFailed(2L, generation, 4L))
@@ -50,4 +50,28 @@ class OutboxSpec extends FunSuite:
     assertEquals(failed.outgoing(3L).state, OutgoingState.Failed)
     assert(!effects.exists { case AppEffect.SendWire(_, _, _, _) => true; case _ => false })
     assert(effects.exists { case AppEffect.Notify(Notification.MessageFailed) => true; case _ => false })
+  }
+
+  test("a stale delivery callback cannot retry a rebound message") {
+    val peers                              = AppTestSupport.connected
+    val conversation                       = peers.aliceState.sessions.values.head.conversationId
+    val (persisting, _)                    = Application.step(peers.aliceState, AppEvent.UserSend(4L, conversation, Crypto.text("body"), TestKeys.nonce(4), 0L))
+    val generation                         = persisting.outgoing(4L).generation
+    val (sent, sentEffects)                = Application.step(persisting, AppEvent.PersistOutboundSucceeded(4L, generation, 1L))
+    val timer                              = TimerId(TimerKind.Delivery, 4L)
+    val installation                       = sentEffects.collectFirst {
+      case AppEffect.StartTimer(`timer`, _, value) => value
+    }.getOrElse(fail("missing delivery timer installation"))
+    val (stale, staleEffects)              = Application.step(
+      sent,
+      AppEvent.TimerFiredAt(timer, generation, 5_000L, installation + 1L)
+    )
+    assertEquals(stale, sent)
+    assert(staleEffects.isEmpty)
+    val (retried, retryEffects)            = Application.step(
+      stale,
+      AppEvent.TimerFiredAt(timer, generation, 5_000L, installation)
+    )
+    assert(retryEffects.exists { case AppEffect.SendWire(_, 4L, _, _) => true; case _ => false })
+    assert(retried.timerInstallations.get(timer).exists(_ != installation))
   }

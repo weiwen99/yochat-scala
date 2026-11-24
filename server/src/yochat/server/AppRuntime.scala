@@ -394,6 +394,52 @@ object AppRuntime:
                 onState
               )
             )
+          case AppEvent.TimerFiredAt(
+                timer @ TimerId.Rekey(sessionId, RekeyTimerStage.Confirm),
+                generation,
+                nowMs,
+                installationId
+              ) =>
+            AppRuntime.readRef(stateRef).flatMap { current =>
+              if current.timerInstallations.get(timer).contains(installationId) then
+                random.nonce.flatMap(nonce =>
+                  applyEvent(
+                    transport,
+                    AppEvent.RekeyConfirmRetry(sessionId, nonce, clock.millis()),
+                    queue,
+                    stateRef,
+                    random,
+                    executor,
+                    fatal,
+                    clock,
+                    onState
+                  )
+                )
+              else
+                applyEvent(
+                  transport,
+                  AppEvent.TimerFiredAt(timer, generation, nowMs, installationId),
+                  queue,
+                  stateRef,
+                  random,
+                  executor,
+                  fatal,
+                  clock,
+                  onState
+                )
+            }
+          case timerFired: AppEvent.TimerFiredAt                                                =>
+            applyEvent(
+              transport,
+              timerFired.copy(nowMs = clock.millis()),
+              queue,
+              stateRef,
+              random,
+              executor,
+              fatal,
+              clock,
+              onState
+            )
           case _                                                                                =>
             applyEvent(transport, event, queue, stateRef, random, executor, fatal, clock, onState)
         applied *>
@@ -409,6 +455,7 @@ object AppRuntime:
                 clock,
                 onState
               ) *>
+                recoverRetirements(transport, queue, stateRef, random, executor, fatal, clock, onState) *>
                 recoverRekeys(transport, queue, stateRef, random, executor, fatal, clock, onState)
             case _                        => IO.unit)
       case RuntimeCommand.Connection(on, now)    =>
@@ -424,6 +471,7 @@ object AppRuntime:
                clock,
                onState
              ) *>
+               recoverRetirements(transport, queue, stateRef, random, executor, fatal, clock, onState) *>
                recoverRekeys(transport, queue, stateRef, random, executor, fatal, clock, onState)
            else IO.unit)
       case RuntimeCommand.Inbound(from, payload) =>
@@ -441,7 +489,37 @@ object AppRuntime:
     executor: AppEffectExecutor,
     fatal: Ref[IO, Option[AppExecutionError]],
     clock: Clock,
-    onState: AppState => IO[Unit]
+    onState: AppState => IO[Unit],
+    pumpOnSkip: Boolean = true
+  ): IO[Unit] =
+    AppRuntime.readRef(fatal).flatMap {
+      case Some(_) => IO.unit
+      case None    =>
+        applyEventUnchecked(
+          transport,
+          event,
+          queue,
+          stateRef,
+          random,
+          executor,
+          fatal,
+          clock,
+          onState,
+          pumpOnSkip
+        )
+    }
+
+  private def applyEventUnchecked(
+    transport: RelayAppTransport,
+    event: AppEvent,
+    queue: Queue[IO, RuntimeCommand],
+    stateRef: Ref[IO, AppState],
+    random: RuntimeRandom,
+    executor: AppEffectExecutor,
+    fatal: Ref[IO, Option[AppExecutionError]],
+    clock: Clock,
+    onState: AppState => IO[Unit],
+    pumpOnSkip: Boolean
   ): IO[Unit] =
     for
       current        <- AppRuntime.readRef(stateRef)
@@ -452,23 +530,27 @@ object AppRuntime:
       _              <- result match
                           case Left(error)    => fatal.set(Some(error))
                           case Right(skipped) =>
-                            val skippedTimers = current.timers.keys.filter(timer => skipped.contains(timer.messageId))
+                            val skippedTimers = current.timers.keys
+                              .filter(timer => skipped.contains(timer.messageId))
+                              .toVector
                             val reconciled    =
                               if skipped.isEmpty then next
                               else
                                 skipped.foldLeft(current) { (state, messageId) =>
                                   state.copy(
                                     outgoing = state.outgoing - messageId,
-                                    timers = state.timers -- skippedTimers
+                                    timers = state.timers -- skippedTimers,
+                                    timerInstallations = state.timerInstallations -- skippedTimers
                                   )
                                 }
                             stateRef.set(reconciled) *> onState(reconciled) *>
+                              skippedTimers.foldLeft(IO.unit)((acc, timer) => acc *> transport.cancelTimer(timer)) *>
                               feedPersisted(durable, transport, queue, stateRef, random, executor, fatal, clock, onState) *>
                               (if skipped.isEmpty then executeExternal(external, transport, queue, stateRef, random, executor, fatal, clock, onState)
                                else
                                  applyEvent(
                                    transport,
-                                   AppEvent.Pump(clock.millis()),
+                                   AppEvent.RecoverRetirements,
                                    queue,
                                    stateRef,
                                    random,
@@ -476,7 +558,20 @@ object AppRuntime:
                                    fatal,
                                    clock,
                                    onState
-                                 ))
+                                 ) *>
+                                   (if pumpOnSkip then
+                                      applyEvent(
+                                        transport,
+                                        AppEvent.Pump(clock.millis()),
+                                        queue,
+                                        stateRef,
+                                        random,
+                                        executor,
+                                        fatal,
+                                        clock,
+                                        onState
+                                      )
+                                    else IO.unit))
     yield ()
 
   private def feedPersisted(
@@ -559,21 +654,32 @@ object AppRuntime:
                         random.nonce.flatMap { nonce =>
                           applyEvent(
                             transport,
-                            AppEvent.RebindOutgoing(value.id, newSessionId, nonce, clock.millis()),
+                            AppEvent.RebindOutgoing(value.id, newSessionId, nonce),
                             queue,
                             stateRef,
                             random,
                             executor,
                             fatal,
                             clock,
-                            onState
+                            onState,
+                            pumpOnSkip = false
                           ) *> AppRuntime.readRef(fatal).flatMap {
                             case Some(_) => IO.unit
                             case None    => loop
                           }
                         }
                   }
-                loop
+                loop *> applyEvent(
+                  transport,
+                  AppEvent.Pump(clock.millis()),
+                  queue,
+                  stateRef,
+                  random,
+                  executor,
+                  fatal,
+                  clock,
+                  onState
+                )
               case _                                                         =>
                 executor.execute(effect).flatMap {
                   case Right(_)                                => IO.unit
@@ -597,6 +703,28 @@ object AppRuntime:
     applyEvent(
       transport,
       AppEvent.RecoverRebinds,
+      queue,
+      stateRef,
+      random,
+      executor,
+      fatal,
+      clock,
+      onState
+    )
+
+  private def recoverRetirements(
+    transport: RelayAppTransport,
+    queue: Queue[IO, RuntimeCommand],
+    stateRef: Ref[IO, AppState],
+    random: RuntimeRandom,
+    executor: AppEffectExecutor,
+    fatal: Ref[IO, Option[AppExecutionError]],
+    clock: Clock,
+    onState: AppState => IO[Unit]
+  ): IO[Unit] =
+    applyEvent(
+      transport,
+      AppEvent.RecoverRetirements,
       queue,
       stateRef,
       random,
@@ -694,12 +822,12 @@ object AppRuntime:
                                  expectedControl(state, frame.header.sessionId, RekeyRole.Responder) match
                                    case None           => IO.pure(None)
                                    case Some(expected) =>
-                                     IO.pure(Some(AppEvent.RekeyConfirmReceived(frame.header.sessionId, frame, expected, nonce, newDh)))
+                                     IO.pure(Some(AppEvent.RekeyConfirmReceived(frame.header.sessionId, frame, expected, nonce, newDh, now)))
                                case MessageKind.RekeyConfirmAck                              =>
                                  expectedControl(state, frame.header.sessionId, RekeyRole.Initiator) match
                                    case None           => IO.pure(None)
                                    case Some(expected) =>
-                                     random.x25519.map(dh => Some(AppEvent.RekeyAckReceived(frame.header.sessionId, frame, expected, dh)))
+                                     random.x25519.map(dh => Some(AppEvent.RekeyAckReceived(frame.header.sessionId, frame, expected, dh, now)))
                   yield event
         case RelayPayload.Reply(text)         => replyEvent(state, from, text, now, random)
         case RelayPayload.RekeyRequest(bytes) =>
@@ -796,15 +924,15 @@ final private[server] class TimerService private (
   queue: Queue[IO, RuntimeCommand],
   stateRef: Ref[IO, AppState],
   clock: Clock,
-  fibers: Ref[IO, Map[TimerId, (Long, FiberIO[Unit])]],
+  fibers: Ref[IO, Map[TimerId, (Long, Long, Long, FiberIO[Unit])]],
   tokens: Ref[IO, Long]
 ):
 
-  def start(timer: TimerId, deadlineMs: Long): IO[Unit] =
+  def start(timer: TimerId, deadlineMs: Long, installationId: Long): IO[Unit] =
     for
       generation <- generationFor(timer)
       token      <- tokens.updateAndGet(value => if value == Long.MaxValue then 1L else value + 1L)
-      previous   <- fibers.modify(values => (values.removed(timer), values.get(timer).map(_._2)))
+      previous   <- fibers.modify(values => (values.removed(timer), values.get(timer).map(_._4)))
       _          <- previous.fold(IO.unit)(_.cancel)
       delay       = math.max(0L, deadlineMs - clock.millis())
       gate       <- cats.effect.Deferred[IO, FiberIO[Unit]]
@@ -814,22 +942,27 @@ final private[server] class TimerService private (
                         fibers
                           .modify(values =>
                             values.get(timer) match
-                              case Some((current, _)) if current == token => (values.removed(timer), true)
-                              case _                                      => (values, false)
+                              case Some((current, _, _, _)) if current == token => (values.removed(timer), true)
+                              case _                                            => (values, false)
                           )
                           .flatMap(shouldFire =>
-                            if shouldFire then queue.offer(RuntimeCommand.App(AppEvent.TimerFired(timer, generation, clock.millis()))).void
+                            if shouldFire then
+                              queue
+                                .offer(
+                                  RuntimeCommand.App(AppEvent.TimerFiredAt(timer, generation, clock.millis(), installationId))
+                                )
+                                .void
                             else IO.unit
                           )
                     ).start
-      _          <- fibers.update(_.updated(timer, (token, fiber)))
+      _          <- fibers.update(_.updated(timer, (token, deadlineMs, installationId, fiber)))
       _          <- gate.complete(fiber).void
     yield ()
 
   private[server] def activeCount: IO[Int] = AppRuntime.readRef(fibers).map(_.size)
 
   def cancel(timer: TimerId): IO[Unit] =
-    fibers.modify(values => (values.removed(timer), values.get(timer).map(_._2))).flatMap {
+    fibers.modify(values => (values.removed(timer), values.get(timer).map(_._4))).flatMap {
       case None        => IO.unit
       case Some(fiber) => fiber.cancel
     }
@@ -837,7 +970,7 @@ final private[server] class TimerService private (
   def close: IO[Unit] =
     AppRuntime
       .readRef(fibers)
-      .flatMap(_.values.toVector.foldLeft(IO.unit) { case (acc, (_, fiber)) => acc *> fiber.cancel })
+      .flatMap(_.values.toVector.foldLeft(IO.unit) { case (acc, (_, _, _, fiber)) => acc *> fiber.cancel })
       .guarantee(fibers.set(Map.empty))
 
   private def generationFor(timer: TimerId): IO[Long] =
@@ -853,7 +986,7 @@ private[server] object TimerService:
     clock: Clock
   ): IO[TimerService] =
     for
-      fibers <- Ref.of[IO, Map[TimerId, (Long, FiberIO[Unit])]](Map.empty)
+      fibers <- Ref.of[IO, Map[TimerId, (Long, Long, Long, FiberIO[Unit])]](Map.empty)
       tokens <- Ref.of[IO, Long](0L)
     yield new TimerService(queue, stateRef, clock, fibers, tokens)
 
@@ -902,8 +1035,8 @@ final private[server] class RelayAppTransport(
   def sendRekeyConfirmAck(newSessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame): IO[Unit] =
     relay.send(toDevice, RelayPayload.Wire(frame.bytes))
 
-  def startTimer(timer: TimerId, deadlineMs: Long): IO[Unit] =
-    timers.start(timer, deadlineMs)
+  def startTimer(timer: TimerId, deadlineMs: Long, installationId: Long): IO[Unit] =
+    timers.start(timer, deadlineMs, installationId)
 
   def cancelTimer(timer: TimerId): IO[Unit] =
     timers.cancel(timer)

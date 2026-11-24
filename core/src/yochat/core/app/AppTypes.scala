@@ -264,6 +264,9 @@ final case class AppState(
   invitations: Map[ByteVector, AppInvitation] = Map.empty,
   outgoing: Map[Long, OutgoingMessage] = Map.empty,
   timers: Map[TimerId, Long] = Map.empty,
+  timerInstallations: Map[TimerId, Long] = Map.empty,
+  suspendedRekeyTimers: Map[TimerId, Long] = Map.empty,
+  nextTimerInstallation: Long = 1L,
   connection: ConnectionState = ConnectionState.Offline,
   rekeyWindowStartedAtMs: Long = 0L,
   rekeyWindowAttempts: Int = 0
