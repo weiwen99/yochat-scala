@@ -96,7 +96,7 @@ object StateCodec:
       _                    <- r24.finish
       _                    <- if failures <= S1Limits.MaxRekeyFailures.toLong then Right(()) else Left(CoreError.InvalidState)
       _                    <- if attempts <= S1Limits.MaxRekeyAttempts.toLong then Right(()) else Left(CoreError.InvalidState)
-      _                    <- if version <= 2 || rekey.forall(_.deadlineMs > 0L) then Right(()) else Left(CoreError.InvalidState)
+      _                    <- if rekey.forall(_.deadlineMs > 0L) then Right(()) else Left(CoreError.InvalidState)
     yield RatchetState(
       sessionId = sessionId,
       peerUserPub = peerUserPub,
@@ -229,7 +229,7 @@ object StateCodec:
                                     yield Some(X25519KeyPair(privateKey, publicKey))
           (newSession, r6)   <- readOptionKey(r5, SessionId.from)
           (cachedAccept, r7) <- readOptionBytesPrefixed(r6, 1_048_576)
-          (deadlineMs, r8)   <- if version >= 2 then r7.u64 else Right((0L, r7))
+          (deadlineMs, r8)   <- if version >= 2 then r7.u64 else Right((1L, r7))
           (ackRaw, r9)       <- if version >= 3 then r8.u8 else Right((0, r8))
           ackReceived        <- if ackRaw == 0 || ackRaw == 1 then Right(ackRaw == 1) else Left(CoreError.InvalidEncoding)
         yield (Some(RekeyState(role, id, epoch, phase, localKey, newSession, cachedAccept, deadlineMs, ackReceived)), r9)

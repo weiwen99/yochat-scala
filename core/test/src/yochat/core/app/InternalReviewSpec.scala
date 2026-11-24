@@ -562,3 +562,91 @@ class InternalReviewSpec extends FunSuite:
       case _                                                     => false
     })
   }
+
+  test("R11: an offline restart arms the Confirm abort deadline") {
+    val peers = AppTestSupport.connected
+    val cutover = completeCutover(peers.aliceState, peers.bobState)
+    val identity = cutover.aliceAccepted.identity.getOrElse(fail("missing identity"))
+    val restored = cutover.aliceAccepted.copy(
+      lock = LockState.Locked(0L),
+      connection = ConnectionState.Offline,
+      timers = Map.empty,
+      timerInstallations = Map.empty
+    )
+    val (unlocked, effects) = Application.step(restored, AppEvent.Unlock(identity, 1_000L, 60_000L))
+    val confirm = TimerId.Rekey(cutover.oldSessionId, RekeyTimerStage.Confirm)
+    assert(effects.exists { case AppEffect.StartTimer(`confirm`, _, _) => true; case _ => false }, effects.toString)
+    assert(unlocked.timers.contains(confirm), unlocked.timers.toString)
+    val (aborted, abortEffects) = Application.step(
+      unlocked,
+      AppEvent.RekeyConfirmRetry(cutover.oldSessionId, TestKeys.nonce(129), 5_000L)
+    )
+    assert(aborted.sessions(cutover.oldSessionId).state.rekey.isEmpty)
+    assert(!abortEffects.exists { case AppEffect.SendRekeyConfirm(_, _, _) => true; case _ => false })
+  }
+
+  test("R11: reconnecting after an offline restart sends one Confirm") {
+    val peers = AppTestSupport.connected
+    val cutover = completeCutover(peers.aliceState, peers.bobState)
+    val identity = cutover.aliceAccepted.identity.getOrElse(fail("missing identity"))
+    val restored = cutover.aliceAccepted.copy(
+      lock = LockState.Locked(0L),
+      connection = ConnectionState.Offline,
+      timers = Map.empty,
+      timerInstallations = Map.empty
+    )
+    val (unlocked, _) = Application.step(restored, AppEvent.Unlock(identity, 1_000L, 60_000L))
+    assert(unlocked.rekeyRetryMissed.contains(cutover.oldSessionId))
+    val (online, _) = Application.step(unlocked, AppEvent.ConnectionChanged(online = true, nowMs = 1_100L))
+    val (_, effects) = Application.step(
+      online,
+      AppEvent.RecoverRekey(cutover.oldSessionId, TestKeys.nonce(133), 1_100L)
+    )
+    assert(effects.exists { case AppEffect.SendRekeyConfirm(_, _, _) => true; case _ => false })
+  }
+
+  test("R11: a retry missed offline is resumed once after reconnect") {
+    val peers = AppTestSupport.connected
+    val cutover = completeCutover(peers.aliceState, peers.bobState)
+    val (offline, _) = Application.step(cutover.aliceAccepted, AppEvent.ConnectionChanged(online = false, nowMs = 10L))
+    val (missed, missedEffects) = Application.step(
+      offline,
+      AppEvent.RekeyConfirmRetry(cutover.oldSessionId, TestKeys.nonce(130), 2_600L)
+    )
+    assert(!missedEffects.exists { case AppEffect.SendRekeyConfirm(_, _, _) => true; case _ => false })
+    assert(missed.rekeyRetryMissed.contains(cutover.oldSessionId))
+    val (online, onlineEffects) = Application.step(missed, AppEvent.ConnectionChanged(online = true, nowMs = 2_700L))
+    assert(!onlineEffects.exists { case AppEffect.SendRekeyConfirm(_, _, _) => true; case _ => false })
+    val (recovered, effects) = Application.step(
+      online,
+      AppEvent.RecoverRekey(cutover.oldSessionId, TestKeys.nonce(131), 2_700L)
+    )
+    assert(effects.exists { case AppEffect.SendRekeyConfirm(_, _, _) => true; case _ => false })
+    assert(!recovered.rekeyRetryMissed.contains(cutover.oldSessionId))
+    val (_, secondEffects) = Application.step(
+      recovered,
+      AppEvent.RecoverRekey(cutover.oldSessionId, TestKeys.nonce(132), 2_800L)
+    )
+    assert(!secondEffects.exists { case AppEffect.SendRekeyConfirm(_, _, _) => true; case _ => false })
+  }
+
+  test("R11: a late first Ack cannot manufacture retirement evidence") {
+    val peers = AppTestSupport.connected
+    val cutover = completeCutover(peers.aliceState, peers.bobState)
+    val old = cutover.aliceAccepted.sessions(cutover.oldSessionId)
+    val newActive = cutover.aliceAccepted.sessions(cutover.newSessionId).copy(state =
+      cutover.aliceAccepted.sessions(cutover.newSessionId).state.copy(phase = SessionPhase.Active)
+    )
+    val late = cutover.aliceAccepted.copy(
+      sessions = cutover.aliceAccepted.sessions
+        .updated(cutover.oldSessionId, old.copy(state = old.state.copy(rekey = old.state.rekey.map(_.copy(deadlineMs = 1L)))))
+        .updated(cutover.newSessionId, newActive)
+    )
+    val (after, effects) = Application.step(
+      late,
+      AppEvent.RekeyAckReceived(cutover.newSessionId, cutover.ack, cutover.control, AppTestSupport.xpair(9), 2L)
+    )
+    assert(!after.sessions(cutover.oldSessionId).state.rekey.exists(_.ackReceived))
+    assert(after.sessions.contains(cutover.oldSessionId))
+    assert(effects.isEmpty)
+  }

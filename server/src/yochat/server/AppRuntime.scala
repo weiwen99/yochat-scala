@@ -751,11 +751,12 @@ object AppRuntime:
       else
         val pending = state.sessions.values.toVector
           .filter(session =>
-            session.state.rekey.exists(rekey =>
-              rekey.role == yochat.core.RekeyRole.Initiator &&
-                rekey.phase == yochat.core.RekeyPhase.Accepted &&
-                rekey.newSessionId.exists(id => state.sessions.get(id).exists(_.state.phase == yochat.core.SessionPhase.Pending))
-            )
+            state.rekeyRetryMissed.contains(session.state.sessionId) ||
+              session.state.rekey.exists(rekey =>
+                rekey.role == yochat.core.RekeyRole.Initiator &&
+                  rekey.phase == yochat.core.RekeyPhase.Accepted &&
+                  rekey.newSessionId.exists(id => state.sessions.get(id).exists(_.state.phase == yochat.core.SessionPhase.Pending))
+              )
           )
           .map(_.state.sessionId)
           .sortBy(_.bytes.toHex)

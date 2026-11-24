@@ -195,10 +195,10 @@ class AppRuntimeSpec extends FunSuite:
       val program    = for
         server <- RelayServer.start(0)
         store  <- openStore(directory, masterA)
-        _      <- Resource.eval(store.insertContact(fixture.peerUser, ExecutorTestSupport.contactData(), 0L))
-        _      <- Resource.eval(store.createConversation(fixture.conversationId, fixture.peerUser, 0L))
-        _      <- Resource.eval(store.insertSession(oldState, 0L))
-        _      <- Resource.eval(store.insertSession(newState, 0L))
+        _      <- Resource.eval(store.insertContact(fixture.peerUser, ExecutorTestSupport.contactData(), 0L).flatMap(requireStore))
+        _      <- Resource.eval(store.createConversation(fixture.conversationId, fixture.peerUser, 0L).flatMap(requireStore))
+        _      <- Resource.eval(store.insertSession(oldState, 0L).flatMap(requireStore))
+        _      <- Resource.eval(store.insertSession(newState, 0L).flatMap(requireStore))
         relay  <- RelayClient.connect("127.0.0.1", server.port, store.identity.devicePublic)
         runtime <- AppRuntime.start(store, relay, queueCapacity = 64)
       yield (server, store, runtime)
@@ -216,6 +216,11 @@ class AppRuntimeSpec extends FunSuite:
       }.unsafeRunSync()
     finally deleteTree(directory)
   }
+
+  private def requireStore[A](value: Either[yochat.store.StorageError, A]): IO[A] =
+    value match
+      case Right(result) => IO.pure(result)
+      case Left(error)   => IO.raiseError(new AssertionError(error.code))
 
   private def requireAwait(runtime: AppRuntime, predicate: AppState => Boolean, timeout: FiniteDuration, label: String): IO[Unit] =
     runtime.awaitState(predicate, timeout).flatMap {

@@ -265,6 +265,7 @@ final case class AppState(
   outgoing: Map[Long, OutgoingMessage] = Map.empty,
   timers: Map[TimerId, Long] = Map.empty,
   timerInstallations: Map[TimerId, Long] = Map.empty,
+  rekeyRetryMissed: Set[SessionId] = Set.empty,
   nextTimerInstallation: Long = 1L,
   connection: ConnectionState = ConnectionState.Offline,
   rekeyWindowStartedAtMs: Long = 0L,

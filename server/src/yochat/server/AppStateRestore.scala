@@ -135,7 +135,10 @@ object AppStateRestore:
           .getOrElse(0L)
         val nextSeq       = if maxOutbound == Long.MaxValue then Long.MaxValue else maxOutbound + 1L
         val successorData = snapshot.messages.values.flatten.exists(message =>
-          message.sessionId == record.state.sessionId && message.state == MessageState.Received
+          message.sessionId == record.state.sessionId &&
+            message.state == MessageState.Received &&
+            message.authorPub == record.state.peerUserPub &&
+            message.devicePub == record.state.peerDevicePub
         )
         val retireOld     = !successorData && snapshot.sessions.exists { other =>
           other.state.sessionId != record.state.sessionId &&
