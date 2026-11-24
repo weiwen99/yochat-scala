@@ -96,16 +96,40 @@ object Application:
             val (next, effects) = state.sessions.values.toVector
               .filter(session => session.state.phase != SessionPhase.Active && hasRebindableOutgoing(state, session.state.sessionId))
               .foldLeft((state, Vector.empty[AppEffect])) { case ((current, effects), old) =>
-                activeSession(current, old.conversationId) match
-                  case Some(active) if isDirectPredecessor(current, old.state.sessionId, active.state.sessionId) =>
+                val successor = old.state.rekey
+                  .flatMap(_.newSessionId)
+                  .flatMap(id => current.sessions.find { case (sessionId, _) => sessionId == id }.map(_._2))
+                successor match
+                  case Some(active)
+                      if active.state.phase == SessionPhase.Active &&
+                        isDirectPredecessor(current, old.state.sessionId, active.state.sessionId) =>
                     (current, effects :+ AppEffect.RebindPending(old.state.sessionId, active.state.sessionId))
-                  case _                                                                                         =>
-                    val failed = current.outgoing.map {
-                      case (id, message) if message.sessionId == old.state.sessionId =>
-                        id -> message.copy(state = OutgoingState.Failed)
-                      case other                                                     => other
+                  case Some(pending) if pending.state.phase == SessionPhase.Pending =>
+                    (current, effects)
+                  case _                                                            =>
+                    val failed = current.outgoing.values
+                      .filter(_.sessionId == old.state.sessionId)
+                      .toVector
+                      .sortBy(_.id)
+                    val next   = failed.foldLeft(current) { (value, message) =>
+                      value.copy(outgoing = value.outgoing.updated(message.id, message.copy(state = OutgoingState.Failed)))
                     }
-                    (trimFailed(current.copy(outgoing = failed)), effects :+ AppEffect.Notify(Notification.MessageFailed))
+                    (
+                      trimFailed(next),
+                      effects ++ failed.flatMap(message =>
+                        Vector(
+                          AppEffect.UpdateMessageState(
+                            message.conversationId,
+                            message.sessionId,
+                            message.authorPub,
+                            message.devicePub,
+                            message.seq,
+                            MessageTransition.Failed
+                          ),
+                          AppEffect.Notify(Notification.MessageFailed)
+                        )
+                      )
+                    )
               }
             (next, effects)
         case AppEvent.Pump(nowMs)                                                                         =>
