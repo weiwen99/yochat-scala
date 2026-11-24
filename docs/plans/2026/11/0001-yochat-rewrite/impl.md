@@ -1,3 +1,6 @@
+> Historical implementation log. Current S1 status is in `AGENTS.md` §10 and the latest gate
+> receipt is `docs/reviews/2026-11-24-s1-crypto/m8-m9-closure.md`.
+
 # Plan 0001 implementation review — core crypto
 
 - 对象: 生产 `core/` 实现与测试，父提交 `64c5039`；本记录随同一提交。

@@ -252,21 +252,21 @@ JCE 的 `doFinal` 输出 ciphertext || tag；写入方不重新编码，读取�
 | G10 | 密钥源与部分实例 | 部分存在组合失败关闭（含 `identity.bin` 独存）；DB + identity + **任一合法密钥源**可重开；钥匙串拒绝/口令错误/identity 缺失均失败；口令不出现在 argv/env/日志 | PASS（`UT-keyfile-create`、`UT-keyfile-bounds`、`UT-partial-instance`、`UT-provider-refusal`；Electron `shell/main.js` 的 `safeStorage` 口令路径与 `keychain-smoke.js`；renderer/HTTP body 暴露按 revision 6 威胁模型接受） |
 | G11 | 联系人/邀请绑定、回滚与安全状态 | 交换 contact/invitation sealed、回滚 version、删除后重插旧版本均被拒；contact/invitation 点查与聊天列表走索引；`safety_verified` 翻转被拒；contact/session 不一致失败关闭；rekey 后从 contact 继承 true | PASS（`ST-contacts-invitations`，含 swap/rollback/tombstone/safety/mismatch/rekey） |
 | G12 | 旧会话删除 | 双向 Confirm/Ack 完成且有 pending 时不删；lost-ACK + **零 pending** 时应答方仍保留旧 state，直到收到新 session 首个已认证数据帧；发起方收到 ACK 且无 pending 才删；旧 state 不能复活；历史 body 仍可读 | PASS（`ST-cutover`：initiator/responder、pending、lost-ACK、tombstone、历史 body） |
-| G13 | 1,000 条 E2E `<5s` | 两进程真实消息路径，含本存储方案；硬门，不校准 | 未实现（M5；`ST-store-throughput` 1,000 写+读约 1.5s，不替代两进程 E2E） |
+| G13 | 1,000 条 E2E `<5s` | 两进程真实消息路径，含本存储方案；硬门，不校准 | PASS（`server.e2e` E2E#8：真实 relay + 两个 JVM + SQLite，3,795ms，warmup 1,000，source `6a81640`） |
 | G14 | 备份与 native 启动 | 运行中 `backup` 生成一致副本；恢复身份/密钥源按路径说明；JDK 25 启动带 native access 参数 | PARTIAL（`ST-backup`、`ST-native-access` PASS；Electron launcher 不在本仓） |
 | G15 | doobie/SQLite 接入 | Hikari(max 1) + `Transactor[IO]`；建表、参数化写入、读回、强制回滚（确认 update 影响 1 行且异常是 forced rollback）、PRAGMA WAL/FULL、点查走索引 | PASS（生产 `store/` 测试覆盖 PRAGMA、事务回滚、索引计划、schema fail-closed） |
 | G16 | Hikari 归还连接/维护路径 | 事务持有写锁时第二条连接被阻塞；commit/rollback 后连接可写；`VACUUM INTO` 走 `rawTrans` | PASS（`ST-store-transaction`、`ST-backup`；RC14 实际 API 是 `rawTrans`） |
 
-Gate 口径：G1–G7 是 storage spike 的可执行证据；G15 已由生产 `store/` 测试覆盖，不再只是 doobie smoke。G8–G12/G16 由 `store/test/src/yochat/store` 的实现测试覆盖；G10 的 Electron `safeStorage`/loopback 路径已在本仓并有 smoke/E2E 证据；G14 的 Electron launcher 不在本仓，保持 PARTIAL；G13 仍是 M5 的两进程 E2E，store-only 回执不替代。未跑就是未跑，不写成 PASS。
+Gate 口径：G1–G7 是 storage spike 的可执行证据；G15 已由生产 `store/` 测试覆盖，不再只是 doobie smoke。G8–G12/G16 由 `store/test/src/yochat/store` 的实现测试覆盖；G10 的 Electron `safeStorage`/loopback 路径已在本仓并有 smoke/E2E 证据；G14 的 Electron launcher 不在本仓，保持 PARTIAL；G13 由 `server.e2e` E2E#8 的两进程真实路径覆盖；store-only 回执仍不替代。未跑就是未跑，不写成 PASS。
 
 ## 评审与未关闭
 
 - 内部设计评审 round 1：1 个 BLOCKER（首次运行部分实例）、10 个 MAJOR、14 个 MINOR；revision 2 已处理 blocker/MAJOR，并修正 G1/G2/G3/G7 的虚假 PASS 口径。
 - 内部设计评审 round 2（doobie）+ closure：4 个 MAJOR（Hikari autoCommit/写锁、G15 未验证 UPDATE 行数、G3 wire 测试被顺序混淆、G12 本地 Active 过早删旧会话）已修；G12 的应答方 closure 已确认：必须等新 session 首个已认证数据帧且无 pending；MINOR（G7 输入哈希、stale write、G10/G11 缺项、SQLCipher 措辞、tombstone 增长）已并入 revision 4/5。Hikari 归还连接/维护路径另立 G16，现由生产 store 测试验证。最终复核没有剩余 BLOCKER/MAJOR。
 - round 1 的 MINOR 处理：人日改为 10–14；保留按会话子密钥并说明目的；邀请 tombstone 承认会累积、不假装由单待处理邀请限制；`meta.value` 只放整数并拒绝更高 schema；Argon2 上下界；高水位精确写；单连接串行；`fullfsync` 不提未入回执数字；AAD 定长/身份域分离；高水位逃生条款写入取代关系；错误码扩展；`messageId` 从 AAD 删除。
-- 外部密码学评审：仍是发布门；本 ADR 的密钥层次、Argon2id 参数、AEAD AAD 必须和 ADR-0006 一起送审。内部评审不是密码学证明。
+- 外部密码学评审：owner 已按仓库规则接受已知限制并关闭 acceptance gate；本 ADR 的密钥层次、Argon2id 参数、AEAD AAD 仍应作为独立外部审计的输入。内部评审不是密码学证明；没有独立外部签名。
 - 已实现：生产 `store/`（doobie/Hikari/SQLite、AEAD、高水位、锁代次、联系人/邀请/会话/消息/聊天仓）、`MasterKeyProvider`/`KeyFile`/`identity.bin`、备份、真实子进程崩溃注入，以及 G8–G12/G15/G16 测试。
-- 未实现：Electron launcher 的 native-access 配置（G14；store 子进程探针已过）、M5 两进程 1,000 条 E2E（G13）；外部密码学评审由 owner 决策关闭（见评审包）。
+- 未实现：Electron launcher 的 native-access 配置（G14；store 子进程探针已过）。
 - 明确的后续输入：电源级持久性（`fullfsync`）、master 轮换、恢复短语、S2 多设备；不在 S1 里用新表/新协议预支。
 
 ## 取代关系

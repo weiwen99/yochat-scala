@@ -101,4 +101,6 @@ Scala 代码必须遵守 `scala-best-practices`。写、改、重构或评审 Sc
 
 ## 10. 当前状态
 
-计划 0001 在 M2/M3 边界：`core/` 协议核心、M2 纯应用状态机（`yochat.core.app`）、Q1–Q6 有限 Quint 模型（`models/`，Apalache 安全性质 + TLC 时间性质）与生产 `store/`（doobie + SQLite + 应用层 AEAD、高水位、锁代次、备份、崩溃注入）已实现；ADR-0006/0007/0008 accepted。G8–G12、G15、G16 由生产 store 测试覆盖。Q1–Q5 有固定 ITF trace 与 Scala `Application.step` replay（Q5 只做安全不变量投影）；Q6 覆盖 ACK/缺口，由 `DeliverySpec`/`TenKReplaySpec` 对拍，无固定 trace。`server/` 已有 AppEffect 执行器（store 持久化 + transport sink），但真实 transport、runtime、UI 与 15 条 E2E 尚未完成。G10 keychain shell、G14 Electron launcher、G13 两进程 1k/10k E2E 仍开放；模型通过不替代 S1。
+计划 0001 已进入 S1 收尾：`core/` 协议核心、纯应用状态机、Q1–Q6 有限 Quint 模型、生产 `store/`、真实 relay/transport、server runtime、ScalaJS UI 与 Electron shell 均已实现；ADR-0006/0007/0008 accepted。T1 总签已完成（2026-11-24）。`./check.sh` 自动门覆盖 unit/store/server/transport、Quint、spike、E2E#1–#17、1k/10k 两进程、desktop cold/idle 与 web UI smoke；最新回执见 `docs/reviews/2026-11-24-s1-crypto/m8-m9-closure.md`。
+
+仍开放：store retirement guard 只统计 `Pending`，未表示的 `Sent` 行没有 SQL 级保护；runtime 多行 `Migrated`/`Skipped` 与中途 store failure 的端到端测试缺失；Electron 窗口级交互、UI 重启/重连未自动覆盖。独立外部密码学审计为可选 assurance；owner 已按仓库规则关闭 acceptance gate，但没有任何独立外部签名，不能把内部评审写成外部审计。模型通过不替代 S1。

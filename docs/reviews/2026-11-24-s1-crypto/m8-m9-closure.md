@@ -40,7 +40,8 @@ This note records the two findings that previously blocked external handoff.
 
 ## Residual
 
-- M5 two-process 1,000-message E2E remains separate from this closure.
+- M5/G13 two-process 1,000-message E2E is covered by E2E#8 (3,795 ms, warmup 1,000 at `6a81640`);
+  the store-only throughput receipt does not replace it.
 - Store retirement guard still counts only `Pending`; an unrepresented `Sent` row remains protected
   by core binding/outgoing checks, not by SQL alone.
 - No independent external KAT/signature is claimed; the owner-signoff packet records risk acceptance.

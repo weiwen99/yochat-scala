@@ -2,7 +2,7 @@
 
 - Plan: 0009
 - Date: 2026-11-23
-- Status: implemented for cold-start and idle-memory; UI automation and external cryptography review remain
+- Status: implemented for cold-start and idle-memory; web UI smoke implemented in Plan 0010; Electron-window automation remains; external cryptography review is optional owner-closed assurance
 - Domain: performance/desktop
 - Summary: Add a repeatable Electron + JVM cold-start and idle-memory receipt without changing the product protocol or UI behavior.
 - Predecessor: `5317022` (Plan 0007), Plan 0008 E2E gates
