@@ -7,9 +7,9 @@ R3-N1 and R3-N2 are **closed** in rounds 4–10 (`internal-review-rounds-4-10.md
 is historical input. R11–R14 closed the remaining deadline, timer-installation, Skipped,
 legacy-upgrade, Ack/retirement, ancestor, and offline-recovery items
 (`internal-review-rounds-11-14.md`). M8 (byte-unbounded queues) and M9 (key-source/ADR
-mismatch) are closed in `m8-m9-closure.md`. Remaining accepted limits: the store retirement guard
-counts only `Pending` and not an unrepresented `Sent` row, and runtime multi-row
-`Migrated`/`Skipped` plus mid-batch store-failure coverage is missing.
+mismatch) are closed in `m8-m9-closure.md`. The store retirement guard now blocks both `Pending` and
+`Sent` rows (`CutoverSpec`); the remaining test gap is runtime multi-row `Migrated`/`Skipped`
+plus mid-batch store-failure coverage.
 
 Baseline: source `6a81640` on top of `6884926`; packet `6acace9` plus owner-signoff and M8/M9 corrections. `manifest.sha256` covers the source snapshot
 and this packet's docs; it is regenerated at each packet revision and verified before handoff. The

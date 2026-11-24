@@ -103,4 +103,4 @@ Scala 代码必须遵守 `scala-best-practices`。写、改、重构或评审 Sc
 
 计划 0001 已进入 S1 收尾：`core/` 协议核心、纯应用状态机、Q1–Q6 有限 Quint 模型、生产 `store/`、真实 relay/transport、server runtime、ScalaJS UI 与 Electron shell 均已实现；ADR-0006/0007/0008 accepted。T1 总签已完成（2026-11-24）。`./check.sh` 自动门覆盖 unit/store/server/transport、Quint、spike、E2E#1–#17、1k/10k 两进程、desktop cold/idle 与 web UI smoke；最新回执见 `docs/reviews/2026-11-24-s1-crypto/m8-m9-closure.md`。
 
-仍开放：store retirement guard 只统计 `Pending`，未表示的 `Sent` 行没有 SQL 级保护；runtime 多行 `Migrated`/`Skipped` 与中途 store failure 的端到端测试缺失；Electron 窗口级交互、UI 重启/重连未自动覆盖。独立外部密码学审计为可选 assurance；owner 已按仓库规则关闭 acceptance gate，但没有任何独立外部签名，不能把内部评审写成外部审计。模型通过不替代 S1。
+仍开放：runtime 多行 `Migrated`/`Skipped` 与中途 store failure 的端到端测试缺失；Electron 窗口级交互、UI 重启/重连未自动覆盖。独立外部密码学审计为可选 assurance；owner 已按仓库规则关闭 acceptance gate，但没有任何独立外部签名，不能把内部评审写成外部审计。模型通过不替代 S1。

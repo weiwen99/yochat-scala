@@ -296,7 +296,9 @@ private[store] object SessionRepository:
     yield SessionRecord(state, update.nextVersion, lock, now)
 
   private[store] def pendingCountProgram(sessionId: SessionId): ConnectionIO[Long] =
-    sql"SELECT count(*) FROM messages WHERE session_id = ${sessionId.bytes.toArray} AND state = ${MessageState.code(MessageState.Pending)}"
+    sql"""SELECT count(*) FROM messages
+         |WHERE session_id = ${sessionId.bytes.toArray}
+         |  AND state IN (${MessageState.code(MessageState.Pending)}, ${MessageState.code(MessageState.Sent)})""".stripMargin
       .query[Long]
       .unique
 

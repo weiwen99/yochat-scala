@@ -39,6 +39,14 @@ class CutoverSpec extends FunSuite:
                            CutoverEvidence(confirmAckReceived = true, firstNewSessionDataReceived = false)
                          )
           _           <- store.setMessageState(result.message.id, MessageState.Pending, MessageState.Sent, 0L)
+          sentBlocked <- store.retireSession(
+                           session.sessionId,
+                           result.session.version,
+                           0L,
+                           CutoverRole.Initiator,
+                           CutoverEvidence(confirmAckReceived = true, firstNewSessionDataReceived = false)
+                         )
+          _           <- store.setMessageState(result.message.id, MessageState.Sent, MessageState.Delivered, 0L)
           noAck       <- store.retireSession(
                            session.sessionId,
                            result.session.version,
@@ -64,6 +72,7 @@ class CutoverSpec extends FunSuite:
         yield
           assertEquals(StoreTestSupport.left(pending), StorageError.PendingMessages)
           assertEquals(StoreTestSupport.left(noAck), StorageError.CutoverNotReady)
+          assertEquals(StoreTestSupport.left(sentBlocked), StorageError.PendingMessages)
           assertEquals(StoreTestSupport.left(gone), StorageError.NotFound("session"))
           assertEquals(history.map(_.body), Right(StoreTestSupport.body("pending")))
           assertEquals(StoreTestSupport.left(resurrected), StorageError.StaleGeneration)
@@ -95,6 +104,14 @@ class CutoverSpec extends FunSuite:
                         )
           result     <- IO.fromEither(appended.left.map(error => new AssertionError(error.code)))
           _          <- store.setMessageState(result.message.id, MessageState.Pending, MessageState.Sent, 0L)
+          sentBlocked <- store.retireSession(
+                          session.sessionId,
+                          result.session.version,
+                          0L,
+                          CutoverRole.Responder,
+                          CutoverEvidence(confirmAckReceived = false, firstNewSessionDataReceived = true)
+                        )
+          _          <- store.setMessageState(result.message.id, MessageState.Sent, MessageState.Delivered, 0L)
           lostAck    <- store.retireSession(
                           session.sessionId,
                           result.session.version,
@@ -114,6 +131,7 @@ class CutoverSpec extends FunSuite:
           gone       <- store.loadSession(session.sessionId)
         yield
           assertEquals(StoreTestSupport.left(lostAck), StorageError.CutoverNotReady)
+          assertEquals(StoreTestSupport.left(sentBlocked), StorageError.PendingMessages)
           assertEquals(stillThere.map(_.version), Right(result.session.version))
           assertEquals(StoreTestSupport.left(gone), StorageError.NotFound("session"))
       }
