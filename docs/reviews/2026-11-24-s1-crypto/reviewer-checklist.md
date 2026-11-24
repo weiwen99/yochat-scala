@@ -56,9 +56,9 @@ Baseline commit: `e2001ad`  Manifest verified: yes / no
 Reviewer signature: ____________________  Date: ____________
 
 Repository owner decision: **Accepted with known limits** — repository owner confirmed signing in
-the handoff session on 2026-11-25. Accepted limits: M8 (queue byte budget), M9 (key-source/ADR
-mismatch), store retirement guard `Pending`-only, missing runtime multi-row `Migrated`/`Skipped` and
-mid-batch store-failure coverage, and absence of an independent external KAT/signature.
+the handoff session on 2026-11-25. Accepted limits: store retirement guard `Pending`-only, missing
+runtime multi-row `Migrated`/`Skipped` and mid-batch store-failure coverage, and absence of an
+independent external KAT/signature. M8/M9 are closed in `m8-m9-closure.md`.
 Date: 2026-11-25
 
 > This owner decision **closes the cryptographic acceptance gate** under the repository's

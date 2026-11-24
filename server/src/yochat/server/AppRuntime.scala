@@ -29,13 +29,13 @@ import yochat.core.{
 }
 import yochat.core.app.*
 import yochat.store.Store
-import yochat.transport.{RelayClient, RelayPayload}
+import yochat.transport.{ByteBudget, RelayClient, RelayPayload}
 
 final private[server] class RuntimeError(message: String) extends RuntimeException(message)
 
 private[server] enum RuntimeCommand:
   case App(event: AppEvent)
-  case Inbound(from: Ed25519Public, payload: RelayPayload)
+  case Inbound(from: Ed25519Public, payload: RelayPayload, bytes: Long)
   case Connection(online: Boolean, nowMs: Long)
 
 /** Single-writer runtime around the pure application kernel. Every inbound and effect completion is serialized through one bounded queue;
@@ -256,6 +256,8 @@ final class AppRuntime private (
 
 object AppRuntime:
 
+  val MaxInboundQueueBytes: Long = 8L * 1024L * 1024L
+
   private[server] def readRef[A](ref: Ref[IO, A]): IO[A] =
     ref.get // scalafix:ok DisableSyntax.no-unsafe-get
 
@@ -299,6 +301,7 @@ object AppRuntime:
                            case Some(value) => IO.pure(value)
                            case None        => IO.raiseError(new RuntimeError("identity-missing"))
       queue           <- Queue.bounded[IO, RuntimeCommand](math.max(16, queueCapacity))
+      inboundBudget   <- ByteBudget.create(MaxInboundQueueBytes)
       stateRef        <- Ref.of[IO, AppState](state)
       fatal           <- Ref.of[IO, Option[AppExecutionError]](None)
       notifications   <- Queue.bounded[IO, Notification](64)
@@ -308,9 +311,19 @@ object AppRuntime:
       notificationRef <- Ref.of[IO, Option[Notification]](None)
       transport        = new RelayAppTransport(relay, queue, notifications, notificationRef, clock, timers)
       executor         = new AppEffectExecutor(store, identity, transport)
-      loop            <- eventLoop(transport, queue, stateRef, messageIds, random, executor, fatal, clock, onState).start
+      loop            <- eventLoop(transport, queue, inboundBudget, stateRef, messageIds, random, executor, fatal, clock, onState).start
       inbound         <- relay.incoming
-                           .flatMap(incoming => queue.tryOffer(RuntimeCommand.Inbound(incoming.from, incoming.payload)).void)
+                           .flatMap(incoming =>
+                             val bytes = RelayPayload.byteSize(incoming.payload)
+                             inboundBudget.tryReserve(bytes).flatMap {
+                               case false => IO.unit
+                               case true  =>
+                                 queue.tryOffer(RuntimeCommand.Inbound(incoming.from, incoming.payload, bytes)).flatMap {
+                                   case true  => IO.unit
+                                   case false => inboundBudget.release(bytes)
+                                 }
+                             }
+                           )
                            .foreverM
                            .void
                            .start
@@ -344,6 +357,7 @@ object AppRuntime:
   private def eventLoop(
     transport: RelayAppTransport,
     queue: Queue[IO, RuntimeCommand],
+    inboundBudget: ByteBudget,
     stateRef: Ref[IO, AppState],
     messageIds: Ref[IO, Long],
     random: RuntimeRandom,
@@ -356,10 +370,15 @@ object AppRuntime:
       case Some(_) => IO.unit
       case None    =>
         queue.take
-          .flatMap(command => handle(transport, command, queue, stateRef, messageIds, random, executor, fatal, clock, onState))
+          .flatMap { command =>
+            val released = command match
+              case RuntimeCommand.Inbound(_, _, bytes) => inboundBudget.release(bytes)
+              case _                                   => IO.unit
+            released *> handle(transport, command, queue, stateRef, messageIds, random, executor, fatal, clock, onState)
+          }
           .attempt
           .flatMap {
-            case Right(_)    => eventLoop(transport, queue, stateRef, messageIds, random, executor, fatal, clock, onState)
+            case Right(_)    => eventLoop(transport, queue, inboundBudget, stateRef, messageIds, random, executor, fatal, clock, onState)
             case Left(error) =>
               fatal.set(Some(AppExecutionError.Unsupported(s"runtime-loop:${error.getClass.getSimpleName}")))
           }
@@ -378,7 +397,7 @@ object AppRuntime:
     onState: AppState => IO[Unit]
   ): IO[Unit] =
     command match
-      case RuntimeCommand.App(event)             =>
+      case RuntimeCommand.App(event)                =>
         val applied = event match
           case AppEvent.TimerFired(TimerId.Rekey(sessionId, RekeyTimerStage.Confirm), _, nowMs) =>
             random.nonce.flatMap(nonce =>
@@ -458,7 +477,7 @@ object AppRuntime:
                 recoverRetirements(transport, queue, stateRef, random, executor, fatal, clock, onState) *>
                 recoverRekeys(transport, queue, stateRef, random, executor, fatal, clock, onState)
             case _                        => IO.unit)
-      case RuntimeCommand.Connection(on, now)    =>
+      case RuntimeCommand.Connection(on, now)       =>
         applyEvent(transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, random, executor, fatal, clock, onState) *>
           (if on then
              resumeGaps(queue, stateRef, random, clock) *> recoverRebinds(
@@ -474,7 +493,7 @@ object AppRuntime:
                recoverRetirements(transport, queue, stateRef, random, executor, fatal, clock, onState) *>
                recoverRekeys(transport, queue, stateRef, random, executor, fatal, clock, onState)
            else IO.unit)
-      case RuntimeCommand.Inbound(from, payload) =>
+      case RuntimeCommand.Inbound(from, payload, _) =>
         translateInbound(from, payload, messageIds, random, stateRef, clock).flatMap {
           case None        => IO.unit
           case Some(event) => applyEvent(transport, event, queue, stateRef, random, executor, fatal, clock, onState)

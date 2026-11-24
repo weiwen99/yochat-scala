@@ -22,6 +22,13 @@ object RelayPayload:
   private val RekeyAcceptKind: Int  = 4
   val MaxPayload: Int               = 1_048_774
 
+  def byteSize(value: RelayPayload): Long =
+    value match
+      case RelayPayload.Wire(payload)         => payload.size + 5L
+      case RelayPayload.Reply(text)           => text.getBytes(StandardCharsets.UTF_8).length.toLong + 5L
+      case RelayPayload.RekeyRequest(payload) => payload.size + 5L
+      case RelayPayload.RekeyAccept(payload)  => payload.size + 5L
+
   def encode(value: RelayPayload): Either[String, ByteVector] =
     val (kind, bytes) = value match
       case RelayPayload.Wire(payload)         => (WireKind, payload)
@@ -64,7 +71,7 @@ object RelayPayload:
     try Right(decoder.decode(java.nio.ByteBuffer.wrap(value.toArray)).toString)
     catch case _: java.nio.charset.CharacterCodingException => Left("invalid-text")
 
-final case class RelayIncoming(from: Ed25519Public, payload: RelayPayload)
+final case class RelayIncoming(from: Ed25519Public, payload: RelayPayload, admittedBytes: Long = 0L)
 
 object RelayWire:
 

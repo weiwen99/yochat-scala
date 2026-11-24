@@ -20,6 +20,7 @@ final class RelayClient private (
   updatesQueue: Queue[IO, Boolean],
   current: Ref[IO, Option[RelayConnection]],
   closed: Ref[IO, Boolean],
+  inboundBudget: ByteBudget,
   supervisor: FiberIO[Unit]
 ):
 
@@ -32,7 +33,10 @@ final class RelayClient private (
         }
     }
 
-  def incoming: IO[RelayIncoming] = incomingQueue.take
+  def incoming: IO[RelayIncoming] =
+    incomingQueue.take.flatMap(value => inboundBudget.release(value.admittedBytes).as(value))
+
+  private[transport] def admittedBytes: IO[Long] = inboundBudget.currentBytes
 
   def updates: IO[Boolean] = updatesQueue.take
 
@@ -63,15 +67,24 @@ object RelayClient:
   private val MaxBackoff: FiniteDuration     = 5.seconds
   private val ConnectTimeoutMs: Int          = 5_000
 
-  def connect(host: String, port: Int, localDevice: Ed25519Public, capacity: Int = 1_024): Resource[IO, RelayClient] =
+  val DefaultMaxIncomingBytes: Long = 8L * 1024L * 1024L
+
+  def connect(
+    host: String,
+    port: Int,
+    localDevice: Ed25519Public,
+    capacity: Int = 1_024,
+    maxIncomingBytes: Long = DefaultMaxIncomingBytes
+  ): Resource[IO, RelayClient] =
     Resource.make {
       for
-        incoming   <- Queue.bounded[IO, RelayIncoming](math.max(1, capacity))
-        updates    <- Queue.bounded[IO, Boolean](16)
-        current    <- Ref.of[IO, Option[RelayConnection]](None)
-        closed     <- Ref.of[IO, Boolean](false)
-        supervisor <- supervise(host, port, localDevice, incoming, updates, current, closed).start
-      yield new RelayClient(incoming, updates, current, closed, supervisor)
+        incoming      <- Queue.bounded[IO, RelayIncoming](math.max(1, capacity))
+        updates       <- Queue.bounded[IO, Boolean](16)
+        current       <- Ref.of[IO, Option[RelayConnection]](None)
+        closed        <- Ref.of[IO, Boolean](false)
+        inboundBudget <- ByteBudget.create(maxIncomingBytes)
+        supervisor    <- supervise(host, port, localDevice, incoming, updates, current, closed, inboundBudget).start
+      yield new RelayClient(incoming, updates, current, closed, inboundBudget, supervisor)
     }(_.close)
 
   private def supervise(
@@ -81,7 +94,8 @@ object RelayClient:
     incoming: Queue[IO, RelayIncoming],
     updates: Queue[IO, Boolean],
     current: Ref[IO, Option[RelayConnection]],
-    closed: Ref[IO, Boolean]
+    closed: Ref[IO, Boolean],
+    inboundBudget: ByteBudget
   ): IO[Unit] =
     def loop(backoff: FiniteDuration): IO[Unit] =
       RelayClient.readRef(closed).flatMap {
@@ -95,7 +109,7 @@ object RelayClient:
                 case true  => value.close
                 case false =>
                   current.set(Some(value)) *> updates.tryOffer(true) *>
-                    value.readLoop(incoming).start.flatMap(_.join) *>
+                    value.readLoop(incoming, inboundBudget).start.flatMap(_.join) *>
                     value.close *> current.set(None) *> updates.tryOffer(false) *> IO.sleep(backoff) *> loop(InitialBackoff)
               }
           }
@@ -154,14 +168,27 @@ final private[transport] class RelayConnection(
             .handleErrorWith(error => close *> IO.raiseError(error))
         }
 
-  def readLoop(incoming: Queue[IO, RelayIncoming]): IO[Unit] =
+  def readLoop(incoming: Queue[IO, RelayIncoming], budget: ByteBudget): IO[Unit] =
+    def admit(from: Ed25519Public, payload: RelayPayload): IO[Unit] =
+      val bytes = RelayPayload.byteSize(payload)
+      budget.tryReserve(bytes).flatMap {
+        case false => IO.unit
+        case true  =>
+          incoming
+            .tryOffer(RelayIncoming(from, payload, bytes))
+            .flatMap {
+              case true  => IO.unit
+              case false => budget.release(bytes)
+            }
+      }
+
     def loop(): IO[Unit] =
       IO.blocking(RelayWire.readFrame(in)).flatMap {
         case Left(_)                       => IO.unit
         case Right((RelayWire.Data, body)) =>
           RelayWire.parseData(body) match
             case Left(_)                => loop()
-            case Right((from, payload)) => incoming.tryOffer(RelayIncoming(from, payload)).void *> loop()
+            case Right((from, payload)) => admit(from, payload) *> loop()
         case Right(_)                      => loop()
       }
     loop().handleErrorWith(_ => IO.unit)

@@ -43,7 +43,7 @@ Status: internal review record. The cryptographic acceptance gate was **closed b
 
 ## Remaining limits
 
-- M8 (queue byte budget) and M9 (key-source/ADR mismatch) remain open.
+- M8/M9 are closed in `m8-m9-closure.md`; no independent external KAT/signature is claimed.
 - The store retirement guard still counts only `Pending`, not `Sent`; a hidden unrepresented `Sent`
   row is protected only by the core binding/outgoing checks. This predates R13.
 - No external KAT, independent proof, or human/institution signature exists.

@@ -6,9 +6,10 @@ signature, not an independent external audit; no external signature or external 
 R3-N1 and R3-N2 are **closed** in rounds 4–10 (`internal-review-rounds-4-10.md`); the round-3 report
 is historical input. R11–R14 closed the remaining deadline, timer-installation, Skipped,
 legacy-upgrade, Ack/retirement, ancestor, and offline-recovery items
-(`internal-review-rounds-11-14.md`). Accepted limits: M8 (byte-unbounded queues), M9 (key-source/ADR
-mismatch), the store retirement guard counts only `Pending` and not an unrepresented `Sent` row, and
-runtime multi-row `Migrated`/`Skipped` plus mid-batch store-failure coverage is missing.
+(`internal-review-rounds-11-14.md`). M8 (byte-unbounded queues) and M9 (key-source/ADR
+mismatch) are closed in `m8-m9-closure.md`. Remaining accepted limits: the store retirement guard
+counts only `Pending` and not an unrepresented `Sent` row, and runtime multi-row
+`Migrated`/`Skipped` plus mid-batch store-failure coverage is missing.
 
 Baseline: source `e2001ad` on top of `6884926`; packet `6acace9` plus this README correction. `manifest.sha256` covers the source snapshot
 and this packet's docs; it is regenerated at each packet revision and verified before handoff. The
@@ -42,10 +43,11 @@ under this repository's owner-signoff rule.
 12. `internal-review-rounds-4-10.md` — closure of R3-N1/R3-N2 and the original blockers.
 13. `internal-review-rounds-11-14.md` — rounds 11–14: deadline/timer/Skipped/legacy/offline closure,
     final gate receipt, and remaining limits.
-14. `reviewer-checklist.md` — sign-off checklist.
-15. `findings-template.md` — required finding format.
-16. `source-map.md` — where each implementation concern lives.
-17. `manifest.sha256` — source files covered by this snapshot.
+14. `m8-m9-closure.md` — M8 byte budgets and M9 key-source/ADR decision.
+15. `reviewer-checklist.md` — sign-off checklist.
+16. `findings-template.md` — required finding format.
+17. `source-map.md` — where each implementation concern lives.
+18. `manifest.sha256` — source files covered by this snapshot.
 
 ## Boundary
 

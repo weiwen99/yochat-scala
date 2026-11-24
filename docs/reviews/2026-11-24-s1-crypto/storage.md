@@ -22,12 +22,13 @@ this does not protect if `databaseKey` itself leaks.
 
 ## 2. Key sources
 
-- **Actual implementation at this snapshot (M9 open):** the Electron shell uses `safeStorage` and
-  returns the passphrase to the renderer over IPC; the renderer sends it in the JSON body of
-  `POST /api/unlock`; `AppService` passes it to `KeySource.KeyFile(passphrase)` and the JVM derives
-  the master with Argon2id. There is **no** one-shot inherited key pipe in this tree. This is a
-  deviation from ADR-0007's preferred keychain path and is recorded as open M9, not as the preferred
-  design.
+- **Accepted implementation (ADR-0007 revision 6, M9 closed):** the Electron shell uses
+  `safeStorage` to encrypt the passphrase at rest, returns it to the renderer over preload IPC; the
+  renderer sends it in the JSON body of `POST /api/unlock`; `AppService` passes it to
+  `KeySource.KeyFile(passphrase)` and the JVM derives the master with Argon2id. There is **no**
+  one-shot inherited key pipe in this tree. The renderer/HTTP-body exposure is accepted as part of
+  the unlocked-process threat boundary; the passphrase must not enter argv, environment variables,
+  logs, or crash reports.
 - Fallback path used by the JVM directly: `keystore.bin` (0600), Argon2id v=19, memory 64 MiB,
   iterations 3, parallelism 1, salt 16B, output 32B; accepted bounds memory 16–256 MiB,
   iterations 1–10, parallelism 1–4. Parameters and salt are authenticated; out-of-range values

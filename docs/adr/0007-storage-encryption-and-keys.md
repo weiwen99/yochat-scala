@@ -1,6 +1,6 @@
 # 本地存储：doobie + 应用层 AEAD、密钥层次与回滚边界
 
-**状态**: accepted (2026-11-20，revision 5；内部评审 round 1/2/closure 完成，无剩余 BLOCKER/MAJOR；2026-11-20 补充生产 `store/` 的 G8–G16 门状态；外部密码学评审仍是发布门)
+**状态**: accepted (2026-11-20，revision 6；内部评审 round 1/2/closure 完成，无剩余 BLOCKER/MAJOR；2026-11-25 接受 Electron `safeStorage` → loopback unlock 的实际密钥路径，关闭 M9；外部密码学评审由 owner 决策记录在评审包)
 
 **前序**: ADR-0002（技术栈）、ADR-0004（测试/性能门）、ADR-0006（S1 加密）。本 ADR 取代 ADR-0002、ADR-0006 与 `design.md` 中「storage 方案待定」的占位；不改写已接受的 ADR-0005/0006。
 
@@ -97,8 +97,7 @@ masterSecret (32B, 来自系统钥匙串或口令包裹)
 
 **密钥源：系统钥匙串优先，Argon2id 口令回退。**
 
-- 钥匙串项：service `org.yochat.desktop`，account `store-master-key-v1`，值为 32 字节 master 的 base64。由 Electron shell 持有；JVM 通过一次性继承管道读取，**不**把密钥放在 argv、环境变量、日志、崩溃报告或 UI 状态里。shell 只负责取密钥，不持有业务状态。钥匙串项限制给本应用；
-  同用户恶意进程不在威胁模型内。
+- 钥匙串/口令源的实际 S1 路径：Electron shell 用 `safeStorage` 加密保存**口令**（`passphrase.bin`，0600），经 preload IPC 交给 renderer；renderer 通过 loopback `POST /api/unlock` JSON body 交给 JVM；JVM 从 `keystore.bin` 以 Argon2id 解开 master。**不存在一次性继承管道**，master 也不从 shell 直接传给 JVM。renderer 妥协、同用户恶意进程和 HTTP body 在已解锁本机进程内存中的可见性不在本 ADR 的威胁模型内；口令不得进入 argv、环境变量、日志或崩溃报告。该路径由 `shell/main.js`、`shell/preload.js`、`HttpApi.scala` 和 `AppService.scala` 实现，E2E/HTTP 测试覆盖 loopback 解锁；选择它而不是 pipe 是本 revision 的明确决策。
 - 回退：`keystore.bin` 文件（0600），Argon2id 派生 KEK，再用 ChaCha20-Poly1305 包裹 master。默认参数 Argon2id v=19、memory 64 MiB、iterations 3、parallelism 1、salt 16B、输出 32B；**接受范围** memory 16–256 MiB、iterations 1–10、parallelism 1–4；超出范围返回 `UnlockFailed`，不得按头里的巨值分配内存。参数和 salt 进入认证头，改参数即解不开。实现使用 BouncyCastle 的 Argon2id（ADR-0002 允许的 JCE 缺口）。
 - 文件格式（v1）：`magic "YCKS" || version u8=1 || kdf u8=1 || memoryKiB u32 || iterations u32 || parallelism u32 || salt 16B || nonce 12B || wrappedMaster 32B || tag 16B`；AAD 覆盖 `magic..salt` 和固定域标签。错误口令只返回通用 `UnlockFailed`，不回显密钥/参数。
 - `identity.bin`（v1）：`magic "YCID" || version u8=1 || nonce 12B || ciphertext || tag 16B`，明文是 4×32B 顺序：`user_priv || user_pub || device_priv || device_pub`（用户/设备 Ed25519）。AEAD key 为 `identityKey`，AAD 为 `"yochat-store/identity-file/v1" || version`（与 HKDF info 不同的域）。文件权限 0600，目录 0700。S1 中该文件创建后不可变；身份替换走新目录/master，不做旧文件版本回滚保护。
@@ -250,7 +249,7 @@ JCE 的 `doFinal` 输出 ciphertext || tag；写入方不重新编码，读取�
 | G7 | 1,000 次插入+读取总耗时 | 1,000 次插入与 1,000 次点查**总计** `<2s`；实测 168ms；输入哈希 `e369…b70`、命令和版本见 receipt | PASS（spike revision 4） |
 | G8 | 事务失败不发布候选 | 强制回滚后旧状态可读；读失败不返回空；写失败不多不少；候选/消息 key 不落盘 | PASS（`ST-store-failure`：重复 seq 回滚、损坏 state 报错不返回空） |
 | G9 | 崩溃/重启 | 进程在提交前后被终止，重启只看到完整提交；待发 wire 原样重发 | PASS（`ST-crash-recovery`：真实子进程 halt-before/after-commit） |
-| G10 | 密钥源与部分实例 | 部分存在组合失败关闭（含 `identity.bin` 独存）；DB + identity + **任一合法密钥源**可重开；钥匙串拒绝/口令错误/identity 缺失均失败；密钥不出现在 argv/env/日志 | PARTIAL（`UT-keyfile-create`、`UT-keyfile-bounds`、`UT-partial-instance`、`UT-provider-refusal` PASS；Electron keychain shell 不在本仓） |
+| G10 | 密钥源与部分实例 | 部分存在组合失败关闭（含 `identity.bin` 独存）；DB + identity + **任一合法密钥源**可重开；钥匙串拒绝/口令错误/identity 缺失均失败；口令不出现在 argv/env/日志 | PASS（`UT-keyfile-create`、`UT-keyfile-bounds`、`UT-partial-instance`、`UT-provider-refusal`；Electron `shell/main.js` 的 `safeStorage` 口令路径与 `keychain-smoke.js`；renderer/HTTP body 暴露按 revision 6 威胁模型接受） |
 | G11 | 联系人/邀请绑定、回滚与安全状态 | 交换 contact/invitation sealed、回滚 version、删除后重插旧版本均被拒；contact/invitation 点查与聊天列表走索引；`safety_verified` 翻转被拒；contact/session 不一致失败关闭；rekey 后从 contact 继承 true | PASS（`ST-contacts-invitations`，含 swap/rollback/tombstone/safety/mismatch/rekey） |
 | G12 | 旧会话删除 | 双向 Confirm/Ack 完成且有 pending 时不删；lost-ACK + **零 pending** 时应答方仍保留旧 state，直到收到新 session 首个已认证数据帧；发起方收到 ACK 且无 pending 才删；旧 state 不能复活；历史 body 仍可读 | PASS（`ST-cutover`：initiator/responder、pending、lost-ACK、tombstone、历史 body） |
 | G13 | 1,000 条 E2E `<5s` | 两进程真实消息路径，含本存储方案；硬门，不校准 | 未实现（M5；`ST-store-throughput` 1,000 写+读约 1.5s，不替代两进程 E2E） |
@@ -258,7 +257,7 @@ JCE 的 `doFinal` 输出 ciphertext || tag；写入方不重新编码，读取�
 | G15 | doobie/SQLite 接入 | Hikari(max 1) + `Transactor[IO]`；建表、参数化写入、读回、强制回滚（确认 update 影响 1 行且异常是 forced rollback）、PRAGMA WAL/FULL、点查走索引 | PASS（生产 `store/` 测试覆盖 PRAGMA、事务回滚、索引计划、schema fail-closed） |
 | G16 | Hikari 归还连接/维护路径 | 事务持有写锁时第二条连接被阻塞；commit/rollback 后连接可写；`VACUUM INTO` 走 `rawTrans` | PASS（`ST-store-transaction`、`ST-backup`；RC14 实际 API 是 `rawTrans`） |
 
-Gate 口径：G1–G7 是 storage spike 的可执行证据；G15 已由生产 `store/` 测试覆盖，不再只是 doobie smoke。G8–G12/G16 由 `store/test/src/yochat/store` 的实现测试覆盖；G10 的 keychain shell 与 G14 的 Electron launcher 不在本仓，保持 PARTIAL；G13 仍是 M5 的两进程 E2E，store-only 回执不替代。未跑就是未跑，不写成 PASS。
+Gate 口径：G1–G7 是 storage spike 的可执行证据；G15 已由生产 `store/` 测试覆盖，不再只是 doobie smoke。G8–G12/G16 由 `store/test/src/yochat/store` 的实现测试覆盖；G10 的 Electron `safeStorage`/loopback 路径已在本仓并有 smoke/E2E 证据；G14 的 Electron launcher 不在本仓，保持 PARTIAL；G13 仍是 M5 的两进程 E2E，store-only 回执不替代。未跑就是未跑，不写成 PASS。
 
 ## 评审与未关闭
 
@@ -267,7 +266,7 @@ Gate 口径：G1–G7 是 storage spike 的可执行证据；G15 已由生产 `s
 - round 1 的 MINOR 处理：人日改为 10–14；保留按会话子密钥并说明目的；邀请 tombstone 承认会累积、不假装由单待处理邀请限制；`meta.value` 只放整数并拒绝更高 schema；Argon2 上下界；高水位精确写；单连接串行；`fullfsync` 不提未入回执数字；AAD 定长/身份域分离；高水位逃生条款写入取代关系；错误码扩展；`messageId` 从 AAD 删除。
 - 外部密码学评审：仍是发布门；本 ADR 的密钥层次、Argon2id 参数、AEAD AAD 必须和 ADR-0006 一起送审。内部评审不是密码学证明。
 - 已实现：生产 `store/`（doobie/Hikari/SQLite、AEAD、高水位、锁代次、联系人/邀请/会话/消息/聊天仓）、`MasterKeyProvider`/`KeyFile`/`identity.bin`、备份、真实子进程崩溃注入，以及 G8–G12/G15/G16 测试。
-- 未实现：Electron keychain shell（G10）、Electron launcher 的 native-access 配置（G14；store 子进程探针已过）、M5 两进程 1,000 条 E2E（G13）、外部密码学评审。
+- 未实现：Electron launcher 的 native-access 配置（G14；store 子进程探针已过）、M5 两进程 1,000 条 E2E（G13）；外部密码学评审由 owner 决策关闭（见评审包）。
 - 明确的后续输入：电源级持久性（`fullfsync`）、master 轮换、恢复短语、S2 多设备；不在 S1 里用新表/新协议预支。
 
 ## 取代关系
