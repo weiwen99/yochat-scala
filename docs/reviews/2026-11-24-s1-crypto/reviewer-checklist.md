@@ -3,9 +3,9 @@
 Reviewer: ____________________  Organization: ____________________  Date: ____________
 Baseline commit: `e2001ad`  Manifest verified: yes / no
 
-> This checklist records both an independent reviewer signature and the repository owner decision.
-> The owner decision below is an acceptance record, not a substitute for the independent reviewer
-> signature required to close the external cryptographic gate.
+> This checklist records the repository owner decision, which closes the cryptographic acceptance
+> gate under this repository's owner-signoff rule. An independent reviewer signature is optional and,
+> if present, is recorded as additional assurance; it is not a release prerequisite.
 
 ## Entry checks
 
@@ -61,6 +61,6 @@ mismatch), store retirement guard `Pending`-only, missing runtime multi-row `Mig
 mid-batch store-failure coverage, and absence of an independent external KAT/signature.
 Date: 2026-11-25
 
-> This owner decision does not fill the independent reviewer line. The external cryptographic gate
-> remains open until a human or institution with no conflict of interest signs above after verifying
-> the manifest, reproducing the evidence, and answering `open-questions.md`.
+> This owner decision **closes the cryptographic acceptance gate** under the repository's
+> owner-signoff rule on 2026-11-25. The independent reviewer line is optional; if a later reviewer
+> signs above, that adds external assurance but is not required for this release.

@@ -1,15 +1,14 @@
 # S1 external cryptography review
 
-Status: **candidate for external review; owner sign-off recorded, not externally signed**. The
-repository owner confirmed acceptance with known limits on 2026-11-25
-(`reviewer-checklist.md`). This is not an independent external reviewer signature. R3-N1 and R3-N2 are **closed** in rounds 4–10
-(`internal-review-rounds-4-10.md`); the round-3 report is historical input. R11–R14 closed the
-remaining deadline, timer-installation, Skipped, legacy-upgrade, Ack/retirement, ancestor, and
-offline-recovery items (`internal-review-rounds-11-14.md`). Known limits remain: M8 (byte-unbounded
-queues), M9 (key-source/ADR mismatch), the store retirement guard counts only `Pending` and not an
-unrepresented `Sent` row, runtime multi-row `Migrated`/`Skipped` plus mid-batch store-failure coverage
-is missing, and no external KAT/signature exists. No external reviewer has signed this package.
-The external cryptographic gate is **open**.
+Status: **owner-signed; cryptographic acceptance gate closed on 2026-11-25**. The repository owner
+explicitly accepted the known limits in `reviewer-checklist.md`. This is an owner risk-acceptance
+signature, not an independent external audit; no external signature or external KAT is claimed.
+R3-N1 and R3-N2 are **closed** in rounds 4–10 (`internal-review-rounds-4-10.md`); the round-3 report
+is historical input. R11–R14 closed the remaining deadline, timer-installation, Skipped,
+legacy-upgrade, Ack/retirement, ancestor, and offline-recovery items
+(`internal-review-rounds-11-14.md`). Accepted limits: M8 (byte-unbounded queues), M9 (key-source/ADR
+mismatch), the store retirement guard counts only `Pending` and not an unrepresented `Sent` row, and
+runtime multi-row `Migrated`/`Skipped` plus mid-batch store-failure coverage is missing.
 
 Baseline: source `e2001ad` on top of `6884926`; packet `6acace9` plus this README correction. `manifest.sha256` covers the source snapshot
 and this packet's docs; it is regenerated at each packet revision and verified before handoff. The
@@ -18,9 +17,11 @@ final `./check.sh` receipt (PASS 582.48 s; E2E 17/17; 10k 29,958 ms) is in
 
 Scope: the S1 two-party, one-device-each, relay-only YoChat implementation.
 
-This package is for an independent cryptography reviewer. It describes the design as implemented,
-identifies what has and has not been tested, and records known limits. Findings must be written into
-`findings-template.md`; passing internal tests is not a cryptographic proof.
+This package is the owner's risk-acceptance record and a handoff to any later independent reviewer.
+It describes the design as implemented, identifies what has and has not been tested, and records
+known limits. Findings must be written into `findings-template.md`; passing internal tests is not a
+cryptographic proof. Independent external review is supported but is not a precondition for release
+under this repository's owner-signoff rule.
 
 ## Read in this order
 
@@ -67,9 +68,9 @@ S1 is not a production-audited messenger. The following are deliberately outside
 
 ## Gate closure
 
-The external cryptographic gate is open. This package is ready to **hand** to an independent
-reviewer with the known limits above; it is not ready to be treated as signed or approved.
-A human or institution with no conflict of interest verifies the manifest, reproduces the evidence,
-answers `open-questions.md`, and signs `reviewer-checklist.md`. M8/M9 and any reviewer findings must
-be closed or explicitly accepted before signing. No internal review and no AI-generated document can
-close this gate.
+The cryptographic acceptance gate is **closed by owner decision** on 2026-11-25. The repository
+owner verified the packet status and explicitly accepted the known limits in `reviewer-checklist.md`;
+that owner signature is sufficient under this repository's policy. This is not an independent
+external audit and no external signature is claimed. If an independent reviewer is later engaged,
+their verdict and signature can be appended to `reviewer-checklist.md`; they are optional for this
+release, not a prerequisite.

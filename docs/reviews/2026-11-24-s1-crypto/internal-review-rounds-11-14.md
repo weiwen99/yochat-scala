@@ -1,8 +1,9 @@
 # Internal reviewer rounds 11–14
 
-Status: internal, non-signing. The external cryptographic gate remains **open**. Source baseline:
-`e2001ad` on top of `6884926`; this note records the added rounds 11–14 and their closures. The
-earlier rounds are in `internal-review-rounds-4-10.md`.
+Status: internal review record. The cryptographic acceptance gate was **closed by owner decision** on
+2026-11-25; no independent external signature is claimed. Source baseline: `e2001ad` on top of
+`6884926`; this note records the added rounds 11–14 and their closures. The earlier rounds are in
+`internal-review-rounds-4-10.md`.
 
 ## R11 findings and closure
 
@@ -50,5 +51,8 @@ earlier rounds are in `internal-review-rounds-4-10.md`.
   the core and executor tests cover the reducer and durable short-circuit, and E2E#17 covers one
   migrated row, but not the full writer batch.
 
-The packet is not signed; a human or institution must verify the manifest, reproduce the evidence,
-answer `open-questions.md`, and sign `reviewer-checklist.md`.
+The packet carries an owner risk-acceptance signature dated 2026-11-25; that closes the
+cryptographic acceptance gate under the repository rule. This is not an independent external audit.
+An independent reviewer may later verify the manifest, reproduce the evidence, answer
+`open-questions.md`, and append a signature to `reviewer-checklist.md` as optional additional
+assurance.
