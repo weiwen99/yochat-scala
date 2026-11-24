@@ -2,7 +2,7 @@
 
 Status: **not ready for external review**. The 10-round internal review budget is exhausted;
 remediation rounds 4–10 closed the original blockers and several cutover/recovery defects, but R10
-still reports seven P1 release blockers (see `internal-review-rounds-4-10.md`). Round 1 found 3 BLOCKER and 9 MAJOR defects. Round 2
+still reports five P1 plus one P2 blocker (see `internal-review-rounds-4-10.md`). Round 1 found 3 BLOCKER and 9 MAJOR defects. Round 2
 verified B2, M1, M2, M3, M5, and the B1 read paths, but found B1 writes, B3 retry, and M7 batch
 still open. Round 3 closes those three items and strengthens the M4/M6 tests. A round-3 re-review of
 `bb152f8` (`internal-review-round3-2026-11-24.md`) verified those closures, but found two further

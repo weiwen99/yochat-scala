@@ -3,7 +3,7 @@
 Status: internal, non-signing. The 10-round review budget is exhausted. The external cryptographic
 gate remains **open**; this is not an external audit or signature.
 
-Source baseline: `69050e4` (cumulative R3–R9 fixes).
+Source baseline: `926d3ff` (cumulative R3–R10 fixes); R11 reviewed it.
 Reviewers: read-only `reviewer` agents R4–R10; they did not edit files.
 
 ## Closed during rounds 4–10
@@ -19,7 +19,19 @@ Reviewers: read-only `reviewer` agents R4–R10; they did not edit files.
 - R7/R8: direct-predecessor recovery; pending-successor wait; durable failure for genuinely stranded
   ancestors; abort pumps resumed old queued work.
 
-## Remaining release blockers reported by R10 (not closed)
+## Remaining release blockers reported by R11 (not closed)
+
+R11 confirmed the R10 row-rejection loop, abort authorization, attempts reset, and timer-map cleanup
+improvements, but still blocks on:
+
+- Reevaluate ancestor outgoing when its direct successor retires (A→B→C).
+- One handshake deadline across Confirm retry/recovery; late Accept can schedule retry after responder expiry.
+- Timer installation identity at dispatch; stale delivery/Confirm callbacks can mutate replacements.
+- Last-row Skipped: recompute eligible retirement, physically cancel timers, persist cleanup.
+- Restore-time `RecoverRebinds` still discards `tryOffer`; use inline writer recovery.
+- P2: abort pumps before predecessor rebind, letting newer rows consume the send window.
+
+The earlier R10 list remains historical and is superseded by R11 for the final blocker set.
 
 1. A rejected rebind (e.g. `AccountMismatch`) returns unchanged state/effects; the runtime responder
    loop can select the same row indefinitely. Needs one visible rejection and batch termination.
@@ -38,12 +50,14 @@ Reviewers: read-only `reviewer` agents R4–R10; they did not edit files.
 
 ## Verification and limits
 
-- `./check.sh` at `69050e4`: PASS (572.73 s); E2E 17/17, 1k 4,222 ms, 10k 30,642 ms; cold start
-  p50 1,213 ms / p95 1,259 ms; idle 760.5 MB; UI smoke 100/100.
+- `./check.sh` at `926d3ff`: PASS (572.17 s); E2E 17/17, 1k 3,860 ms, 10k 28,670 ms; cold start
+  p50 1,189 ms / p95 1,203 ms; idle 742.9 MB; UI smoke 100/100.
 - MUnit reports inspected: core/store/server/transport all 0 failed.
 - No external KAT or independent cryptographic proof.
 - M8 (queue byte budget) and M9 (key-source/ADR mismatch) remain open.
 - The ten-round cap is reached; further changes need owner escalation and a fresh review budget.
+  R11 is the eighth added round; the remaining issues are architectural/test-token changes, not
+  one-line fixes.
 
 The packet must not be handed to an external reviewer as a finished baseline until the seven P1
 items above are closed or explicitly accepted by the owner, and a new source/manifest is frozen.

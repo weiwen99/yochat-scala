@@ -1,7 +1,7 @@
 # Internal review remediation status
 
 Status: internal, non-signing. The external cryptographic gate is **still open**.
-Source baseline: `69050e4` (R4–R9 fixes on top of `6884926`; packet commit `b3871bd`).
+Source baseline: `926d3ff` (R4–R10 fixes on top of `6884926`; packet commit `b3871bd`).
 The original findings are in `internal-review-2026-11-24.md`; this file records only what changed.
 
 ## Round-2 verification and round-3 closure
@@ -79,8 +79,8 @@ closures are verified, but the same cutover path has two further defects:
 - `./mill core.test`: SUCCESS; all core MUnit classes including the new `InternalReviewSpec` cases.
 - `./mill store.test`: SUCCESS; `InternalReviewStoreSpec` both cases pass.
 - `./mill server.test`: SUCCESS; `HttpApiSpec` and `AppEffectExecutorSpec` include the new tests.
-- `./mill server.e2e`: 17/17; E2E#8 = 4,222 ms; PERF#10K = 30,642 ms.
-- `./check.sh`: PASS (572.73 s) at source `69050e4`.
+- `./mill server.e2e`: 17/17; E2E#8 = 3,860 ms; PERF#10K = 28,670 ms.
+- `./check.sh`: PASS (572.17 s) at source `926d3ff`.
 - Per-suite MUnit: core/store/server/transport suites all 0 failed.
 - Remaining R10 blockers: see `internal-review-rounds-4-10.md`.
 - Desktop gate: cold start p50 = 1,276 ms, p95 = 1,291 ms, idle 752.5 MB; UI smoke
