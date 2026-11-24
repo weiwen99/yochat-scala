@@ -1,6 +1,6 @@
 # S1 测试等价清单（T1）
 
-- 状态：initial inventory；append-only，等待人工签字。本版是需求级初始清单，不是 ADR-0004 要求的逐测试最终版；标 `PARTIAL`/`NOT YET` 的行必须在实现期继续追加逐测试行。
+- 状态：per-test inventory generated 2026-11-24；append-only，等待人工签字。需求级映射仍为 40 行；逐测试 CSV 与签字材料见 `test-parity-signoff.md`。标 `PARTIAL`/`NOT YET` 的需求行仍必须先裁决。
 - 范围：ADR-0003 的 S1，只映射 KEEP 功能；S2/S3/D 不映射。
 - 旧基线：`/Users/weiwen/projects/yochat-reference` 当前只读检出。
 - 方法：仅静态扫描与读文件；**本文不声称任何测试通过，未运行构建、测试、lint 或 Quint**。
@@ -210,3 +210,15 @@ S1 只冻结 5 个新模型。下表先列每个新模型的性质来源与显�
 6. **逐测试登记方式**：本文按 40 条需求映射，`FULL` 行已到文件/场景级，`PARTIAL`/`NOT YET` 行尚未逐测试登记。确认实现期按 ADR-0004 追加逐测试行，并在合入前做到无未签字的 `OMIT`/`REWRITE`。
 7. **恢复短语与多设备场景的删除**：旧 `identity`、`identity-restart`、`user-key`、`backend-restart` 里混有 S3 恢复短语与 S2 多设备断言。确认 S1 E2E 删除这些断言且不把它们算作回归。
 8. **计数基线**：旧计划回执 1119/251/430 与当前静态扫描（Core 809、Protocol 778、E2E 193、UI 313）不是同一口径。确认 T1 以当前检出静态清单为映射基线，实际运行数以回执为准。
+
+
+## T1 per-test packet (2026-11-24)
+
+- 逐测试清单：`test-parity-tests.csv`（2774 行静态声明；字段含 requirement、proposal、新证据、decision、signed_by、signed_at）。
+- 签字说明：`test-parity-signoff.md`。
+- 生成器：`tools/t1_inventory_gen.py`（默认读 `~/projects/yochat-reference`，可用 `YOCHAT_REFERENCE` 覆盖）。
+- 校验器：`tools/t1_signoff_check.py`；未完成签字时列出 629 个 S1 候选中的缺失 decision 并退出 1。
+- 清点：S1 候选 629（Rust 418、UI 159、E2E 52）；全表另有 19 个 Kani harness（`GAP_CANDIDATE`）和 2126 个 `OMIT_CANDIDATE`。
+- 未关闭：40 条需求中 5 个 `PARTIAL`（JW13、DCNS、RYGF、P7X1、MXHY）与 1 个 `NOT YET`（QZGW）；这些需求行必须先升级或明确改判，不能只签逐测试 CSV。
+- Quint 的 170 行映射仍以 `test-parity-quint.md` 为准；本 CSV 不重复 Quint 模型。
+- 新测试（E2E#8/#17、PERF#10K、UI smoke、桌面门）不是旧测试等价物；它们在签字材料中作为 GAP/新证据单独说明，不冒充旧断言移植。
