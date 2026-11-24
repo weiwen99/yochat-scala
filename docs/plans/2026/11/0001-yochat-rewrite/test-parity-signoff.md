@@ -6,6 +6,8 @@
 - 旧实现基线：`/Users/weiwen/projects/yochat-reference`（只读；静态扫描）
 - 逐测试文件：`test-parity-tests.csv`（2,774 行；629 条 S1 候选）
 - 批量签字文件：`test-parity-batches.csv`（58 个批次；**不需要逐条签 629 次**）
+- AI 初审：`test-parity-batches-reviewed.csv`（19 个 clean 候选、39 个异常待裁决）
+- 异常清单：`test-parity-exceptions.md`（先审这一份，不要直接签原始 58 批）
 - 生成器：`tools/t1_inventory_gen.py`
 - 批量应用器：`tools/t1_apply_batches.py`
 - 校验器：`tools/t1_signoff_check.py`
@@ -44,7 +46,17 @@ S1 候选的初始裁决建议：
 
 全表建议分布：`{'OMIT_CANDIDATE': 2126, 'PORT_CANDIDATE': 422, 'REWRITE_CANDIDATE': 207, 'GAP_CANDIDATE': 19}`。
 
-## 2. 批量签字（推荐）
+## 2. AI 初审结果与顺序
+
+AI 初审把 58 批分成 19 个 `CLEAN_CANDIDATE` 和 39 个 `EXCEPTION`。异常批主要来自三类：
+
+- 错误映射到 S1：旧 S2/S3 的 instances、profile_sync、order_proof、bootstrap、protocol ordering、net admission。
+- 混合文件：同一文件同时包含 S1 与多设备/历史/删除/拉黑/恢复短语/旧 native 路径。
+- 旧架构大批次：resend/rebuild/send_retry/UI chat-flow 等，需拆分后签。
+
+先按 `test-parity-exceptions.md` 解决 39 个异常批次和 6 个需求行；不要把异常批直接填成 `ACCEPT_OMIT` 或 `ACCEPT_REWRITE`。19 个 clean 候选仍需人工批次签字。
+
+## 3. 批量签字（推荐）
 
 629 条 S1 候选按 `(source, requirement_ids)` 归并为 **58 个批次**：
 
@@ -61,7 +73,7 @@ python3 tools/t1_signoff_check.py
 
 应用器只从已完整签名的批次展开到逐测试行；不会覆盖已有的冲突行决策。这样人工签字约 **58 个批次 + 6 个需求行裁决**，而不是 629 行。
 
-## 3. CSV 字段与签字规则
+## 4. CSV 字段与签字规则
 
 CSV 字段：
 
@@ -79,7 +91,7 @@ CSV 字段：
 
 `decision`、`signed_by`、`signed_at` 三者必须同时填写。允许按 `source` 批量审阅，但批量签字必须逐行写入同一批 `signed_by/signed_at`，不得用“整文件默认”代替行记录。
 
-## 4. 需要先裁决的 40 条需求行
+## 5. 需要先裁决的 40 条需求行
 
 当前 `test-parity.md` 中仍有以下 `PARTIAL`/`NOT YET`：
 
@@ -94,7 +106,7 @@ CSV 字段：
 
 这些行必须在签字前升级为 `FULL` 或明确改判；逐测试 CSV 不替代需求级裁决。
 
-## 5. 已知范围裁决
+## 6. 已知范围裁决
 
 - 联系人删除/拉黑、group/welcome、多设备/历史/吊销、p2p/iroh/QUIC、旧恢复短语、100k history/scale 属于 S2/S3/D；对应旧测试只能 `ACCEPT_OMIT`，且逐行签字。
 - ADR-0004 要求：旧测试的断言/场景等价，不要求旧框架或旧组件 API。
@@ -102,7 +114,7 @@ CSV 字段：
 - Quint 的 170 行映射另见 `test-parity-quint.md`（已有用户签字）；本 CSV 不重复 Quint 模型行。
 - 当前 E2E/UI/性能回执见 `docs/plans/2026/11/0010-s1-ui-automation/acceptance.md`；T1 是测试等价签字，不是这些回执的替代品。
 
-## 6. 签字块
+## 7. 签字块
 
 T1 负责人：
 
@@ -118,7 +130,7 @@ T1 负责人：
 - 确认：S1 范围裁决（S2/S3/D、Kani gap、旧架构重写）可接受；发布仍受外部密码学评审约束。
 - 签字：________________
 
-## 7. 机械校验
+## 8. 机械校验
 
 批量签字后运行 `tools/t1_apply_batches.py --apply`，再运行：
 
