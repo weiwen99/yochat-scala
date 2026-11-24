@@ -114,6 +114,8 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
         persistRebound(message, session, oldSessionId, oldSeq, expectedVersion).map(_.map(_ => ()))
       case AppEffect.RebindPending(_, _)                                                                                    =>
         IO.pure(Right(()))
+      case AppEffect.Pump(_)                                                                                                =>
+        IO.pure(Right(()))
       case AppEffect.PersistInbound(message, session)                                                                       =>
         persistInbound(message, session)
       case AppEffect.PersistInboundAndRetire(message, session, retire)                                                      =>

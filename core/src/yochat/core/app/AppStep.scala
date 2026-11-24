@@ -729,9 +729,9 @@ object Application:
                 Rekey.acceptAck(value.state, frame, expected, newDh) match
                   case Left(_)       => (state, Vector(AppEffect.Notify(Notification.RekeyFailed)))
                   case Right(result) =>
-                    val active      = value.copy(state = result.state, retireOldOnFirstData = false)
-                    val retired     = retirementCandidates(state, active)
-                    val rebindOlds  = state.sessions.values
+                    val active                           = value.copy(state = result.state, retireOldOnFirstData = false)
+                    val retired                          = retirementCandidates(state, active)
+                    val rebindOlds                       = state.sessions.values
                       .filter(session =>
                         session.conversationId == active.conversationId &&
                           session.state.sessionId != newSessionId &&
@@ -740,17 +740,18 @@ object Application:
                       )
                       .map(_.state.sessionId)
                       .toVector
-                    val readOnlyOld = rebindOlds.flatMap(id => state.sessions.get(id)).map { session =>
+                    val readOnlyOld                      = rebindOlds.flatMap(id => state.sessions.get(id)).map { session =>
                       session.copy(state = session.state.copy(phase = SessionPhase.ReadOnly))
                     }
-                    val next        = readOnlyOld.foldLeft(
+                    val next                             = readOnlyOld.foldLeft(
                       retired.foldLeft(state.copy(sessions = state.sessions.updated(newSessionId, active))) { case (current, sessionId) =>
                         current.copy(sessions = current.sessions - sessionId)
                       }
                     ) { case (current, session) => current.copy(sessions = current.sessions.updated(session.state.sessionId, session)) }
-                    val timers      = rekeyTimersForNew(state, newSessionId)
+                    val timers                           = rekeyTimersForNew(state, newSessionId)
+                    val (withAncestors, ancestorEffects) = failAncestorMessages(next, retired)
                     (
-                      next.copy(timers = timers.foldLeft(next.timers)((current, timer) => current - timer)),
+                      withAncestors.copy(timers = timers.foldLeft(withAncestors.timers)((current, timer) => current - timer)),
                       Vector(
                         AppEffect.PersistHandshake(
                           None,
@@ -761,7 +762,7 @@ object Application:
                           retired.map(id => id -> SessionRetirement.InitiatorAck),
                           Vector.empty
                         )
-                      ) ++ timers.map(AppEffect.CancelTimer.apply) ++
+                      ) ++ ancestorEffects ++ timers.map(AppEffect.CancelTimer.apply) ++
                         retired.map(id => AppEffect.RebindPending(id, newSessionId)) ++
                         rebindOlds.map(id => AppEffect.RebindPending(id, newSessionId))
                     )
@@ -771,6 +772,18 @@ object Application:
       .get(oldSessionId)
       .flatMap(_.state.rekey.flatMap(_.newSessionId))
       .contains(newSessionId)
+
+  private def failAncestorMessages(state: AppState, retired: Vector[SessionId]): (AppState, Vector[AppEffect]) =
+    val messages = state.outgoing.values.toVector.filter(message =>
+      state.sessions
+        .get(message.sessionId)
+        .flatMap(_.state.rekey.flatMap(_.newSessionId))
+        .exists(retired.contains)
+    )
+    messages.foldLeft((state, Vector.empty[AppEffect])) { case ((current, effects), message) =>
+      val (next, added) = failRebind(current, message)
+      (next, effects ++ added)
+    }
 
   private def failRebind(state: AppState, message: OutgoingMessage): (AppState, Vector[AppEffect]) =
     val failed = message.copy(state = OutgoingState.Failed)
@@ -1095,7 +1108,8 @@ object Application:
             val retired                        =
               if firstData && inbound.disposition != InboundDisposition.Overflow then retirementCandidates(state, finalSession)
               else Vector.empty
-            val next                           = retired.foldLeft(withSession)((current, id) => current.copy(sessions = current.sessions - id))
+            val retiredBase                    = retired.foldLeft(withSession)((current, id) => current.copy(sessions = current.sessions - id))
+            val (next, ancestorEffects)        = failAncestorMessages(retiredBase, retired)
             val inboundEffects                 =
               inbound.disposition match
                 case InboundDisposition.Applied   =>
@@ -1128,7 +1142,7 @@ object Application:
                 case InboundDisposition.Duplicate | InboundDisposition.Overflow =>
                   if finalSession != session then Vector(AppEffect.PersistSession(finalSession)) else Vector.empty
                 case _                                                          => Vector.empty
-            (next, inboundEffects ++ sessionEffect ++ controlEffects)
+            (next, inboundEffects ++ ancestorEffects ++ sessionEffect ++ controlEffects)
       case MessageKind.DataAck                                    =>
         val withSession     = state.copy(sessions = state.sessions.updated(sessionId, active))
         val (next, effects) = acknowledge(withSession, sessionId, frame.header.seq, nowMs)
@@ -1260,27 +1274,26 @@ object Application:
                 Rekey.abort(value.state, nowMs).toOption match
                   case None          => (state.copy(timers = state.timers - timer), Vector(AppEffect.Notify(Notification.RekeyFailed)))
                   case Some(aborted) =>
-                    val active                  = value.copy(state = aborted)
-                    val pendingSessions         = rekey.newSessionId.toVector
-                    val next                    = state.copy(
+                    val active          = value.copy(state = aborted)
+                    val pendingSessions = rekey.newSessionId.toVector
+                    val next            = state.copy(
                       sessions = pendingSessions.foldLeft(state.sessions.updated(sessionId, active))((map, id) => map - id),
                       timers = state.timers - timer
                     )
-                    val (pumped, pumpedEffects) = pump(next, nowMs)
-                    val rebinds                 = pumped.sessions.values.toVector
+                    val rebinds         = next.sessions.values.toVector
                       .filter(session =>
                         session.state.sessionId != sessionId &&
                           session.state.rekey.flatMap(_.newSessionId).contains(sessionId) &&
-                          hasRebindableOutgoing(pumped, session.state.sessionId)
+                          hasRebindableOutgoing(next, session.state.sessionId)
                       )
                       .map(session => AppEffect.RebindPending(session.state.sessionId, sessionId))
                     (
-                      pumped,
+                      next,
                       Vector(
                         AppEffect.PersistHandshake(None, None, Vector(active), None, None, Vector.empty, pendingSessions),
                         AppEffect.CancelTimer(timer),
                         AppEffect.Notify(Notification.RekeyFailed)
-                      ) ++ rebinds ++ pumpedEffects
+                      ) ++ rebinds ++ Vector(AppEffect.Pump(nowMs))
                     )
             case _                                              => (state.copy(timers = state.timers - timer), Vector.empty)
 

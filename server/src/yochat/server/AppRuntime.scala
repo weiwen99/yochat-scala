@@ -399,13 +399,31 @@ object AppRuntime:
         applied *>
           (event match
             case AppEvent.Unlock(_, _, _) =>
-              resumeGaps(queue, stateRef, random, clock) *> queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRebinds)).void *>
+              resumeGaps(queue, stateRef, random, clock) *> recoverRebinds(
+                transport,
+                queue,
+                stateRef,
+                random,
+                executor,
+                fatal,
+                clock,
+                onState
+              ) *>
                 recoverRekeys(transport, queue, stateRef, random, executor, fatal, clock, onState)
             case _                        => IO.unit)
       case RuntimeCommand.Connection(on, now)    =>
         applyEvent(transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, random, executor, fatal, clock, onState) *>
           (if on then
-             resumeGaps(queue, stateRef, random, clock) *> queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRebinds)).void *>
+             resumeGaps(queue, stateRef, random, clock) *> recoverRebinds(
+               transport,
+               queue,
+               stateRef,
+               random,
+               executor,
+               fatal,
+               clock,
+               onState
+             ) *>
                recoverRekeys(transport, queue, stateRef, random, executor, fatal, clock, onState)
            else IO.unit)
       case RuntimeCommand.Inbound(from, payload) =>
@@ -503,6 +521,8 @@ object AppRuntime:
           case Some(_) => IO.unit
           case None    =>
             effect match
+              case AppEffect.Pump(nowMs)                                     =>
+                applyEvent(transport, AppEvent.Pump(nowMs), queue, stateRef, random, executor, fatal, clock, onState)
               case AppEffect.SendWire(toDevice, messageId, generation, wire) =>
                 transport
                   .sendWireResult(toDevice, messageId, generation, wire)
@@ -563,6 +583,28 @@ object AppRuntime:
         }
       }
     }
+
+  private def recoverRebinds(
+    transport: RelayAppTransport,
+    queue: Queue[IO, RuntimeCommand],
+    stateRef: Ref[IO, AppState],
+    random: RuntimeRandom,
+    executor: AppEffectExecutor,
+    fatal: Ref[IO, Option[AppExecutionError]],
+    clock: Clock,
+    onState: AppState => IO[Unit]
+  ): IO[Unit] =
+    applyEvent(
+      transport,
+      AppEvent.RecoverRebinds,
+      queue,
+      stateRef,
+      random,
+      executor,
+      fatal,
+      clock,
+      onState
+    )
 
   private def recoverRekeys(
     transport: RelayAppTransport,
