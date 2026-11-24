@@ -382,11 +382,14 @@ object AppRuntime:
         applyEvent(transport, event, queue, stateRef, random, executor, fatal, clock, onState) *>
           (event match
             case AppEvent.Unlock(_, _, _) =>
-              resumeGaps(queue, stateRef, random, clock) *> queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRebinds)).void
+              resumeGaps(queue, stateRef, random, clock) *> queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRebinds)).void *>
+                recoverRekeys(queue, stateRef, random, clock)
             case _                        => IO.unit)
       case RuntimeCommand.Connection(on, now)    =>
         applyEvent(transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, random, executor, fatal, clock, onState) *>
-          (if on then resumeGaps(queue, stateRef, random, clock) *> queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRebinds)).void
+          (if on then
+             resumeGaps(queue, stateRef, random, clock) *> queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRebinds)).void *>
+               recoverRekeys(queue, stateRef, random, clock)
            else IO.unit)
       case RuntimeCommand.Inbound(from, payload) =>
         translateInbound(from, payload, messageIds, random, stateRef, clock).flatMap {
@@ -412,11 +415,13 @@ object AppRuntime:
       external        = effects.filterNot(AppRuntime.isDurable)
       result         <- executor.executeAll(durable)
       _              <- result match
-                          case Left(error) => fatal.set(Some(error))
-                          case Right(_)    =>
-                            stateRef.set(next) *> onState(next) *>
+                          case Left(error)    => fatal.set(Some(error))
+                          case Right(skipped) =>
+                            val reconciled = skipped.foldLeft(next)((current, messageId) => current.copy(outgoing = current.outgoing - messageId))
+                            stateRef.set(reconciled) *> onState(reconciled) *>
                               feedPersisted(durable, transport, queue, stateRef, random, executor, fatal, clock, onState) *>
-                              executeExternal(external, transport, queue, stateRef, random, executor, fatal, clock, onState)
+                              (if skipped.isEmpty then executeExternal(external, transport, queue, stateRef, random, executor, fatal, clock, onState)
+                               else queue.tryOffer(RuntimeCommand.App(AppEvent.Pump(clock.millis()))).void)
     yield ()
 
   private def feedPersisted(
@@ -517,6 +522,32 @@ object AppRuntime:
                 }
         }
       }
+    }
+
+  private def recoverRekeys(
+    queue: Queue[IO, RuntimeCommand],
+    stateRef: Ref[IO, AppState],
+    random: RuntimeRandom,
+    clock: Clock
+  ): IO[Unit] =
+    AppRuntime.readRef(stateRef).flatMap { state =>
+      if !state.lock.isUnlocked then IO.unit
+      else
+        val pending = state.sessions.values.toVector
+          .filter(session =>
+            session.state.rekey.exists(rekey =>
+              rekey.role == yochat.core.RekeyRole.Initiator &&
+                rekey.phase == yochat.core.RekeyPhase.Accepted &&
+                rekey.newSessionId.exists(id => state.sessions.get(id).exists(_.state.phase == yochat.core.SessionPhase.Pending))
+            )
+          )
+          .map(_.state.sessionId)
+          .sortBy(_.bytes.toHex)
+        pending.foldLeft(IO.unit) { (acc, oldSessionId) =>
+          acc *> random.nonce.flatMap { nonce =>
+            queue.tryOffer(RuntimeCommand.App(AppEvent.RecoverRekey(oldSessionId, nonce, clock.millis()))).void
+          }
+        }
     }
 
   private def resumeGaps(

@@ -208,3 +208,51 @@ class AppEffectExecutorSpec extends FunSuite:
         assertEquals(loaded.data.expiresAt, 10_000L)
     }
   }
+
+  test("M7: PersistRebound reports Skipped for a terminal old row") {
+    ExecutorTestSupport.withStore { store =>
+      val fixture = ExecutorTestSupport.fixture()
+      val app     = ExecutorTestSupport.appState(fixture)
+      val sent    = Application.step(
+        app,
+        AppEvent.UserSend(1L, fixture.conversationId, ExecutorTestSupport.body("old"), ExecutorTestSupport.nonce(7), 0L)
+      )
+      val message = sent._1.outgoing(1L)
+      val newId   = yochat.core.SessionId
+        .from(ByteVector.fill(32)(0x55.toByte))
+        .fold(error => fail(error.toString), identity)
+      val newState = fixture.state.copy(sessionId = newId)
+      val newSession = AppSession(newState, fixture.conversationId, 1L)
+      for
+        _          <- ExecutorTestSupport.initialize(fixture, store)
+        appended   <- store.appendOutbound(
+                        fixture.state,
+                        1L,
+                        0L,
+                        fixture.conversationId,
+                        fixture.identity.user.publicKey,
+                        fixture.identity.device.publicKey,
+                        1L,
+                        ExecutorTestSupport.body("old"),
+                        message.wire.bytes,
+                        MessageState.Delivered
+                      )
+        _          <- IO.fromEither(appended.left.map(error => new AssertionError(error.code)))
+        inserted   <- store.insertSession(newState, 0L)
+        _          <- IO.fromEither(inserted.left.map(error => new AssertionError(error.code)))
+        ref        <- Ref.of[IO, Vector[String]](Vector.empty)
+        executor    = new AppEffectExecutor(store, fixture.identity, new RecordingTransport(ref))
+        result     <- executor.executeAll(
+                        Vector(
+                          AppEffect.PersistRebound(
+                            message,
+                            newSession,
+                            fixture.sessionId,
+                            1L,
+                            -1L
+                          )
+                        )
+                      )
+      yield assertEquals(result, Right(Vector(1L)))
+    }
+  }

@@ -121,14 +121,18 @@ final class AppService private (
     withRunning(_.runtime.fatalError)
 
   def stateJson: IO[Either[ServiceError, Value]] =
-    withRunning { running =>
-      for
-        appState     <- running.runtime.state
-        fatal        <- running.runtime.fatalError
-        online       <- running.relay.isOnline
-        notification <- running.runtime.lastNotification
-        json         <- ApiJson.state(config, running.store, appState, online, fatal, notification)
-      yield json
+    withRunningEither { running =>
+      requireUnlocked(running).flatMap {
+        case Left(error) => IO.pure(Left(error))
+        case Right(_)    =>
+          for
+            appState     <- running.runtime.state
+            fatal        <- running.runtime.fatalError
+            online       <- running.relay.isOnline
+            notification <- running.runtime.lastNotification
+            json         <- ApiJson.state(config, running.store, appState, online, fatal, notification)
+          yield Right(json)
+      }
     }
 
   def sessionJson: IO[Value] =
@@ -137,40 +141,51 @@ final class AppService private (
       .flatMap {
         case None        => instanceExists.map(exists => ApiJson.locked(exists, config))
         case Some(value) =>
-          for
-            appState     <- value.runtime.state
-            fatal        <- value.runtime.fatalError
-            online       <- value.relay.isOnline
-            notification <- value.runtime.lastNotification
-            json         <- ApiJson.state(config, value.store, appState, online, fatal, notification)
-          yield json
+          value.runtime.state.flatMap {
+            case appState if !appState.lock.isUnlocked => instanceExists.map(exists => ApiJson.locked(exists, config))
+            case appState                              =>
+              for
+                fatal        <- value.runtime.fatalError
+                online       <- value.relay.isOnline
+                notification <- value.runtime.lastNotification
+                json         <- ApiJson.state(config, value.store, appState, online, fatal, notification)
+              yield json
+          }
       }
       .handleErrorWith(error => IO.pure(ApiJson.error(ServiceError.RuntimeFailed(error.getClass.getSimpleName))))
 
   def messages(conversationId: ByteVector, limit: Int): IO[Either[ServiceError, List[MessageRecord]]] =
     withRunningEither { running =>
-      running.store
-        .listRecentMessages(conversationId, limit)
-        .map(_.left.map(error => ServiceError.StoreFailed(error.code)))
+      requireUnlocked(running).flatMap {
+        case Left(error) => IO.pure(Left(error))
+        case Right(_)    =>
+          running.store
+            .listRecentMessages(conversationId, limit)
+            .map(_.left.map(error => ServiceError.StoreFailed(error.code)))
+      }
     }
 
   def messagesJson(conversationId: ByteVector, limit: Int): IO[Either[ServiceError, Value]] =
     withRunningEither { running =>
-      for
-        state   <- running.runtime.state
-        records <- running.store.listRecentMessages(conversationId, math.min(1_000, limit + AppLimits.MaxBuffered))
-      yield records
-        .map { values =>
-          val localUser    = running.store.identity.userPublic.bytes
-          val conversation = state.conversations.get(conversationId)
-          val visible      = values.filter(record =>
-            record.authorPub.bytes == localUser ||
-              conversation.exists(value => ApiJson.visible(record, value, localUser))
-          )
-          ApiJson.messages(ApiJson.ordered(visible).takeRight(limit), localUser)
-        }
-        .left
-        .map(error => ServiceError.StoreFailed(error.code))
+      requireUnlocked(running).flatMap {
+        case Left(error) => IO.pure(Left(error))
+        case Right(_)    =>
+          for
+            state   <- running.runtime.state
+            records <- running.store.listRecentMessages(conversationId, math.min(1_000, limit + AppLimits.MaxBuffered))
+          yield records
+            .map { values =>
+              val localUser    = running.store.identity.userPublic.bytes
+              val conversation = state.conversations.get(conversationId)
+              val visible      = values.filter(record =>
+                record.authorPub.bytes == localUser ||
+                  conversation.exists(value => ApiJson.visible(record, value, localUser))
+              )
+              ApiJson.messages(ApiJson.ordered(visible).takeRight(limit), localUser)
+            }
+            .left
+            .map(error => ServiceError.StoreFailed(error.code))
+      }
     }
 
   def createInvitation(
@@ -201,11 +216,13 @@ final class AppService private (
     channelAccount: String,
     note: String
   ): IO[Either[ServiceError, Value]] =
-    withRunningEither { running =>
-      running.runtime
-        .acceptInvitation(invitationId, channelLabel, channelAccount, note)
-        .map(result => Right(ujson.Obj("replyText" -> result.text, "invitationId" -> invitationId.toHex)))
-        .handleErrorWith(error => IO.pure(Left(ServiceError.BadRequest(error.getClass.getSimpleName))))
+    mutex.permit.use { _ =>
+      withRunningEither { running =>
+        running.runtime
+          .acceptInvitation(invitationId, channelLabel, channelAccount, note)
+          .map(result => Right(ujson.Obj("replyText" -> result.text, "invitationId" -> invitationId.toHex)))
+          .handleErrorWith(error => IO.pure(Left(ServiceError.BadRequest(error.getClass.getSimpleName))))
+      }
     }
 
   def rejectInvitation(invitationId: ByteVector): IO[Either[ServiceError, Unit]] =
@@ -287,6 +304,9 @@ final class AppService private (
             .handleErrorWith(error => releaseRelay *> releaseStore *> IO.pure(Left(ServiceError.RuntimeFailed(error.getClass.getSimpleName))))
         }
     }
+
+  private def requireUnlocked(running: Running): IO[Either[ServiceError, Unit]] =
+    running.runtime.state.map(state => if state.lock.isUnlocked then Right(()) else Left(ServiceError.Locked))
 
   private def withRunning[A](action: Running => IO[A]): IO[Either[ServiceError, A]] =
     AppService.readRef(sessionRef).flatMap {

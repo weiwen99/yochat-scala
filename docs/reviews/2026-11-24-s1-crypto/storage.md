@@ -22,11 +22,16 @@ this does not protect if `databaseKey` itself leaks.
 
 ## 2. Key sources
 
-- Preferred: OS keychain item `org.yochat.desktop` / `store-master-key-v1`, 32-byte master base64,
-  passed to the JVM through a one-shot inherited pipe. Not argv, environment, logs, crash text or UI.
-- Fallback: `keystore.bin` (0600), Argon2id v=19, memory 64 MiB, iterations 3, parallelism 1,
-  salt 16B, output 32B; accepted bounds memory 16–256 MiB, iterations 1–10, parallelism 1–4.
-  Parameters and salt are authenticated; out-of-range values return `UnlockFailed`.
+- **Actual implementation at this snapshot (M9 open):** the Electron shell uses `safeStorage` and
+  returns the passphrase to the renderer over IPC; the renderer sends it in the JSON body of
+  `POST /api/unlock`; `AppService` passes it to `KeySource.KeyFile(passphrase)` and the JVM derives
+  the master with Argon2id. There is **no** one-shot inherited key pipe in this tree. This is a
+  deviation from ADR-0007's preferred keychain path and is recorded as open M9, not as the preferred
+  design.
+- Fallback path used by the JVM directly: `keystore.bin` (0600), Argon2id v=19, memory 64 MiB,
+  iterations 3, parallelism 1, salt 16B, output 32B; accepted bounds memory 16–256 MiB,
+  iterations 1–10, parallelism 1–4. Parameters and salt are authenticated; out-of-range values
+  return `UnlockFailed`.
 - `keystore.bin` v1: `magic "YCKS" || version || kdf || memoryKiB || iterations || parallelism ||
   salt || nonce || wrappedMaster || tag`; AAD covers the header and a fixed domain.
 - `identity.bin` v1: `magic "YCID" || version || nonce || ciphertext || tag`; plaintext is

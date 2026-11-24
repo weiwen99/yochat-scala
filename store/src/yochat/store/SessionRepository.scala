@@ -6,7 +6,7 @@ import org.typelevel.doobie.free.connection as FC
 import org.typelevel.doobie.implicits.*
 import scodec.bits.ByteVector
 
-import yochat.core.{Ed25519Public, RatchetState, SessionId, StateCodec}
+import yochat.core.{Ed25519Public, RatchetState, SessionId, SessionPhase, StateCodec}
 
 private[store] object SessionRepository:
 
@@ -28,10 +28,14 @@ private[store] object SessionRepository:
     runtime.now.flatMap { now =>
       runtime.run {
         for
-          lock   <- Sql.checkLock(expectedLockGeneration)
-          _      <- checkSafety(runtime, state)
-          _      <- checkStateShape(state)
-          record <- writeNew(runtime, state, lock, now)
+          lock      <- Sql.checkLock(expectedLockGeneration)
+          tombstone <- Sql.meta(Sql.sessionVersionKey(state.sessionId))
+          _         <- tombstone match
+                         case Some(_) => Sql.abort(StorageError.StaleGeneration)
+                         case None    => FC.unit
+          _         <- checkSafety(runtime, state)
+          _         <- checkStateShape(state)
+          record    <- writeNew(runtime, state, lock, now)
         yield record
       }
     }
@@ -51,9 +55,13 @@ private[store] object SessionRepository:
         else Sql.abort(StorageError.StaleGeneration)
       case None          =>
         for
-          _      <- checkStateShape(state)
-          _      <- checkSafety(runtime, state)
-          record <- writeNew(runtime, state, lock, now)
+          tombstone <- Sql.meta(Sql.sessionVersionKey(state.sessionId))
+          _         <- tombstone match
+                         case Some(_) => Sql.abort(StorageError.StaleGeneration)
+                         case None    => FC.unit
+          _         <- checkStateShape(state)
+          _         <- checkSafety(runtime, state)
+          record    <- writeNew(runtime, state, lock, now)
         yield record
     }
 
@@ -63,6 +71,7 @@ private[store] object SessionRepository:
       case Some(current) =>
         for
           _       <- if current.generation == lock then FC.unit else Sql.abort(StorageError.StaleGeneration)
+          _       <- if current.state.phase == SessionPhase.Pending then FC.unit else Sql.abort(StorageError.InvalidArgument("session-phase"))
           pending <- pendingCountProgram(sessionId)
           _       <- if pending == 0L then FC.unit else Sql.abort(StorageError.PendingMessages)
           deleted <- sql"DELETE FROM sessions WHERE id = ${sessionId.bytes.toArray} AND state_version = ${current.version}".update.run

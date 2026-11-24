@@ -17,6 +17,7 @@ import yochat.store.{
   InvitationData,
   InvitationState,
   MessageState,
+  RebindOutcome,
   SessionRecord,
   StorageError,
   Store
@@ -80,11 +81,20 @@ enum AppExecutionError:
 /** Executes the pure `AppEffect` vocabulary against the production store and an explicit transport sink. */
 final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: AppTransport):
 
-  def executeAll(effects: Vector[AppEffect]): IO[Either[AppExecutionError, Unit]] =
-    effects.foldLeft(IO.pure[Either[AppExecutionError, Unit]](Right(()))) { (accumulator, effect) =>
+  def executeAll(effects: Vector[AppEffect]): IO[Either[AppExecutionError, Vector[Long]]] =
+    effects.foldLeft(IO.pure[Either[AppExecutionError, Vector[Long]]](Right(Vector.empty))) { (accumulator, effect) =>
       accumulator.flatMap {
-        case Left(error) => IO.pure(Left(error))
-        case Right(_)    => execute(effect)
+        case Left(error)    => IO.pure(Left(error))
+        case Right(skipped) =>
+          effect match
+            case AppEffect.PersistRebound(message, session, oldSessionId, oldSeq, expectedVersion) =>
+              persistRebound(message, session, oldSessionId, oldSeq, expectedVersion).map {
+                case Left(error)                   => Left(error)
+                case Right(RebindOutcome.Migrated) => Right(skipped)
+                case Right(RebindOutcome.Skipped)  => Right(skipped :+ message.id)
+              }
+            case _                                                                                 =>
+              execute(effect).map(_.map(_ => skipped))
       }
     }
 
@@ -100,7 +110,7 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
       case AppEffect.PersistOutbound(message, session)                                                                      =>
         persistOutbound(message, session)
       case AppEffect.PersistRebound(message, session, oldSessionId, oldSeq, expectedVersion)                                =>
-        persistRebound(message, session, oldSessionId, oldSeq, expectedVersion)
+        persistRebound(message, session, oldSessionId, oldSeq, expectedVersion).map(_.map(_ => ()))
       case AppEffect.RebindPending(_, _)                                                                                    =>
         IO.pure(Right(()))
       case AppEffect.PersistInbound(message, session)                                                                       =>
@@ -321,15 +331,15 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
     oldSessionId: yochat.core.SessionId,
     oldSeq: Long,
     expectedVersion: Long
-  ): IO[Either[AppExecutionError, Unit]] =
+  ): IO[Either[AppExecutionError, RebindOutcome]] =
     for
       current <- store.loadSession(session.state.sessionId)
       lock    <- lockGeneration
       result  <- current match
-                   case Left(error)   => IO.pure(mapStore(Left(error)))
+                   case Left(error)   => IO.pure(Left(AppExecutionError.StoreFailed(error)))
                    case Right(record) =>
                      if expectedVersion >= 0 && record.version != expectedVersion then
-                       IO.pure(mapStore(Left(StorageError.InvalidArgument("session-version"))))
+                       IO.pure(Left(AppExecutionError.StoreFailed(StorageError.InvalidArgument("session-version"))))
                      else
                        store
                          .rebindOutbound(
@@ -345,8 +355,7 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
                            message.body,
                            message.wire.bytes
                          )
-                         .map(_.map(_ => ()))
-                         .map(mapStore)
+                         .map(_.left.map(AppExecutionError.StoreFailed.apply))
     yield result
 
   private def persistAttempt(message: OutgoingMessage): IO[Either[AppExecutionError, Unit]] =

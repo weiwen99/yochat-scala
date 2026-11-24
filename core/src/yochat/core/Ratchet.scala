@@ -99,7 +99,7 @@ object Ratchet:
         case MessageKind.Data                                       => false
     val validPhase =
       kind match
-        case MessageKind.DataAck | MessageKind.Gap                  => state.phase == SessionPhase.Active
+        case MessageKind.DataAck | MessageKind.Gap                  => state.phase == SessionPhase.Active || state.phase == SessionPhase.ReadOnly
         case MessageKind.RekeyConfirm | MessageKind.RekeyConfirmAck => state.phase != SessionPhase.ReadOnly
         case MessageKind.Data                                       => false
     if !validShape || !validPhase then Left(CoreError.InvalidState)

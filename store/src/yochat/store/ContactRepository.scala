@@ -27,6 +27,10 @@ private[store] object ContactRepository:
       runtime.run {
         for
           _           <- Sql.checkLock(expectedLockGeneration)
+          tombstone   <- Sql.meta(Sql.contactVersionKey(userPub.bytes))
+          _           <- tombstone match
+                           case Some(_) => Sql.abort(StorageError.StaleGeneration)
+                           case None    => FC.unit
           encoded     <- fromEither(StoreDataCodec.encodeContact(data))
           nonce       <- FC.delay(StoreCrypto.randomNonceUnsafe())
           sealedValue <- fromEither(StoreCrypto.seal(runtime.keys.contactKey, nonce, StoreCrypto.contactAad(userPub.bytes, 1L), encoded))
@@ -176,6 +180,10 @@ private[store] object ContactRepository:
         yield ContactRecord(userPub, data, next, current.createdAt)
       case None          =>
         for
+          tombstone   <- Sql.meta(Sql.contactVersionKey(userPub.bytes))
+          _           <- tombstone match
+                           case Some(_) => Sql.abort(StorageError.StaleGeneration)
+                           case None    => FC.unit
           encoded     <- fromEither(StoreDataCodec.encodeContact(data))
           nonce       <- FC.delay(StoreCrypto.randomNonceUnsafe())
           sealedValue <- fromEither(StoreCrypto.seal(runtime.keys.contactKey, nonce, StoreCrypto.contactAad(userPub.bytes, 1L), encoded))

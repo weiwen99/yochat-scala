@@ -12,8 +12,10 @@ import munit.FunSuite
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.http.scaladsl.Http.ServerBinding
 import org.apache.pekko.stream.Materializer
+import scodec.bits.ByteVector
 import ujson.Value
 
+import yochat.core.app.ContactConfirmation
 import yochat.transport.RelayServer
 
 class HttpApiSpec extends FunSuite:
@@ -59,6 +61,71 @@ class HttpApiSpec extends FunSuite:
     finally deleteTree(directory)
   }
 
+  test("idle auto-lock gates state and message reads without closing the service") {
+    val directory = Files.createTempDirectory("yochat-http-idle-")
+    try
+      val program = for
+        relay <- RelayServer.start(0)
+        server <- HttpServerFixture.start(directory, relay.port, idleTimeoutMs = 100L)
+      yield (relay, server)
+      program.use { case (_, server) =>
+        val base = s"http://127.0.0.1:${server.port}"
+        for
+          _       <- postJson(s"$base/api/unlock", ujson.Obj("passphrase" -> "correct horse battery staple"))
+          _       <- IO.sleep(350.millis)
+          session <- getJson(s"$base/api/session")
+          _        = assertEquals(session("unlocked").bool, false)
+          _        = assert(!session.obj.contains("contacts"))
+          _        = assert(!session.obj.contains("conversations"))
+          _        = assert(!session.obj.contains("identity"))
+          state   <- getStatus(s"$base/api/state")
+          _        = assertEquals(state, 401)
+          messages <- getStatus(s"$base/api/conversations/${"00" * 32}/messages")
+          _        = assertEquals(messages, 401)
+        yield ()
+      }.unsafeRunSync()
+    finally deleteTree(directory)
+  }
+
+  test("M6: a second invitation accept fails closed without marking AccountMismatch") {
+    val aliceDir = Files.createTempDirectory("yochat-http-accept-a-")
+    val bobDir = Files.createTempDirectory("yochat-http-accept-b-")
+    try
+      val program = for
+        relay  <- RelayServer.start(0)
+        alice  <- HttpServerFixture.start(aliceDir, relay.port)
+        bob    <- HttpServerFixture.start(bobDir, relay.port)
+      yield (relay, alice, bob)
+      program.use { case (_, alice, bob) =>
+        for
+          _          <- alice.service.unlock("correct horse battery staple".toCharArray)
+          _          <- bob.service.unlock("correct horse battery staple".toCharArray)
+          created    <- alice.service.createInvitation("test", "@alice", None, 60_000L, "hello")
+          text        = created.toOption.map(_("text").str).getOrElse(fail(created.left.map(_.code).toString))
+          received   <- bob.service.receiveInvitation(text, None)
+          invitation <- received match
+                          case Right(value) => IO.pure(ByteVector.fromValidHex(value("id").str))
+                          case Left(error)  => IO.raiseError(new AssertionError(error.code))
+          first      <- bob.service.acceptInvitation(invitation, "test", "@bob", "reply")
+          second     <- bob.service.acceptInvitation(invitation, "test", "@bob", "reply")
+          state      <- bob.service.state
+        yield
+          assert(first.isRight, first.left.map(_.code).toString)
+          assert(second.isLeft)
+          assertEquals(state.toOption.flatMap(_.contacts.values.headOption).map(_.confirmation), Some(ContactConfirmation.Confirmed))
+      }.unsafeRunSync()
+    finally
+      deleteTree(aliceDir)
+      deleteTree(bobDir)
+  }
+
+  private def getStatus(url: String): IO[Int] =
+    IO.blocking {
+      val request  = HttpRequest.newBuilder(URI.create(url)).GET().build()
+      val response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString())
+      response.statusCode()
+    }
+
   private def getJson(url: String): IO[Value] =
     request("GET", url, None)
 
@@ -81,17 +148,17 @@ class HttpApiSpec extends FunSuite:
 
 private object HttpServerFixture:
 
-  final case class Running(binding: ServerBinding):
+  final case class Running(binding: ServerBinding, service: AppService):
     def port: Int = binding.localAddress.getPort
 
-  def start(directory: Path, relayPort: Int): Resource[IO, Running] =
+  def start(directory: Path, relayPort: Int, idleTimeoutMs: Long = 60_000L): Resource[IO, Running] =
     Resource.make(IO(ActorSystem("yochat-http-test")))(value => IO.fromFuture(IO(value.terminate())).void).flatMap { system =>
       given ActorSystem = system
       given Materializer = Materializer(system)
       for
         hub     <- Resource.eval(IO(new EventHub))
-        config   = ServiceConfig(0, directory, "127.0.0.1", relayPort, 60_000L)
+        config   = ServiceConfig(0, directory, "127.0.0.1", relayPort, idleTimeoutMs)
         service <- Resource.make(AppService.create(config, hub))(_.close)
         binding <- Resource.make(HttpApi.start(service, hub, config))(value => IO.fromFuture(IO(value.unbind())).void)
-      yield Running(binding)
+      yield Running(binding, service)
     }
