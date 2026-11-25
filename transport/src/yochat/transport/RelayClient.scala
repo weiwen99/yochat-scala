@@ -17,6 +17,7 @@ final private[transport] class TransportError(message: String) extends RuntimeEx
   */
 final class RelayClient private (
   incomingQueue: Queue[IO, RelayIncoming],
+  deviceIncomingQueue: Queue[IO, RelayIncoming],
   updatesQueue: Queue[IO, Boolean],
   current: Ref[IO, Option[RelayConnection]],
   closed: Ref[IO, Boolean],
@@ -35,6 +36,10 @@ final class RelayClient private (
 
   def incoming: IO[RelayIncoming] =
     incomingQueue.take.flatMap(value => inboundBudget.release(value.admittedBytes).as(value))
+
+  /** S2 device-sync frames are routed away from the S1 session runtime. */
+  def deviceIncoming: IO[RelayIncoming] =
+    deviceIncomingQueue.take.flatMap(value => inboundBudget.release(value.admittedBytes).as(value))
 
   private[transport] def admittedBytes: IO[Long] = inboundBudget.currentBytes
 
@@ -79,12 +84,13 @@ object RelayClient:
     Resource.make {
       for
         incoming      <- Queue.bounded[IO, RelayIncoming](math.max(1, capacity))
+        deviceIncoming <- Queue.bounded[IO, RelayIncoming](math.max(1, capacity))
         updates       <- Queue.bounded[IO, Boolean](16)
         current       <- Ref.of[IO, Option[RelayConnection]](None)
         closed        <- Ref.of[IO, Boolean](false)
         inboundBudget <- ByteBudget.create(maxIncomingBytes)
-        supervisor    <- supervise(host, port, localDevice, incoming, updates, current, closed, inboundBudget).start
-      yield new RelayClient(incoming, updates, current, closed, inboundBudget, supervisor)
+        supervisor    <- supervise(host, port, localDevice, incoming, deviceIncoming, updates, current, closed, inboundBudget).start
+      yield new RelayClient(incoming, deviceIncoming, updates, current, closed, inboundBudget, supervisor)
     }(_.close)
 
   private def supervise(
@@ -92,6 +98,7 @@ object RelayClient:
     port: Int,
     localDevice: Ed25519Public,
     incoming: Queue[IO, RelayIncoming],
+    deviceIncoming: Queue[IO, RelayIncoming],
     updates: Queue[IO, Boolean],
     current: Ref[IO, Option[RelayConnection]],
     closed: Ref[IO, Boolean],
@@ -109,7 +116,7 @@ object RelayClient:
                 case true  => value.close
                 case false =>
                   current.set(Some(value)) *> updates.tryOffer(true) *>
-                    value.readLoop(incoming, inboundBudget).start.flatMap(_.join) *>
+                    value.readLoop(incoming, deviceIncoming, inboundBudget).start.flatMap(_.join) *>
                     value.close *> current.set(None) *> updates.tryOffer(false) *> IO.sleep(backoff) *> loop(InitialBackoff)
               }
           }
@@ -168,13 +175,21 @@ final private[transport] class RelayConnection(
             .handleErrorWith(error => close *> IO.raiseError(error))
         }
 
-  def readLoop(incoming: Queue[IO, RelayIncoming], budget: ByteBudget): IO[Unit] =
+  def readLoop(
+    incoming: Queue[IO, RelayIncoming],
+    deviceIncoming: Queue[IO, RelayIncoming],
+    budget: ByteBudget
+  ): IO[Unit] =
     def admit(from: Ed25519Public, payload: RelayPayload): IO[Unit] =
       val bytes = RelayPayload.byteSize(payload)
+      val queue =
+        payload match
+          case _: RelayPayload.DeviceSync => deviceIncoming
+          case _                          => incoming
       budget.tryReserve(bytes).flatMap {
         case false => IO.unit
         case true  =>
-          incoming
+          queue
             .tryOffer(RelayIncoming(from, payload, bytes))
             .flatMap {
               case true  => IO.unit

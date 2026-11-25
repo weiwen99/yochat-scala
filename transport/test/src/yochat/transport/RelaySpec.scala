@@ -37,15 +37,40 @@ class RelaySpec extends FunSuite:
     program.unsafeRunSync()
   }
 
-  test("relay payloads cover reply and rekey request/accept") {
+  test("relay payloads cover reply, rekey and device sync") {
     val values = Vector(
       RelayPayload.Reply("reply-text"),
       RelayPayload.RekeyRequest(ByteVector.fill(32)(1)),
-      RelayPayload.RekeyAccept(ByteVector.fill(32)(2))
+      RelayPayload.RekeyAccept(ByteVector.fill(32)(2)),
+      RelayPayload.DeviceSync(ByteVector.fill(32)(3))
     )
     values.foreach { value =>
       assertEquals(RelayPayload.decode(RelayPayload.encode(value).toOption.get), Right(value))
     }
+  }
+
+  test("device sync payloads bypass the S1 incoming queue") {
+    val program = RelayServer.start(0).use { server =>
+      val connected = for
+        a <- RelayClient.connect("127.0.0.1", server.port, deviceA)
+        b <- RelayClient.connect("127.0.0.1", server.port, deviceB)
+      yield (a, b)
+      connected.use { case (a, b) =>
+        for
+          _   <- a.awaitOnline(5.seconds)
+          _   <- b.awaitOnline(5.seconds)
+          _   <- a.send(deviceB, RelayPayload.DeviceSync(ByteVector.view("sync".getBytes("UTF-8"))))
+          got <- b.deviceIncoming.timeout(5.seconds)
+          s1  <- b.incoming.timeout(200.millis).attempt
+        yield
+          assertEquals(got.from, deviceA)
+          got.payload match
+            case RelayPayload.DeviceSync(bytes) => assertEquals(bytes, ByteVector.view("sync".getBytes("UTF-8")))
+            case _                              => fail("unexpected payload")
+          assert(s1.isLeft)
+      }
+    }
+    program.unsafeRunSync()
   }
 
   test("relay payload decoder rejects truncation, trailing bytes, and oversized payloads") {

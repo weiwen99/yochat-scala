@@ -13,6 +13,7 @@ enum RelayPayload:
   case Reply(text: String)
   case RekeyRequest(bytes: ByteVector)
   case RekeyAccept(bytes: ByteVector)
+  case DeviceSync(bytes: ByteVector)
 
 object RelayPayload:
 
@@ -20,6 +21,7 @@ object RelayPayload:
   private val ReplyKind: Int        = 2
   private val RekeyRequestKind: Int = 3
   private val RekeyAcceptKind: Int  = 4
+  private val DeviceSyncKind: Int   = 5
   val MaxPayload: Int               = 1_048_774
 
   def byteSize(value: RelayPayload): Long =
@@ -28,6 +30,7 @@ object RelayPayload:
       case RelayPayload.Reply(text)           => text.getBytes(StandardCharsets.UTF_8).length.toLong + 5L
       case RelayPayload.RekeyRequest(payload) => payload.size + 5L
       case RelayPayload.RekeyAccept(payload)  => payload.size + 5L
+      case RelayPayload.DeviceSync(payload)   => payload.size + 5L
 
   def encode(value: RelayPayload): Either[String, ByteVector] =
     val (kind, bytes) = value match
@@ -35,6 +38,7 @@ object RelayPayload:
       case RelayPayload.Reply(text)           => (ReplyKind, ByteVector.view(text.getBytes(StandardCharsets.UTF_8)))
       case RelayPayload.RekeyRequest(payload) => (RekeyRequestKind, payload)
       case RelayPayload.RekeyAccept(payload)  => (RekeyAcceptKind, payload)
+      case RelayPayload.DeviceSync(payload)   => (DeviceSyncKind, payload)
     if bytes.size > MaxPayload.toLong then Left("payload-too-large")
     else
       val out  = new ByteArrayOutputStream(bytes.size.toInt + 5)
@@ -63,6 +67,7 @@ object RelayPayload:
             case ReplyKind        => decodeText(payload).map(RelayPayload.Reply.apply)
             case RekeyRequestKind => Right(RelayPayload.RekeyRequest(payload))
             case RekeyAcceptKind  => Right(RelayPayload.RekeyAccept(payload))
+            case DeviceSyncKind   => Right(RelayPayload.DeviceSync(payload))
             case _                => Left("unknown-kind")
       catch case _: java.io.IOException => Left("invalid-payload")
 
