@@ -14,6 +14,7 @@ Base: `fe9e126`; current source at the status update: `b56bb68` (throughput meas
 | Two-device UI | `shell/ui-smoke.js`: safety gate before sending, 100 delivered/100 received in each direction, exact rendered sequences | PASS |
 | Electron window UI | `shell/electron-smoke.js`: two real Electron windows, 100+100 messages, both windows restarted, post-restart messages delivered | PASS |
 | Cross-host UI | `shell/cross-host-smoke.js`: m1 + w7 servers, browser on each host, 100+100 messages, relay outage/reconnect, B/A server restart, post-restart delivery | PASS |
+| Cross-host throughput (observational) | `CROSS_HOST_RATE`: A->B 1,000 messages `42.4 msg/s`; 5,000 messages `21.8 msg/s`; 128B, 64 in flight | MEASURED |
 | Repository gate | `check.sh` executes unit/integration, E2E, desktop, UI, Quint, and spike checks | see command receipt |
 
 ## Status update 2026-11-25

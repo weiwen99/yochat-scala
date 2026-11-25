@@ -18,6 +18,7 @@ const {
   root,
   freePort,
   startProcess,
+  children,
   waitLog,
   waitHttp,
   stopChild,
@@ -42,7 +43,6 @@ const w7 = process.env.YOCHAT_W7_HOST || "w7";
 const java = process.env.YOCHAT_JAVA || "java";
 const receiptPath = path.join(root, "tmp", "checks", `cross-host-${Date.now()}.json`);
 const started = Date.now();
-const children = [];
 let stage = "init";
 let remoteServer = null;
 let remoteChrome = null;
@@ -135,14 +135,104 @@ async function restartServer(page, label, starter) {
   await openChat(page);
 }
 
+const shellQuote = (value) => `'${String(value).replace(/'/g, "'\\''")}'`;
+
+function remoteFreePort() {
+  const script = "import socket;s=socket.socket();s.bind(('127.0.0.1',0));p=s.getsockname()[1];s.close();print(p)";
+  return Number(ssh([`python3 -c ${shellQuote(script)}`]).trim());
+}
+
+function localDeliveredCount() {
+  const output = execFileSync("sqlite3", [
+    path.join(dataA, "data.db"),
+    "select count(*) from messages where state = 5"
+  ], { encoding: "utf8" });
+  return Number(output.trim());
+}
+
+function remoteReceivedCount() {
+  const script = "import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute('select count(*) from messages where state = 3').fetchone()[0])";
+  const encoded = Buffer.from(script, "utf8").toString("base64");
+  const command = `python3 -c ${shellQuote(`import base64;exec(base64.b64decode("${encoded}"))`)} ${shellQuote(`${remoteData}/data.db`)}`;
+  return Number(ssh([command]).trim());
+}
+
+async function waitLocalDelivered(target, timeoutMs = 120_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (localDeliveredCount() >= target) return;
+    await sleepMs(25);
+  }
+  throw new Error(`A delivered timeout: target=${target} current=${localDeliveredCount()}`);
+}
+
+async function postMessage(port, conversationId, body) {
+  const response = await fetch(`http://127.0.0.1:${port}/api/conversations/${conversationId}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body })
+  });
+  if (!response.ok) throw new Error(`send returned ${response.status}: ${await response.text()}`);
+}
+
+async function runCrossHostRate(port, conversationId) {
+  stage = "throughput";
+  const messages = Number(process.env.YOCHAT_CROSS_HOST_RATE_MESSAGES || 1_000);
+  if (!Number.isInteger(messages) || messages <= 0) throw new Error(`invalid cross-host rate messages: ${messages}`);
+  const warmup = 200;
+  const window = 64;
+  const backlog = 128;
+  const bodyBytes = 128;
+  const payload = (prefix, number) => {
+    const head = `${prefix}-${String(number).padStart(5, "0")}`;
+    return head + "x".repeat(bodyBytes - head.length);
+  };
+  const sendBatch = async (bodies) => {
+    await Promise.all(bodies.map((body) => postMessage(port, conversationId, body)));
+  };
+  const sendAll = async (bodies, aBase, pace) => {
+    let sent = 0;
+    for (let offset = 0; offset < bodies.length; offset += window) {
+      const batch = bodies.slice(offset, offset + window);
+      await sendBatch(batch);
+      sent += batch.length;
+      if (pace) await waitLocalDelivered(aBase + Math.max(0, sent - backlog));
+    }
+  };
+
+  console.log(`CROSS_HOST_RATE START messages=${messages} window=${window} body_bytes=${bodyBytes}`);
+  const warmupBodies = Array.from({ length: warmup }, (_, index) => payload("crw", index + 1));
+  const warmupStart = localDeliveredCount();
+  await sendAll(warmupBodies, warmupStart, false);
+  await waitLocalDelivered(warmupStart + warmup);
+  console.log(`CROSS_HOST_RATE WARMUP aDelivered=${warmupStart + warmup}`);
+  const aBase = localDeliveredCount();
+  const bBase = remoteReceivedCount();
+  if (aBase !== bBase) throw new Error(`cross-host baseline mismatch A=${aBase} B=${bBase}`);
+
+  const bodies = Array.from({ length: messages }, (_, index) => payload("crt", index + 1));
+  const startedAt = Date.now();
+  await sendAll(bodies, aBase, true);
+  await waitLocalDelivered(aBase + messages);
+  const ackMs = Date.now() - startedAt;
+  const aCount = localDeliveredCount();
+  const bCount = remoteReceivedCount();
+  const expected = aBase + messages;
+  if (aCount !== expected) throw new Error(`cross-host A delivered=${aCount}, expected=${expected}`);
+  if (bCount !== expected) throw new Error(`cross-host B received=${bCount}, expected=${expected}`);
+  const rate = messages * 1000 / ackMs;
+  console.log(`CROSS_HOST_RATE PASS messages=${messages} window=${window} body_bytes=${bodyBytes} ack_ms=${ackMs} rate_msg_s=${rate.toFixed(1)} bCount=${bCount} aDelivered=${aCount}`);
+  return { direction: "A->B", hosts: { A: "m1", B: w7, relay: "m1" }, messages, warmup, window, backlog, bodyBytes, ackMs, rateMsgS: Number(rate.toFixed(1)), bCount, aDelivered: aCount };
+}
+
 async function main() {
   const m1ip = process.env.YOCHAT_M1_IP || execFileSync("tailscale", ["ip", "-4"], { encoding: "utf8" }).trim().split("\n")[0];
   if (!m1ip) throw new Error("missing m1 tailscale IPv4");
   const relayPort = await freePort();
   const portA1 = await freePort();
   const portA2 = await freePort();
-  const portB1 = await freePort();
-  const portB2 = await freePort();
+  const portB1 = remoteFreePort();
+  const portB2 = remoteFreePort();
   dataA = fs.mkdtempSync(path.join(os.tmpdir(), "yochat-cross-a-"));
   remoteData = `/tmp/yochat-cross-b-${Date.now()}`;
   remoteJar = `/tmp/yochat-cross-server-${Date.now()}.jar`;
@@ -155,7 +245,8 @@ async function main() {
   await waitLog(serverA, /YoChat web:/);
   await waitHttp(`http://127.0.0.1:${portA1}/api/session`);
   remoteServer = startRemoteServer(portB1, remoteData, `${m1ip}:${relayPort}`);
-  await waitLog(remoteServer, /YoChat web:/);
+  try { await waitLog(remoteServer, /YoChat web:/); }
+  catch (_) { throw new Error(`B server start failed: ${remoteServer.logBuffer.slice(-500)}`); }
 
   stage = "launch-browser-a";
   browserA = await chromium.launch({ channel: "chrome", headless: true });
@@ -237,6 +328,13 @@ async function main() {
   await sendBodies(pageA, "a-restart", 1);
   await Promise.all([waitCount(pageA, ".message.own.delivered", 102), waitCount(pageB, ".message.peer", 102)]);
 
+  const stateResponse = await fetch(`http://127.0.0.1:${portA2}/api/state`);
+  if (!stateResponse.ok) throw new Error(`A state returned ${stateResponse.status}`);
+  const state = await stateResponse.json();
+  const conversationId = state.conversations?.[0]?.id;
+  if (!conversationId) throw new Error("A conversation missing before throughput");
+  const throughput = await runCrossHostRate(portA2, conversationId);
+
   const receipt = {
     command: "shell/cross-host-smoke.js",
     commit: gitHead(),
@@ -245,11 +343,13 @@ async function main() {
     relayPort,
     ports: { a1: portA1, b1: portB1, b2: portB2, a2: portA2 },
     result: { delivered: 100, received: 100, relayOutage: true, restarted: ["B", "A"] },
+    throughput,
     failure: null,
     verdict: "PASS"
   };
   fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
   console.log(`CROSS_HOST PASS delivered=100 received=100 relay_outage=1 restarted=B,A duration_ms=${Date.now() - started}`);
+  console.log(`CROSS_HOST_RATE_RECEIPT path=${receiptPath}`);
   console.log(`CROSS_HOST_RECEIPT path=${receiptPath}`);
 }
 

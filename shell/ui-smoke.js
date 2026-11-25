@@ -356,6 +356,7 @@ module.exports = {
   root,
   freePort,
   startProcess,
+  children,
   waitLog,
   waitHttp,
   stopChild,

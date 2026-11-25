@@ -101,7 +101,7 @@ Scala 代码必须遵守 `scala-best-practices`。写、改、重构或评审 Sc
 
 ## 10. 当前状态
 
-计划 0001 已进入 S1 收尾：`core/` 协议核心、纯应用状态机、Q1–Q6 有限 Quint 模型、生产 `store/`、真实 relay/transport、server runtime、ScalaJS UI 与 Electron shell 均已实现；ADR-0006/0007/0008 accepted。T1 总签已完成（2026-11-24）。`./check.sh` 自动门覆盖 unit/store/server/transport、Quint、spike、E2E#1–#17、1k/10k 两进程、`PERF#RATE`（观测约 334 msg/s，无速率阈值）、desktop cold/idle、web UI smoke 与 Electron 双窗口重启/重连；跨主机 m1/w7 由 `shell/cross-host-smoke.js` 手动运行（需要 w7 SSH），覆盖真实 relay 断连和 B/A 服务重启；最新回执见 `docs/reviews/2026-11-24-s1-crypto/m8-m9-closure.md`。
+计划 0001 已进入 S1 收尾：`core/` 协议核心、纯应用状态机、Q1–Q6 有限 Quint 模型、生产 `store/`、真实 relay/transport、server runtime、ScalaJS UI 与 Electron shell 均已实现；ADR-0006/0007/0008 accepted。T1 总签已完成（2026-11-24）。`./check.sh` 自动门覆盖 unit/store/server/transport、Quint、spike、E2E#1–#17、1k/10k 两进程、`PERF#RATE`（观测约 334 msg/s，无速率阈值）、desktop cold/idle、web UI smoke 与 Electron 双窗口重启/重连；跨主机 m1/w7 由 `shell/cross-host-smoke.js` 手动运行（需要 w7 SSH），覆盖真实 relay 断连、B/A 服务重启与 A→B 吞吐（1k 约 42 msg/s，5k 持续约 22 msg/s）；最新回执见 `docs/reviews/2026-11-24-s1-crypto/m8-m9-closure.md`。
 
 UI 自动门已无已知阻断：Electron 窗口级交互与双窗口重启/重连由
 `shell/electron-smoke.js` 覆盖；真实 m1/w7 跨主机路径由 `cross-host-smoke.js` 覆盖。独立外部密码学审计为可选 assurance；owner 已按仓库规则关闭 acceptance gate，但没有任何独立外部签名，不能把内部评审写成外部审计。模型通过不替代 S1。
