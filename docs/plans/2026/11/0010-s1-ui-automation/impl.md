@@ -18,7 +18,7 @@
 
 - `UI_SMOKE PASS delivered=100 received=100 reciprocal=1 duration_ms=15884`
 - `ELECTRON_UI PASS delivered=100 received=100 restarted=B,A duration_ms=26699`
-- `CROSS_HOST_RATE` 1,000-message run: `ack_ms=23591 rate_msg_s=42.4 bCount=1302 aDelivered=1302` on m1/w7.
-- `CROSS_HOST_RATE` 5,000-message run: `ack_ms=229590 rate_msg_s=21.8 bCount=5302 aDelivered=5302` on m1/w7.
-- Receipts under `tmp/checks/` (ignored by git). Cross-host rate is observational and has no pass threshold; the 5k sample is the sustained figure under the then-current host load.
+- `CROSS_HOST_RATE` 1,000-message run at `ca33ec3`: `ack_ms=23383 rate_msg_s=42.8 bCount=1302 aDelivered=1302` on m1/w7.
+- `CROSS_HOST_RATE` 5,000-message run at `ca33ec3`: `ack_ms=212390 rate_msg_s=23.5 bCount=5302 aDelivered=5302` on m1/w7.
+- Receipts: `tmp/checks/cross-host-1795583100797.json` (1k), `tmp/checks/cross-host-1795583195324.json` (5k); ignored by git. Cross-host rate is observational and has no pass threshold; the 5k sample is the sustained figure under the then-current host load.
 - The web test uses installed Chrome via Playwright; the Electron test launches the real shell.

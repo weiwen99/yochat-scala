@@ -8,6 +8,8 @@ M5 is in progress on `main`. Plans 0002–0007 close M3 structural hardening, fi
 
 Functional E2E now covers 16 behavior contracts plus `PERF#10K` and `PERF#RATE`: 1,000 total measured messages under the 5s gate, 10,000 total measured messages under the 60s gate, and an observational 10,000-message rate run (about 330-340 msg/s on the development host), after explicit warmup. `PERF#RATE` reports msg/s but has no rate threshold. Cold-start/idle-memory gates are measured by `shell/perf-start.js`. The two-device web UI smoke (`shell/ui-smoke.js`) drives a directed invite/reply, blocks pre-safety sending, and sends 100 messages in each direction through the rendered UI. Remaining release work is independent external cryptography review; Electron-window automation and the opt-in cross-host smoke are already in `shell/`.
 
+The opt-in cross-host gate (`node shell/cross-host-smoke.js`) runs server A on m1, server B and Chrome B on w7, and a relay on m1. It covers 100+100 UI messages, relay outage/reconnect, B/A server restarts, and an additional A→B `CROSS_HOST_RATE` sample (default 1,000 measured + 200 warmup; set `YOCHAT_CROSS_HOST_RATE_MESSAGES=5000` for a sustained sample). Cross-host rate is observational and is much lower than the same-host `PERF#RATE`; see the Plan 0010 implementation receipt.
+
 ## Read first
 
 - `AGENTS.md` — the rules for working in this repo.

@@ -5,7 +5,8 @@
 // driven by Playwright, so the user-facing flow is UI-only. Requires SSH alias "w7".
 //
 // Usage: node shell/cross-host-smoke.js
-// Env: YOCHAT_W7_HOST (default w7), YOCHAT_M1_IP (default tailscale ip -4), YOCHAT_JAVA.
+// Env: YOCHAT_W7_HOST (default w7), YOCHAT_M1_IP (default tailscale ip -4), YOCHAT_JAVA,
+//      YOCHAT_CROSS_HOST_RATE_MESSAGES (default 1000; set 5000 for a sustained sample).
 
 const { execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
