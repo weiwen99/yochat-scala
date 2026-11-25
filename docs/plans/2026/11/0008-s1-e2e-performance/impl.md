@@ -25,3 +25,4 @@
   - Median isolated ACK rate: 334.2 msg/s for 10,000 x 128-byte messages.
 - Full `server.e2e` after adding `PERF#RATE`: 18/18 contracts; rates `334.0`, `334.7`, and `335.4` msg/s across full runs. The latest full gate receipt is `tmp/checks/1795579743834/s1-e2e.log`; the `./check.sh` run recorded `rate_msg_s=335.4 ack_ms=29815`.
 - `PERF#RATE` is observational; it has no msg/s threshold and does not measure UI rendering. The receipt includes exact `bCount=11000 aDelivered=11000` (1,000 warmup + 10,000 measured).
+- Full `./check.sh` PASS (634.73s): E2E 18/18, 1k 3,854ms, 10k 28,958ms, `PERF#RATE` 335.4 msg/s, cold p50/p95 1,200/1,221ms, idle 750.6MB.
