@@ -1,6 +1,6 @@
 # M8/M9 closure
 
-Status: closed at source `2a1cc84`; the manifest records the exact hash. The owner risk-acceptance packet remains non-external.
+Status: closed at source `ef14e58`; the manifest records the exact hash. The owner risk-acceptance packet remains non-external.
 This note records the two findings that previously blocked external handoff.
 
 ## M8 — byte-bounded inbound queues
@@ -35,9 +35,9 @@ This note records the two findings that previously blocked external handoff.
 
 - `./mill transport.test` — ByteBudgetSpec 2/2, RelaySpec 7/7.
 - `./mill server.test` — 8/8 test classes; AppRuntimeSpec 2/2.
-- Full `./check.sh` at `2a1cc84`: PASS (622.75 s); E2E 17/17, 1k 4,584 ms, 10k 30,614 ms;
-  cold start p50 1,204 ms / p95 1,229 ms; idle 768.3 MB; web UI smoke 100/100; Electron UI smoke
-  100/100 with B and A restart.
+- Full `./check.sh` at `ef14e58`: PASS (602.50 s); E2E 17/17, 1k 4,243 ms, 10k 32,661 ms;
+  cold start p50 1,257 ms / p95 1,313 ms; idle 752.8 MB; web UI 100/100; Electron UI 100/100 with
+  B/A restart; cross-host m1/w7 100/100 with relay outage and B/A restart (54.5 s).
 
 ## Residual
 

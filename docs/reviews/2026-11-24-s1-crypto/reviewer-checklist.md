@@ -1,7 +1,7 @@
 # Reviewer checklist and sign-off
 
 Reviewer: ____________________  Organization: ____________________  Date: ____________
-Baseline commit: `2a1cc84`  Manifest verified: yes / no
+Baseline commit: `ef14e58`  Manifest verified: yes / no
 
 > This checklist records the repository owner decision, which closes the cryptographic acceptance
 > gate under this repository's owner-signoff rule. An independent reviewer signature is optional and,

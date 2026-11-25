@@ -11,10 +11,10 @@ mismatch) are closed in `m8-m9-closure.md`. The store retirement guard now block
 `Sent` rows (`CutoverSpec`); runtime multi-row `Migrated`/`Skipped` and mid-batch store-failure
 coverage are in `AppRuntimeSpec` (mixed batch drains; failure stops before later rows).
 
-Baseline: source `2a1cc84` on top of `6884926`; packet `6acace9` plus owner-signoff, M8/M9 and residual-test corrections. `manifest.sha256` covers the source snapshot
+Baseline: source `ef14e58` on top of `6884926`; packet `6acace9` plus owner-signoff, M8/M9 and residual-test corrections. `manifest.sha256` covers the source snapshot
 and this packet's docs; it is regenerated at each packet revision and verified before handoff. The
-final `./check.sh` receipt (PASS 622.75 s; E2E 17/17; 10k 30,614 ms; Electron UI restart PASS) is
-in `m8-m9-closure.md`.
+final `./check.sh` receipt (PASS 602.50 s; E2E 17/17; 10k 32,661 ms; Electron and cross-host
+restart PASS) is in `m8-m9-closure.md`.
 
 Scope: the S1 two-party, one-device-each, relay-only YoChat implementation.
 
