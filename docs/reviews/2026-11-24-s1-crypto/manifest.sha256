@@ -1,5 +1,5 @@
 # S1 external crypto review source manifest
-# Source commit: 0fcdbe1; packet: 6acace9 + owner-signoff + M8/M9 + residual tests
+# Source commit: c1cfe2f; packet: 6acace9 + owner-signoff + M8/M9 + residual tests
 # Format: SHA-256  path
 8682530d18e0f17d9ac2a001924399b48240f7513c466af7e7ce30359bca8553  build.mill
 26fbb9d888cd649590083315c4fd179abc78cb78e59f51a89363e9b19238028e  check.sh
@@ -96,7 +96,7 @@ e2e72b8d20c13c2b17e4684e6c1aaba575c297bf2ca801aabeb65210dafb6904  docs/plans/202
 c7cdd0f2c6f52f384bf78f6e223d41459808b6eb362b66180f4f50247ea5d1c3  docs/plans/2026/11/0008-s1-e2e-performance/impl.md
 fb4219a56bea06198597f2e2c208eec5129560eef025147d1a1bbb1a976d5122  docs/plans/2026/11/0008-s1-e2e-performance/meta.md
 15352d9c4970a7153076cfd97b645c075ce901030004506aec47ddae397fb118  docs/plans/2026/11/0008-s1-e2e-performance/review.md
-77dad2477d7ad874bad2a2b54d0b0cc65658c47e6e0a40c2f6d23cf9aa7b4a89  docs/reviews/2026-11-24-s1-crypto/README.md
+5905c9f43013430cb3e1683160c5248db62a57012c714e51ee85cc72af34b457  docs/reviews/2026-11-24-s1-crypto/README.md
 22e60b3fa8d77ec2ff162824d0d167b5ca4142f72318b225e4135681ad32b519  docs/reviews/2026-11-24-s1-crypto/evidence.md
 b7d3ca69296c0ee4d66d82e037d5cf1cb8611365fb4cc6dad52630039463eb00  docs/reviews/2026-11-24-s1-crypto/findings-template.md
 3553cb7560a65a72b1dfb22decafaef1cd8a9806262bc5bf0ee7a96f3c8d9fd4  docs/reviews/2026-11-24-s1-crypto/internal-review-2026-11-24.md
@@ -104,11 +104,11 @@ a12c83c269a7008d76c7eee5b04b054fa262b408188ca0fdd3051912af3b6232  docs/reviews/2
 9141d6a2f167e0c49a0c8c80a486c76b56cabc73756cc1e9459b72f12bff94ee  docs/reviews/2026-11-24-s1-crypto/internal-review-round3-2026-11-24.md
 6b2d825105eb8cd80bd3ad834793907ca7b4ce095c805e6bc6cd285d0092c1ed  docs/reviews/2026-11-24-s1-crypto/internal-review-rounds-11-14.md
 baed2fcfcbf5502e528fcb504df6dd66316e7df643f1c4c7c00e5c77bb7ffab7  docs/reviews/2026-11-24-s1-crypto/internal-review-rounds-4-10.md
-d474cce10928f6dfc28aa27e3a724157eac3e2574f81a85c746cd8defb96f887  docs/reviews/2026-11-24-s1-crypto/m8-m9-closure.md
+bbe41a0b9a02057921cbed36de87fc771e919c8ff1205ea851c19f1d4680d189  docs/reviews/2026-11-24-s1-crypto/m8-m9-closure.md
 2b9fba4815ca12da0ae0cdb76fd7ed87bb00e9f5017ff3368a7d9013b47fac36  docs/reviews/2026-11-24-s1-crypto/open-questions.md
 9d66198f9076b2cde1e05cda22f3af9597f51c72cfea828f7349f3e95cde4a53  docs/reviews/2026-11-24-s1-crypto/protocol.md
 32dc3bf232cecfdd7570b51b2b29c9055b842d8609c5eca241158803d0e5d7aa  docs/reviews/2026-11-24-s1-crypto/remediation-2026-11-24.md
-6785ccdb3e1906be442323a82de909d84116668f35434bff01759096be9cbe8f  docs/reviews/2026-11-24-s1-crypto/reviewer-checklist.md
+d0ddb8899484ff07851dcfe3282e701499612268102e90d1c8fa7978249fc535  docs/reviews/2026-11-24-s1-crypto/reviewer-checklist.md
 752f32db0bc2860a746d70981879bef639e558527f4afb5b800c053ead05f449  docs/reviews/2026-11-24-s1-crypto/reviewer-worksheet.md
 56e32457e8fa41aa5dbe60248d87fb3545bcaff253c81cf3f93cba7556531038  docs/reviews/2026-11-24-s1-crypto/scope.md
 f4758bbd3a93ac4c828ca9a4f0e7d26e2189a4b8ec58822e8f247810127c9454  docs/reviews/2026-11-24-s1-crypto/source-map.md
@@ -130,7 +130,7 @@ c24dea85199921193863337f9559059f791ad1a995c09fe7d2fa809ad1e6d0a6  models/traces/
 71b4efdc5186e7578be741fbf3df7a1525bcc3d0f8e8fd502e7e90188c0c6526  models/traces/q5_rekey.itf.json
 6a835690ecaf2c290a4df64a1fd879b2e1138a038fc51537797fccbf4cccce9f  server/src/yochat/server/ApiJson.scala
 3af1b9309baab6fdfb06a72f04caade8b2e2e21f61b950c43907d606a60d1a8b  server/src/yochat/server/AppEffectExecutor.scala
-85532f2a21fc56d7994bff74aea4de70bd3dc30d805a35461ea98e01a973462d  server/src/yochat/server/AppRuntime.scala
+38056834eb0c368c6ce358ad79c35da291a4b22567d65d256df5d7d09370c7e6  server/src/yochat/server/AppRuntime.scala
 3e6e357859c60697b6566809b22e2f2571f73a4b64eb0db2c8936e76bc595897  server/src/yochat/server/AppService.scala
 e4920f5c88422188337b57e7394d50cc8f222840dbabbc3f5d6eea1841b1dbbe  server/src/yochat/server/AppStateRestore.scala
 2e9c9301df506907448f4d75ccbd9d25b8cf44dd31dc903cb9939f8764405421  server/src/yochat/server/EventHub.scala
@@ -138,9 +138,9 @@ e4920f5c88422188337b57e7394d50cc8f222840dbabbc3f5d6eea1841b1dbbe  server/src/yoc
 e7c5e26a808d9fed794a42aba0a0ea2b8c1a9c368cddbb489db66ba746781978  server/src/yochat/server/Main.scala
 bf28b15d955ad1a3c749e15384a24b22107da5fbe7488e39c46d1688bc7b6c7a  server/test/src/yochat/server/ApiJsonSpec.scala
 3693a496dbe42a35556966cb376e29da19d6dfb0863589dda708bf91710affb8  server/test/src/yochat/server/AppEffectExecutorSpec.scala
-31b3257ab6b6d4006c2d4231d9001941a08de50359bb6e01f42ed56442f6e217  server/test/src/yochat/server/AppRuntimeSpec.scala
+94e89a0b8eb42aae4929f3c053a9a3eb28df566dc4a614218ed57e25a9fb6729  server/test/src/yochat/server/AppRuntimeSpec.scala
 5b196be23ba61ca3b9e7acd9b611ffa151b592af8da567afaeffc012cc7ee733  server/test/src/yochat/server/AppStateRestoreSpec.scala
-76dc6b11cd2c7aaaa1e6a718d291f218c7019aef7a84677ecea25f8c6f775a8a  server/test/src/yochat/server/ExecutorTestSupport.scala
+3abbfcff4299600a4c86415f729d6bfd302d8b648837380b9a18162fbecf62cc  server/test/src/yochat/server/ExecutorTestSupport.scala
 321638c1880f019c5dbe6c0bd22cd382535206ad5ac8781f7df01c35807a6d47  server/test/src/yochat/server/HttpApiSpec.scala
 c32c05c6d3fb5b990e405a28a93049f75c6bae19debcb93ef6e2bf795af9d87d  server/test/src/yochat/server/RestoreBench.scala
 74907c7790d788fa8ecc1b3445a519be0e6d68df7b6e0de7a8cded17d55ee733  server/test/src/yochat/server/TimerServiceSpec.scala
