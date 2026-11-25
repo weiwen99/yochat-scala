@@ -94,4 +94,26 @@ private[store] object StoreCrypto:
   def invitationAad(invitationId: ByteVector, version: Long): ByteVector =
     aad("yochat-store/invitation/v1", invitationId, u64(version))
 
+  def deviceAad(devicePub: ByteVector, userPub: ByteVector, version: Long): ByteVector =
+    aad("yochat-store/device/v1", devicePub, userPub, u64(version))
+
+  def deviceSyncAad(peerDevicePub: ByteVector, version: Long): ByteVector =
+    aad("yochat-store/device-sync/v1", peerDevicePub, u64(version))
+
+  def companionMessageAad(
+    sourceId: Long,
+    conversationId: ByteVector,
+    authorPub: ByteVector,
+    devicePub: ByteVector,
+    seq: Long
+  ): ByteVector =
+    aad(
+      "yochat-store/companion-message/v1",
+      u64(sourceId),
+      conversationId,
+      authorPub,
+      devicePub,
+      u64(seq)
+    )
+
   def wireHash(wire: ByteVector): ByteVector = Crypto.sha256(wire).bytes

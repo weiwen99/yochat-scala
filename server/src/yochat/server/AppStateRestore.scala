@@ -34,16 +34,17 @@ object AppStateRestore:
     yield state
 
   private def fromSnapshot(store: Store, generation: Long, snapshot: StoreSnapshot): Either[StorageError, AppState] =
-    val identity = LocalIdentity(
-      Ed25519KeyPair(store.identity.userPrivate, store.identity.userPublic),
-      Ed25519KeyPair(store.identity.devicePrivate, store.identity.devicePublic)
-    )
     for
+      userPrivate   <- store.identity.userPrivate.toRight(StorageError.InvalidArgument("primary_user_private"))
       contacts      <- contactsFrom(snapshot)
       conversations <- conversationsFrom(snapshot)
       sessions      <- sessionsFrom(snapshot)
       outgoing      <- outgoingFrom(snapshot, sessions, generation)
       invitations   <- invitationsFrom(snapshot)
+      identity       = LocalIdentity(
+                         Ed25519KeyPair(userPrivate, store.identity.userPublic),
+                         Ed25519KeyPair(store.identity.devicePrivate, store.identity.devicePublic)
+                       )
     yield AppState(
       identity = Some(identity),
       lock = LockState.Locked(generation),

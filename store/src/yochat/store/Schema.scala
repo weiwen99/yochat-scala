@@ -4,12 +4,13 @@ import org.typelevel.doobie.*
 import org.typelevel.doobie.free.connection as FC
 import org.typelevel.doobie.implicits.*
 
-/** Schema v1. There are no foreign keys; message rows intentionally outlive their session rows. */
+/** Schema v3: S1 tables plus the S2-A device, sync and read-only companion projection. */
 private[store] object Schema:
 
-  val Version: Long = 2L
+  val Version: Long = 3L
 
-  private val Tables = Vector("meta", "sessions", "messages", "contacts", "invitations", "conversations")
+  private val BaseTables = Vector("meta", "sessions", "messages", "contacts", "invitations", "conversations")
+  private val V3Tables   = BaseTables ++ Vector("devices", "device_sync", "companion_messages")
 
   def initialize: ConnectionIO[Unit] =
     for
@@ -41,6 +42,7 @@ private[store] object Schema:
                  |  state INTEGER NOT NULL,
                  |  created_at INTEGER NOT NULL,
                  |  attempts INTEGER NOT NULL DEFAULT 0,
+                 |  sync_seq INTEGER NOT NULL DEFAULT 0,
                  |  UNIQUE(session_id, device_pub, seq)
                  |)""".stripMargin.update.run
       _ <- sql"""CREATE TABLE contacts (
@@ -61,42 +63,104 @@ private[store] object Schema:
                  |  created_at INTEGER NOT NULL,
                  |  last_applied_seq INTEGER NOT NULL
                  |)""".stripMargin.update.run
+      _ <- createV3Tables
       _ <- sql"CREATE INDEX messages_conversation_order ON messages(conversation_id, author_pub, seq)".update.run
       _ <- sql"CREATE INDEX sessions_peer_user ON sessions(peer_user_pub)".update.run
+      _ <- sql"CREATE INDEX messages_sync_seq ON messages(sync_seq)".update.run
       _ <- writeMeta("schema_version", Version)
       _ <- writeMeta("lock-generation", 0L)
     yield ()
 
   private def validateSchema: ConnectionIO[Unit] =
     for
-      required <- requiredTableCount
-      _        <- if required == Tables.size.toLong then FC.unit else abort(StorageError.UnsupportedSchema)
-      version  <- sql"SELECT value FROM meta WHERE key = 'schema_version'".query[Long].option
-      _        <- version match
-                    case Some(value) if value == 1L      => migrateFromOne
-                    case Some(value) if value == Version => FC.unit
-                    case Some(_)                         => abort(StorageError.UnsupportedSchema)
-                    case None                            => abort(StorageError.UnsupportedSchema)
-      lock     <- sql"SELECT value FROM meta WHERE key = 'lock-generation'".query[Long].option
-      _        <- lock match
-                    case Some(_) => FC.unit
-                    case None    => abort(StorageError.MissingHighWater("lock-generation"))
+      version <- sql"SELECT value FROM meta WHERE key = 'schema_version'".query[Long].option
+      _       <- version match
+                   case Some(1L) => baseTablesPresent.flatMap(_ => migrateFromOne)
+                   case Some(2L) => baseTablesPresent.flatMap(_ => migrateFromTwo)
+                   case Some(3L) => v3TablesPresent
+                   case Some(_)  => abort(StorageError.UnsupportedSchema)
+                   case None     => abort(StorageError.UnsupportedSchema)
+      lock    <- sql"SELECT value FROM meta WHERE key = 'lock-generation'".query[Long].option
+      _       <- lock match
+                   case Some(_) => FC.unit
+                   case None    => abort(StorageError.MissingHighWater("lock-generation"))
     yield ()
 
   private def migrateFromOne: ConnectionIO[Unit] =
     for
       _ <- sql"ALTER TABLE messages ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0".update.run
+      _ <- migrateFromTwo
+    yield ()
+
+  private def migrateFromTwo: ConnectionIO[Unit] =
+    for
+      _ <- createV3Tables
+      _ <- sql"ALTER TABLE messages ADD COLUMN sync_seq INTEGER NOT NULL DEFAULT 0".update.run
+      _ <- sql"CREATE INDEX messages_sync_seq ON messages(sync_seq)".update.run
       _ <- writeMeta("schema_version", Version)
     yield ()
+
+  private def createV3Tables: ConnectionIO[Unit] =
+    for
+      _ <- sql"""CREATE TABLE devices (
+                 |  device_pub BLOB PRIMARY KEY NOT NULL,
+                 |  user_pub BLOB NOT NULL,
+                 |  role INTEGER NOT NULL,
+                 |  name BLOB NOT NULL,
+                 |  authorization BLOB NOT NULL,
+                 |  version INTEGER NOT NULL,
+                 |  created_at INTEGER NOT NULL,
+                 |  revoked_at INTEGER,
+                 |  join_epoch INTEGER NOT NULL,
+                 |  join_manifest BLOB NOT NULL,
+                 |  join_manifest_hash BLOB NOT NULL,
+                 |  join_cursor_sync_seq INTEGER NOT NULL,
+                 |  pairing_nonce BLOB,
+                 |  request_hash BLOB
+                 |)""".stripMargin.update.run
+      _ <- sql"""CREATE TABLE device_sync (
+                 |  peer_device_pub BLOB PRIMARY KEY NOT NULL,
+                 |  sync_root BLOB NOT NULL,
+                 |  last_acked_sync_seq INTEGER NOT NULL,
+                 |  last_batch_seq INTEGER NOT NULL,
+                 |  last_batch_hash BLOB NOT NULL,
+                 |  version INTEGER NOT NULL,
+                 |  updated_at INTEGER NOT NULL
+                 |)""".stripMargin.update.run
+      _ <- sql"""CREATE TABLE companion_messages (
+                 |  source_id INTEGER PRIMARY KEY NOT NULL,
+                 |  conversation_id BLOB NOT NULL,
+                 |  author_pub BLOB NOT NULL,
+                 |  device_pub BLOB NOT NULL,
+                 |  seq INTEGER NOT NULL,
+                 |  body BLOB NOT NULL,
+                 |  state INTEGER NOT NULL,
+                 |  created_at INTEGER NOT NULL,
+                 |  sync_seq INTEGER NOT NULL
+                 |)""".stripMargin.update.run
+      _ <- sql"CREATE INDEX companion_messages_conversation_order ON companion_messages(conversation_id, seq, source_id)".update.run
+      _ <- sql"CREATE INDEX companion_messages_sync_seq ON companion_messages(sync_seq)".update.run
+    yield ()
+
+  private def baseTablesPresent: ConnectionIO[Unit] =
+    requiredTableCount(BaseTables).flatMap { count =>
+      if count == BaseTables.size.toLong then FC.unit else abort(StorageError.UnsupportedSchema)
+    }
+
+  private def v3TablesPresent: ConnectionIO[Unit] =
+    requiredTableCount(V3Tables).flatMap { count =>
+      if count == V3Tables.size.toLong then FC.unit else abort(StorageError.UnsupportedSchema)
+    }
 
   private def tableCount: ConnectionIO[Long] =
     sql"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'".query[Long].unique
 
-  private def requiredTableCount: ConnectionIO[Long] =
-    sql"""SELECT count(*) FROM sqlite_master
-         |WHERE type = 'table' AND name IN ('meta', 'sessions', 'messages', 'contacts', 'invitations', 'conversations')""".stripMargin
-      .query[Long]
-      .unique
+  private def requiredTableCount(names: Vector[String]): ConnectionIO[Long] =
+    names.foldLeft(FC.pure(0L)) { (acc, name) =>
+      acc.flatMap { total =>
+        sql"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = $name".query[Long].unique.map(total + _)
+      }
+    }
 
   private def writeMeta(key: String, value: Long): ConnectionIO[Unit] =
     sql"INSERT INTO meta(key, value) VALUES ($key, $value) ON CONFLICT(key) DO UPDATE SET value = excluded.value".update.run.flatMap { changed =>

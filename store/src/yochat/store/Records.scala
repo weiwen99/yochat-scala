@@ -80,6 +80,72 @@ final case class ConversationRecord(
 
   override def toString: String = s"ConversationRecord(lastAppliedSeq=$lastAppliedSeq)"
 
+enum DeviceRole:
+  case Primary, Companion
+
+  def code: Int =
+    this match
+      case DeviceRole.Primary   => 1
+      case DeviceRole.Companion => 2
+
+object DeviceRole:
+
+  def fromCode(value: Int): Either[StorageError, DeviceRole] =
+    value match
+      case 1 => Right(DeviceRole.Primary)
+      case 2 => Right(DeviceRole.Companion)
+      case _ => Left(StorageError.InvalidEnvelope)
+
+final case class DeviceRecord(
+  devicePub: Ed25519Public,
+  userPub: Ed25519Public,
+  role: DeviceRole,
+  name: String,
+  authorization: ByteVector,
+  version: Long,
+  createdAt: Long,
+  revokedAt: Option[Long],
+  joinEpoch: Long,
+  joinManifest: ByteVector,
+  joinManifestHash: ByteVector,
+  joinCursorSyncSeq: Long,
+  pairingNonce: Option[ByteVector],
+  requestHash: Option[ByteVector]
+):
+
+  def isRevoked: Boolean = revokedAt.isDefined
+
+  override def toString: String =
+    s"DeviceRecord(role=$role, version=$version, revoked=${isRevoked}, manifestBytes=${joinManifest.size})"
+
+final case class DeviceSyncRecord(
+  peerDevicePub: Ed25519Public,
+  syncRoot: ByteVector,
+  lastAckedSyncSeq: Long,
+  lastBatchSeq: Long,
+  lastBatchHash: ByteVector,
+  version: Long,
+  updatedAt: Long
+):
+
+  override def toString: String =
+    s"DeviceSyncRecord(lastAckedSyncSeq=$lastAckedSyncSeq, lastBatchSeq=$lastBatchSeq, version=$version)"
+
+final case class CompanionMessageRecord(
+  sourceId: Long,
+  conversationId: ByteVector,
+  authorPub: Ed25519Public,
+  devicePub: Ed25519Public,
+  seq: Long,
+  body: ByteVector,
+  state: MessageState,
+  createdAt: Long,
+  syncSeq: Long
+):
+
+  override def toString: String =
+    s"CompanionMessageRecord(sourceId=$sourceId, seq=$seq, state=$state, syncSeq=$syncSeq)"
+
 final case class StoreSnapshot(
   contacts: List[ContactRecord],
   invitations: List[InvitationRecord],

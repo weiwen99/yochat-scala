@@ -256,6 +256,65 @@ final class Store private[store] (
   ): IO[Either[StorageError, Unit]] =
     ContactRepository.delete(runtime, userPub, expectedVersion, expectedLockGeneration)
 
+  def insertDevice(
+    record: DeviceRecord,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, DeviceRecord]] =
+    DeviceRepository.insert(runtime, record, expectedLockGeneration)
+
+  def loadDevice(devicePub: Ed25519Public): IO[Either[StorageError, DeviceRecord]] =
+    DeviceRepository.load(runtime, devicePub)
+
+  def listDevices: IO[Either[StorageError, List[DeviceRecord]]] =
+    DeviceRepository.list(runtime)
+
+  def revokeDevice(
+    devicePub: Ed25519Public,
+    expectedVersion: Long,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, DeviceRecord]] =
+    DeviceRepository.revoke(runtime, devicePub, expectedVersion, expectedLockGeneration)
+
+  def insertDeviceSync(
+    record: DeviceSyncRecord,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, DeviceSyncRecord]] =
+    DeviceSyncRepository.insert(runtime, record, expectedLockGeneration)
+
+  def loadDeviceSync(peerDevicePub: Ed25519Public): IO[Either[StorageError, DeviceSyncRecord]] =
+    DeviceSyncRepository.load(runtime, peerDevicePub)
+
+  def updateDeviceSync(
+    record: DeviceSyncRecord,
+    expectedVersion: Long,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, DeviceSyncRecord]] =
+    DeviceSyncRepository.update(runtime, record, expectedVersion, expectedLockGeneration)
+
+  def deleteDeviceSync(
+    peerDevicePub: Ed25519Public,
+    expectedVersion: Long,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, Unit]] =
+    DeviceSyncRepository.delete(runtime, peerDevicePub, expectedVersion, expectedLockGeneration)
+
+  def upsertCompanionMessage(
+    record: CompanionMessageRecord
+  ): IO[Either[StorageError, CompanionMessageRecord]] =
+    CompanionMessageRepository.upsert(runtime, record)
+
+  def loadCompanionMessage(sourceId: Long): IO[Either[StorageError, CompanionMessageRecord]] =
+    CompanionMessageRepository.load(runtime, sourceId)
+
+  def listCompanionMessages(
+    conversationId: ByteVector,
+    limit: Int
+  ): IO[Either[StorageError, List[CompanionMessageRecord]]] =
+    CompanionMessageRepository.list(runtime, conversationId, limit)
+
+  def countCompanionMessages(conversationId: ByteVector): IO[Either[StorageError, Long]] =
+    CompanionMessageRepository.count(runtime, conversationId)
+
   def insertInvitation(
     id: ByteVector,
     data: InvitationData,
@@ -360,6 +419,16 @@ object Store:
         }
     }
 
+  /** Open a companion database created for an already-known user public key. It never creates or loads a user private key. */
+  def openCompanion(config: StoreConfig, userPublic: Ed25519Public): Resource[IO, Either[StorageError, Store]] =
+    Resource.eval(prepareCompanion(config, userPublic)).flatMap {
+      case Left(error)     => Resource.pure(Left(error))
+      case Right(prepared) =>
+        HikariTransactor.fromHikariConfig[IO](hikari(prepared.paths.database)).flatMap { transactor =>
+          Resource.eval(create(prepared, transactor))
+        }
+    }
+
   private def prepare(config: StoreConfig): IO[Either[StorageError, Prepared]] =
     IO.blocking(artifactState(config.paths)).flatMap {
       case AllAbsent           =>
@@ -393,6 +462,83 @@ object Store:
           case KeySource.New(_)             => IO.pure(Left(StorageError.InstancePartiallyPresent))
       case PartialArtifacts    => IO.pure(Left(StorageError.InstancePartiallyPresent))
     }
+
+  private def prepareCompanion(config: StoreConfig, userPublic: Ed25519Public): IO[Either[StorageError, Prepared]] =
+    IO.blocking(artifactState(config.paths)).flatMap {
+      case AllAbsent           =>
+        config.keySource match
+          case KeySource.KeyFile(passphrase) =>
+            for
+              _        <- SecureFiles.ensureDirectory(config.paths.directory)
+              master   <- KeyFile.create(config.paths.keyFile, passphrase)
+              prepared <- master match
+                            case Left(error) => IO.pure(Left(error))
+                            case Right(key)  => createCompanionInstance(config, key, userPublic)
+            yield prepared
+          case KeySource.New(provider)       =>
+            for
+              _        <- SecureFiles.ensureDirectory(config.paths.directory)
+              loaded   <- provider.load.attempt
+              prepared <- loaded match
+                            case Left(_)    => IO.pure(Left(StorageError.UnlockFailed))
+                            case Right(key) => createCompanionInstance(config, key, userPublic)
+            yield prepared
+          case KeySource.Existing(_)         => IO.pure(Left(StorageError.InstancePartiallyPresent))
+      case CompleteFiles       =>
+        config.keySource match
+          case KeySource.KeyFile(passphrase) => unlockCompanion(config, passphrase, userPublic)
+          case KeySource.Existing(provider)  => loadCompanion(config, provider, userPublic)
+          case KeySource.New(_)              => IO.pure(Left(StorageError.InstancePartiallyPresent))
+      case DatabaseAndIdentity =>
+        config.keySource match
+          case KeySource.Existing(provider) => loadCompanion(config, provider, userPublic)
+          case KeySource.KeyFile(_)         => IO.pure(Left(StorageError.InstancePartiallyPresent))
+          case KeySource.New(_)             => IO.pure(Left(StorageError.InstancePartiallyPresent))
+      case PartialArtifacts    => IO.pure(Left(StorageError.InstancePartiallyPresent))
+    }
+
+  private def createCompanionInstance(
+    config: StoreConfig,
+    master: MasterKey,
+    userPublic: Ed25519Public
+  ): IO[Either[StorageError, Prepared]] =
+    val keys = StoreKeys.from(master)
+    for
+      identity <- IdentityFile.generateCompanion(userPublic)
+      created  <- IdentityFile.create(config.paths.identityFile, identity, keys.identityKey)
+    yield created.map(_ => Prepared(config.paths, keys, identity, isNew = true, config.clock))
+
+  private def unlockCompanion(
+    config: StoreConfig,
+    passphrase: Array[Char],
+    userPublic: Ed25519Public
+  ): IO[Either[StorageError, Prepared]] =
+    KeyFile.unlock(config.paths.keyFile, passphrase).flatMap {
+      case Left(error)   => IO.pure(Left(error))
+      case Right(master) => loadCompanionIdentity(config, master, userPublic)
+    }
+
+  private def loadCompanion(
+    config: StoreConfig,
+    provider: MasterKeyProvider,
+    userPublic: Ed25519Public
+  ): IO[Either[StorageError, Prepared]] =
+    provider.load.attempt.flatMap {
+      case Left(_)       => IO.pure(Left(StorageError.UnlockFailed))
+      case Right(master) => loadCompanionIdentity(config, master, userPublic)
+    }
+
+  private def loadCompanionIdentity(
+    config: StoreConfig,
+    master: MasterKey,
+    userPublic: Ed25519Public
+  ): IO[Either[StorageError, Prepared]] =
+    val keys = StoreKeys.from(master)
+    IdentityFile.load(config.paths.identityFile, keys.identityKey).map(_.flatMap { identity =>
+      if identity.role == IdentityRole.Companion && identity.userPublic == userPublic && !identity.hasUserPrivate then
+        Right(Prepared(config.paths, keys, identity, isNew = false, config.clock))
+      else Left(StorageError.InvalidEnvelope)
+    })
 
   private def createInstance(config: StoreConfig, master: MasterKey): IO[Either[StorageError, Prepared]] =
     val keys = StoreKeys.from(master)

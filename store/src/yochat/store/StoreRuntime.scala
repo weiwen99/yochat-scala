@@ -103,3 +103,9 @@ private[store] object Sql:
 
   def invitationVersionKey(id: ByteVector): String =
     s"invitation-version/${id.toHex}"
+
+  def deviceVersionKey(devicePub: ByteVector): String =
+    s"device-version/${devicePub.toHex}"
+
+  def deviceSyncVersionKey(peerDevicePub: ByteVector): String =
+    s"device-sync-version/${peerDevicePub.toHex}"

@@ -89,7 +89,7 @@ class StoreAccessSpec extends FunSuite:
       val connection = DriverManager.getConnection(s"jdbc:sqlite:${StorePaths.under(directory).database.toAbsolutePath}")
       try
         val statement = connection.createStatement()
-        try statement.executeUpdate("UPDATE meta SET value = 3 WHERE key = 'schema_version'")
+        try statement.executeUpdate("UPDATE meta SET value = 4 WHERE key = 'schema_version'")
         finally statement.close()
       finally connection.close()
       assertEquals(
