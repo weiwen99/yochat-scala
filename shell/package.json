@@ -10,7 +10,8 @@
     "perf:start": "node perf-start.js",
     "ui:smoke": "node ui-smoke.js",
     "ui:electron": "node electron-smoke.js",
-    "check": "node --check main.js && node --check preload.js && node --check keychain-smoke.js && node --check perf-start.js && node --check ui-smoke.js && node --check electron-smoke.js",
+    "cross:host": "node cross-host-smoke.js",
+    "check": "node --check main.js && node --check preload.js && node --check keychain-smoke.js && node --check perf-start.js && node --check ui-smoke.js && node --check electron-smoke.js && node --check cross-host-smoke.js",
     "check:keychain": "electron keychain-smoke.js"
   },
   "devDependencies": {

@@ -9,6 +9,7 @@
 
 - `shell/ui-smoke.js`: two real browser contexts, two server JVMs, one relay; directed invitation, safety gate before send, and 100 messages in each direction through the rendered UI.
 - `shell/electron-smoke.js`: two real Electron windows, 100 messages each way, both windows closed/reopened on the same user-data directories, and post-restart messages delivered.
+- `shell/cross-host-smoke.js`: m1 and w7 each run one server/database; browser A runs on m1, browser B on w7 through a Chromium CDP SSH tunnel; 100 messages each way, relay outage/reconnect, and B/A server restarts.
 - `shell/package.json`: Playwright dev dependency, `ui:smoke`, and `ui:electron`.
 - `check.sh`: builds both assemblies, runs the web UI smoke, then the Electron-window smoke.
 
