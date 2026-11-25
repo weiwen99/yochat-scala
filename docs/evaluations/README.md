@@ -6,12 +6,15 @@ The 2026-11-22 follow-up reads the 2026-11-15..22 WeChat discussion and compares
 
 The 2026-11-23 record collects the 10k history-sync discussion and keeps the store, protocol-replay and end-to-end figures apart.
 
+The 2026-11-25 record logs the four requirements a second party raised for history-sync speed and event-driven receive, with each one checked against the current code and receipts. It is a requirement record, not an acceptance gate.
+
 | Document | Source | Original | Summary |
 | --- | --- | --- | --- |
 | YoChat postmortem (published) | <https://draft.weiwen.org/p/im-yochat-6qfpamtf2f7yz47s> | [draft.md](2026-11-20-yochat-postmortem/draft.md) | [summary.md](2026-11-20-yochat-postmortem/summary.md) |
 | CFA session (working record and 0x1/CFA comparison) | <https://w7.tailb5692.ts.net/chat/s/61a839fd-92fb-4ca1-a6b9-b9abefb781ca> | [session.json](2026-11-20-cfa-session/session.json), [transcript.md](2026-11-20-cfa-session/transcript.md) | [summary.md](2026-11-20-cfa-session/summary.md) |
 | WeChat feedback and current-design comparison (2026-11-15..22) | 0x1 PostgreSQL `wechat_message` mirror, read-only | — | [2026-11-22-wechat-yochat-feedback.md](2026-11-22-wechat-yochat-feedback.md) |
 | 10k history-sync and storage discussion (2026-11-23) | 0x1 PostgreSQL `wechat_message` mirror, read-only | — | [2026-11-23-tenk-sync-discussion.md](2026-11-23-tenk-sync-discussion.md) |
+| History-sync speed and event-driven receive requirements (2026-11-25) | 0x1 PostgreSQL `wechat_message` mirror, read-only | — | [2026-11-25-d-sync-throughput-requirements.md](2026-11-25-d-sync-throughput-requirements.md) |
 
 ## Related reading
 
@@ -23,6 +26,7 @@ The 2026-11-23 record collects the 10k history-sync discussion and keeps the sto
 - Cite the session as `docs/evaluations/2026-11-20-cfa-session/transcript.md`; the full tool inputs/outputs and thinking are in `session.json`.
 - Cite the 2026-11-22 follow-up as `docs/evaluations/2026-11-22-wechat-yochat-feedback.md`; its WeChat quotes are participant self-report, while its code claims name the current branch and files.
 - Cite the 2026-11-23 record as `docs/evaluations/2026-11-23-tenk-sync-discussion.md`; its WeChat quotes are participant self-report, its benchmark receipts name the command and date, and its per-message storage size is a field-length derivation, not a measured file size.
+- Cite the 2026-11-25 record as `docs/evaluations/2026-11-25-d-sync-throughput-requirements.md`; its requirements are the requester's own words, and every status line names the commit, branch or benchmark it came from. The 335 msg/s figure comes from the unmerged `feat/s-throughput` branch.
 - The two 2026-11-20 documents are **external observations**, not an independent code audit. The postmortem never read the code or specs; implementation claims are the author's self-report. Keep that caveat when citing.
 - Links inside `draft.md`, `transcript.md`, and `session.json` are quoted source text, not repository links. The only local asset is the postmortem diagram `2026-11-20-yochat-postmortem/yochat-loop.png`; paths mentioned by the session's tool results may not exist in this repo.
 
