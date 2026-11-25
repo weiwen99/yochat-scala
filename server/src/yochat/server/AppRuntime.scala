@@ -278,7 +278,21 @@ object AppRuntime:
     clock: Clock = Clock.systemUTC(),
     onState: AppState => IO[Unit] = _ => IO.unit
   ): Resource[IO, AppRuntime] =
-    Resource.make(create(store, relay, idleTimeoutMs, queueCapacity, clock, onState))(_.close)
+    Resource.make(create(store, relay, idleTimeoutMs, queueCapacity, clock, onState, None))(_.close)
+
+  /** Test-only seam: start from an explicit state while keeping the real writer, store and transport. Production always starts from
+    * `AppStateRestore`.
+    */
+  private[server] def startWithState(
+    store: Store,
+    relay: RelayClient,
+    state: AppState,
+    idleTimeoutMs: Long = 24L * 60L * 60L * 1_000L,
+    queueCapacity: Int = 4_096,
+    clock: Clock = Clock.systemUTC(),
+    onState: AppState => IO[Unit] = _ => IO.unit
+  ): Resource[IO, AppRuntime] =
+    Resource.make(create(store, relay, idleTimeoutMs, queueCapacity, clock, onState, Some(state)))(_.close)
 
   private def create(
     store: Store,
@@ -286,17 +300,23 @@ object AppRuntime:
     idleTimeoutMs: Long,
     queueCapacity: Int,
     clock: Clock,
-    onState: AppState => IO[Unit]
+    onState: AppState => IO[Unit],
+    initial: Option[AppState]
   ): IO[AppRuntime] =
     for
-      restored        <- AppStateRestore.load(store)
-      state           <- restored match
-                           case Left(error)  => IO.raiseError(new RuntimeError(s"restore-failed:${error.code}"))
-                           case Right(value) => IO.pure(value)
-      _               <- store.adoptLockGeneration(state.lock.value).flatMap {
-                           case Right(_)    => IO.unit
-                           case Left(error) => IO.raiseError(new RuntimeError(s"adopt-lock-failed:${error.code}"))
-                         }
+      state           <- initial match
+                           case Some(value) => IO.pure(value)
+                           case None        =>
+                             for
+                               restored <- AppStateRestore.load(store)
+                               value    <- restored match
+                                             case Left(error)   => IO.raiseError(new RuntimeError(s"restore-failed:${error.code}"))
+                                             case Right(result) => IO.pure(result)
+                               _        <- store.adoptLockGeneration(value.lock.value).flatMap {
+                                             case Right(_)    => IO.unit
+                                             case Left(error) => IO.raiseError(new RuntimeError(s"adopt-lock-failed:${error.code}"))
+                                           }
+                             yield value
       identity        <- state.identity match
                            case Some(value) => IO.pure(value)
                            case None        => IO.raiseError(new RuntimeError("identity-missing"))

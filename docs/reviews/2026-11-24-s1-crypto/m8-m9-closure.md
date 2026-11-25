@@ -44,5 +44,8 @@ This note records the two findings that previously blocked external handoff.
   the store-only throughput receipt does not replace it.
 - Store retirement guard now counts both `Pending` and `Sent`; `CutoverSpec` verifies a `Sent` row
   returns `PendingMessages` and only becomes retireable after `Delivered`.
-- Runtime multi-row `Migrated`/`Skipped` plus mid-batch store-failure coverage remains open.
+- Runtime multi-row `Migrated`/`Skipped` and mid-batch store-failure coverage are closed by
+  `AppRuntimeSpec`: a mixed batch migrates two rows, skips a terminal row, removes it from the
+  outbox, and retires the predecessor; a missing middle row sets fatal `StoreFailed:NotFound` and
+  leaves the later row untouched in the old session.
 - No independent external KAT/signature is claimed; the owner-signoff packet records risk acceptance.

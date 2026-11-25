@@ -96,12 +96,14 @@ object ExecutorTestSupport:
   def contactData(): ContactData =
     ContactData("test", "@peer", Some("@peer"), None, None, safetyVerified = true, yochat.store.ContactConfirmation.Confirmed)
 
-  def wire(fixture: Fixture, seq: Long): ByteVector =
+  def wire(fixture: Fixture, seq: Long): ByteVector = wire(fixture, seq, fixture.peerDevice)
+
+  def wire(fixture: Fixture, seq: Long, devicePub: Ed25519Public): ByteVector =
     val header     = MessageHeader(
       version = MessageHeader.Version,
       kind = MessageKind.Data,
       sessionId = fixture.sessionId,
-      devicePub = fixture.peerDevice,
+      devicePub = devicePub,
       dhPub = fixture.state.dhSelf.publicKey,
       pn = 0L,
       n = 0L,

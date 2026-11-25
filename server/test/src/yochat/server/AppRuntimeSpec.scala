@@ -217,6 +217,205 @@ class AppRuntimeSpec extends FunSuite:
     finally deleteTree(directory)
   }
 
+
+  test("runtime batch migrates, skips, and retires in one writer pass") {
+    val directory = Files.createTempDirectory("yochat-runtime-mixed-")
+    try
+      val fixture = ExecutorTestSupport.fixture()
+      val oldId   = fixture.sessionId
+      val newId   = SessionId.from(ByteVector.fill(32)(0x57.toByte)).fold(error => fail(error.toString), identity)
+      val rekey   = RekeyState(
+        RekeyRole.Initiator,
+        RekeyId.from(ByteVector.fill(RekeyId.Length)(9.toByte)).fold(error => fail(error.toString), identity),
+        1L,
+        RekeyPhase.Accepted,
+        None,
+        Some(newId),
+        None,
+        1_000L,
+        ackReceived = true
+      )
+      val oldState = fixture.state.copy(phase = SessionPhase.ReadOnly, rekey = Some(rekey))
+      val newState = fixture.state.copy(sessionId = newId, phase = SessionPhase.Active, rekey = None)
+      val body1    = ExecutorTestSupport.body("one")
+      val body2    = ExecutorTestSupport.body("two")
+      val body3    = ExecutorTestSupport.body("three")
+      def wire(seq: Long) =
+        yochat.core.WireFrame
+          .parse(ExecutorTestSupport.wire(fixture, seq, fixture.identity.device.publicKey))
+          .fold(error => fail(error.toString), identity)
+      val outgoing = Vector(1L -> body1, 2L -> body2, 3L -> body3).map { case (seq, body) =>
+        seq -> OutgoingMessage(
+          id = seq,
+          conversationId = fixture.conversationId,
+          sessionId = oldId,
+          authorPub = fixture.identity.user.publicKey,
+          devicePub = fixture.identity.device.publicKey,
+          peerDevicePub = fixture.peerDevice,
+          seq = seq,
+          body = body,
+          wire = wire(seq),
+          generation = 0L,
+          state = OutgoingState.Queued,
+          attempts = 0
+        )
+      }.toMap
+      val contact = AppContact(
+        fixture.peerUser,
+        fixture.peerDevice,
+        "test",
+        "@peer",
+        Some("@peer"),
+        safetyVerified = true,
+        yochat.core.app.ContactConfirmation.Confirmed
+      )
+      val app = AppState.empty.copy(
+        identity = Some(fixture.identity),
+        lock = LockState.Unlocked(0L),
+        idleDeadline = Some(1_000_000L),
+        contacts = Map(fixture.peerUser -> contact),
+        sessions = Map(
+          oldId -> AppSession(oldState, fixture.conversationId, 4L),
+          newId -> AppSession(newState, fixture.conversationId, 4L)
+        ),
+        conversations = Map(
+          fixture.conversationId -> Conversation(fixture.conversationId, fixture.peerUser, fixture.peerDevice, Map.empty, Set.empty, Map.empty)
+        ),
+        outgoing = outgoing,
+        connection = ConnectionState.Online
+      )
+      val program = for
+        server <- RelayServer.start(0)
+        store  <- openStore(directory, masterA)
+        _      <- Resource.eval(store.insertContact(fixture.peerUser, ExecutorTestSupport.contactData(), 0L).flatMap(requireStore))
+        _      <- Resource.eval(store.createConversation(fixture.conversationId, fixture.peerUser, 0L).flatMap(requireStore))
+        _      <- Resource.eval(store.insertSession(oldState, 0L).flatMap(requireStore))
+        _      <- Resource.eval(store.insertSession(newState, 0L).flatMap(requireStore))
+        first  <- Resource.eval(
+                    store
+                      .appendOutbound(oldState, 1L, 0L, fixture.conversationId, fixture.identity.user.publicKey,
+                        fixture.identity.device.publicKey, 1L, body1, wire(1).bytes, yochat.store.MessageState.Pending)
+                      .flatMap(requireStore)
+                  )
+        second <- Resource.eval(
+                    store
+                      .appendOutbound(oldState, first.session.version, 0L, fixture.conversationId, fixture.identity.user.publicKey,
+                        fixture.identity.device.publicKey, 2L, body2, wire(2).bytes, yochat.store.MessageState.Delivered)
+                      .flatMap(requireStore)
+                  )
+        _      <- Resource.eval(
+                    store
+                      .appendOutbound(oldState, second.session.version, 0L, fixture.conversationId, fixture.identity.user.publicKey,
+                        fixture.identity.device.publicKey, 3L, body3, wire(3).bytes, yochat.store.MessageState.Pending)
+                      .flatMap(requireStore)
+                  )
+        relay   <- RelayClient.connect("127.0.0.1", server.port, store.identity.devicePublic)
+        runtime <- AppRuntime.startWithState(store, relay, app)
+      yield (server, store, runtime)
+      program.use { case (_, store, runtime) =>
+        for
+          done  <- runtime.awaitState(state => !state.sessions.contains(oldId) && !state.outgoing.contains(2L), 5.seconds)
+          state <- runtime.state
+          fatal <- runtime.fatalError
+          _     <- if done then IO.unit else IO.raiseError(new AssertionError(s"batch did not drain: sessions=${state.sessions.keys.map(_.bytes.toHex).toVector} outgoing=${state.outgoing.values.toVector} fatal=$fatal"))
+          _     <- if state.outgoing.get(1L).exists(_.sessionId == newId) && state.outgoing.get(3L).exists(_.sessionId == newId) then IO.unit
+                    else IO.raiseError(new AssertionError(s"migrated rows not on successor: ${state.outgoing.values.toVector}"))
+          one   <- store.loadMessage(fixture.conversationId, newId, fixture.identity.user.publicKey, fixture.identity.device.publicKey, 1L)
+          three <- store.loadMessage(fixture.conversationId, newId, fixture.identity.user.publicKey, fixture.identity.device.publicKey, 3L)
+          two   <- store.loadMessage(fixture.conversationId, oldId, fixture.identity.user.publicKey, fixture.identity.device.publicKey, 2L)
+          _     <- one match
+                     case Right(_) => IO.unit
+                     case Left(error) => IO.raiseError(new AssertionError(s"migrated row 1 missing: ${error.code}"))
+          _     <- three match
+                     case Right(_) => IO.unit
+                     case Left(error) => IO.raiseError(new AssertionError(s"migrated row 3 missing: ${error.code}"))
+          _     <- two match
+                     case Right(record) if record.state == yochat.store.MessageState.Delivered => IO.unit
+                     case other => IO.raiseError(new AssertionError(s"skipped row changed: $other"))
+        yield ()
+      }.unsafeRunSync()
+    finally deleteTree(directory)
+  }
+
+  test("runtime batch stops on a store failure and does not attempt later rows") {
+    val directory = Files.createTempDirectory("yochat-runtime-fail-")
+    try
+      val fixture = ExecutorTestSupport.fixture()
+      val oldId   = fixture.sessionId
+      val newId   = SessionId.from(ByteVector.fill(32)(0x58.toByte)).fold(error => fail(error.toString), identity)
+      val rekey   = RekeyState(
+        RekeyRole.Initiator,
+        RekeyId.from(ByteVector.fill(RekeyId.Length)(10.toByte)).fold(error => fail(error.toString), identity),
+        1L,
+        RekeyPhase.Accepted,
+        None,
+        Some(newId),
+        None,
+        1_000L,
+        ackReceived = true
+      )
+      val oldState = fixture.state.copy(phase = SessionPhase.ReadOnly, rekey = Some(rekey))
+      val newState = fixture.state.copy(sessionId = newId, phase = SessionPhase.Active, rekey = None)
+      def msg(id: Long, body: ByteVector): OutgoingMessage =
+        val frame = yochat.core.WireFrame
+          .parse(ExecutorTestSupport.wire(fixture, id, fixture.identity.device.publicKey))
+          .fold(error => fail(error.toString), identity)
+        OutgoingMessage(id, fixture.conversationId, oldId, fixture.identity.user.publicKey, fixture.identity.device.publicKey,
+          fixture.peerDevice, id, body, frame, 0L, OutgoingState.Queued, 0)
+      val outgoing = Map(1L -> msg(1L, ExecutorTestSupport.body("ok")), 2L -> msg(2L, ExecutorTestSupport.body("missing")), 3L -> msg(3L, ExecutorTestSupport.body("later")))
+      val contact = AppContact(fixture.peerUser, fixture.peerDevice, "test", "@peer", Some("@peer"), safetyVerified = true, yochat.core.app.ContactConfirmation.Confirmed)
+      val app = AppState.empty.copy(
+        identity = Some(fixture.identity),
+        lock = LockState.Unlocked(0L),
+        contacts = Map(fixture.peerUser -> contact),
+        sessions = Map(
+          oldId -> AppSession(oldState, fixture.conversationId, 4L),
+          newId -> AppSession(newState, fixture.conversationId, 4L)
+        ),
+        conversations = Map(fixture.conversationId -> Conversation(fixture.conversationId, fixture.peerUser, fixture.peerDevice, Map.empty, Set.empty, Map.empty)),
+        outgoing = outgoing,
+        connection = ConnectionState.Online
+      )
+      val program = for
+        server <- RelayServer.start(0)
+        store  <- openStore(directory, masterA)
+        _      <- Resource.eval(store.insertContact(fixture.peerUser, ExecutorTestSupport.contactData(), 0L).flatMap(requireStore))
+        _      <- Resource.eval(store.createConversation(fixture.conversationId, fixture.peerUser, 0L).flatMap(requireStore))
+        _      <- Resource.eval(store.insertSession(oldState, 0L).flatMap(requireStore))
+        _      <- Resource.eval(store.insertSession(newState, 0L).flatMap(requireStore))
+        first  <- Resource.eval(
+                    store
+                      .appendOutbound(oldState, 1L, 0L, fixture.conversationId, fixture.identity.user.publicKey,
+                        fixture.identity.device.publicKey, 1L, ExecutorTestSupport.body("ok"),
+                        yochat.core.WireFrame.parse(ExecutorTestSupport.wire(fixture, 1L, fixture.identity.device.publicKey)).fold(error => fail(error.toString), identity).bytes,
+                        yochat.store.MessageState.Pending)
+                      .flatMap(requireStore)
+                  )
+        _      <- Resource.eval(
+                    store
+                      .appendOutbound(oldState, first.session.version, 0L, fixture.conversationId, fixture.identity.user.publicKey,
+                        fixture.identity.device.publicKey, 3L, ExecutorTestSupport.body("later"),
+                        yochat.core.WireFrame.parse(ExecutorTestSupport.wire(fixture, 3L, fixture.identity.device.publicKey)).fold(error => fail(error.toString), identity).bytes,
+                        yochat.store.MessageState.Pending)
+                      .flatMap(requireStore)
+                  )
+        relay   <- RelayClient.connect("127.0.0.1", server.port, store.identity.devicePublic)
+        runtime <- AppRuntime.startWithState(store, relay, app)
+      yield (server, store, runtime)
+      program.use { case (_, store, runtime) =>
+        for
+          fatal  <- awaitFatal(runtime, 5.seconds)
+          _      <- if fatal.exists(_.code == "StoreFailed:NotFound") then IO.unit
+                    else IO.raiseError(new AssertionError(s"unexpected fatal: $fatal"))
+          later  <- store.loadMessage(fixture.conversationId, oldId, fixture.identity.user.publicKey, fixture.identity.device.publicKey, 3L)
+          _      <- later match
+                      case Right(record) if record.state == yochat.store.MessageState.Pending => IO.unit
+                      case other => IO.raiseError(new AssertionError(s"later row was touched: $other"))
+        yield ()
+      }.unsafeRunSync()
+    finally deleteTree(directory)
+  }
+
   private def requireStore[A](value: Either[yochat.store.StorageError, A]): IO[A] =
     value match
       case Right(result) => IO.pure(result)
@@ -237,6 +436,15 @@ class AppRuntimeSpec extends FunSuite:
                    )
         yield ()
     }
+
+  private def awaitFatal(runtime: AppRuntime, timeout: FiniteDuration): IO[Option[AppExecutionError]] =
+    def loop(remaining: Long): IO[Option[AppExecutionError]] =
+      runtime.fatalError.flatMap {
+        case value @ Some(_) => IO.pure(value)
+        case None if remaining <= 0L => IO.pure(None)
+        case None => IO.sleep(10.millis) *> loop(remaining - 10L)
+      }
+    loop(timeout.toMillis)
 
   private def requireState(runtime: AppRuntime, accepted: Boolean, label: String): IO[Unit] =
     if accepted then IO.unit

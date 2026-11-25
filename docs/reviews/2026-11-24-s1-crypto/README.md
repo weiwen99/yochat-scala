@@ -8,8 +8,8 @@ is historical input. R11–R14 closed the remaining deadline, timer-installation
 legacy-upgrade, Ack/retirement, ancestor, and offline-recovery items
 (`internal-review-rounds-11-14.md`). M8 (byte-unbounded queues) and M9 (key-source/ADR
 mismatch) are closed in `m8-m9-closure.md`. The store retirement guard now blocks both `Pending` and
-`Sent` rows (`CutoverSpec`); the remaining test gap is runtime multi-row `Migrated`/`Skipped`
-plus mid-batch store-failure coverage.
+`Sent` rows (`CutoverSpec`); runtime multi-row `Migrated`/`Skipped` and mid-batch store-failure
+coverage are in `AppRuntimeSpec` (mixed batch drains; failure stops before later rows).
 
 Baseline: source `0fcdbe1` on top of `6884926`; packet `6acace9` plus owner-signoff, M8/M9 and residual-test corrections. `manifest.sha256` covers the source snapshot
 and this packet's docs; it is regenerated at each packet revision and verified before handoff. The

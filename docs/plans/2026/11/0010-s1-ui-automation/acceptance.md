@@ -26,8 +26,8 @@ risk acceptance; this is not an independent external audit.
 
 - Electron-window UI interaction and full UI restart/reconnect are not automated; the UI smoke drives
   the same web surface in Chrome. Desktop cold-start/idle and shell lifecycle are measured separately.
-- Runtime multi-row `Migrated`/`Skipped` plus mid-batch store-failure coverage remains a planned
-  residual test; the store retirement guard now blocks `Pending` and `Sent` (`CutoverSpec`).
+- Store retirement guard now blocks `Pending` and `Sent` (`CutoverSpec`); runtime multi-row
+  `Migrated`/`Skipped` and mid-batch failure are covered by `AppRuntimeSpec`.
 - Independent external cryptography review remains optional assurance; no external signature is
   claimed.
 

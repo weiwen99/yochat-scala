@@ -56,9 +56,9 @@ Baseline commit: `0fcdbe1`  Manifest verified: yes / no
 Reviewer signature: ____________________  Date: ____________
 
 Repository owner decision: **Accepted with known limits** — repository owner confirmed signing in
-the handoff session on 2026-11-25. Accepted limits: missing runtime multi-row `Migrated`/`Skipped`
-and mid-batch store-failure coverage, and absence of an independent external KAT/signature.
-M8/M9 are closed in `m8-m9-closure.md`; the `Sent` retirement guard is closed by `CutoverSpec`.
+the handoff session on 2026-11-25. Accepted limits: absence of an independent external
+KAT/signature. M8/M9 are closed in `m8-m9-closure.md`; the `Sent` retirement guard and runtime
+multi-row batch tests are closed by `CutoverSpec` / `AppRuntimeSpec`.
 Date: 2026-11-25
 
 > This owner decision **closes the cryptographic acceptance gate** under the repository's
