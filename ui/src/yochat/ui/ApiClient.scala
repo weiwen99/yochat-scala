@@ -187,7 +187,7 @@ final class ApiClient:
     val contact = conv.flatMap(value => current.contactFor(value))
     if selectedConversation.now() != conv then selectedConversation.set(conv)
     if selectedContact.now() != contact then selectedContact.set(contact)
-    val allowed = conv.isDefined && contact.exists(_.safetyVerified)
+    val allowed = !current.readOnly && conv.isDefined && contact.exists(_.safetyVerified)
     if canSend.now() != allowed then canSend.set(allowed)
 
   private def loadMessages(conversationId: String): Unit =

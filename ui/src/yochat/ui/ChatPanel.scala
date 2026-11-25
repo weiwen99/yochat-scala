@@ -60,6 +60,7 @@ object ChatPanel:
           )
         ),
         child <-- state.map(value => routeBar(value.relay.online)),
+        child.maybe <-- state.map(value => if value.readOnly then Some(readOnlyBar()) else None),
         child <-- api.messages.signal.map(messages => messageArea(messages, api.selectedContact.now())),
         child.maybe <-- state.map { value =>
           value.conversations.find(_.id == conversationId).filter(_.waiting).map(_ => waitingLine())
@@ -78,6 +79,13 @@ object ChatPanel:
       div(cls  := "route-line"),
       div(cls  := "route-stop", span(cls := "route-node target"), span(cls := "route-label", "对方")),
       span(cls := "route-note", if online then "密文转发正常" else "消息留在本机，恢复后继续")
+    )
+
+  private def readOnlyBar(): HtmlElement =
+    div(
+      cls := "read-only-bar",
+      span(cls := "read-only-mark", "只读"),
+      span("这台设备只接收主设备同步的消息，不能发送或加好友。")
     )
 
   private def messageArea(messages: Vector[ChatMessage], contact: Option[Contact]): HtmlElement =
@@ -151,8 +159,9 @@ object ChatPanel:
         textArea(
           cls         := "composer-input",
           aria.label  := "消息正文",
-          placeholder := "写点什么…",
+          placeholder := "只读设备不能发送消息",
           value <-- draft,
+          disabled <-- state.map(_.readOnly),
           onInput.mapToValue --> { value =>
             draft.set(value)
             draftRevision.update(_ + 1L)

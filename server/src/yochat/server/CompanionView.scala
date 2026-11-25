@@ -56,6 +56,7 @@ object CompanionView:
 
     ujson.Obj(
       "unlocked"      -> true,
+      "readOnly"      -> true,
       "instanceExists" -> true,
       "identity"      -> ujson.Obj(
         "userId"   -> store.identity.userPublic.bytes.toHex,

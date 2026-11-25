@@ -54,6 +54,7 @@ final case class Lock(locked: Boolean, generation: Long)
 
 final case class AppState(
   unlocked: Boolean,
+  readOnly: Boolean,
   instanceExists: Boolean,
   identity: Option[Identity],
   relay: Relay,
@@ -78,6 +79,7 @@ object AppState:
 
   val empty: AppState = AppState(
     unlocked = false,
+    readOnly = false,
     instanceExists = false,
     identity = None,
     relay = Relay(online = false, host = "127.0.0.1", port = 7654),
@@ -105,6 +107,7 @@ object Json:
   def parseState(value: Value): AppState =
     AppState(
       unlocked = bool(value, "unlocked").getOrElse(false),
+      readOnly = bool(value, "readOnly").getOrElse(false),
       instanceExists = bool(value, "instanceExists").getOrElse(false),
       identity = field(value, "identity").flatMap(parseIdentity),
       relay = field(value, "relay").map(parseRelay).getOrElse(Relay(false, "127.0.0.1", 7654)),

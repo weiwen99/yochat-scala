@@ -598,6 +598,27 @@ textarea {
   letter-spacing: 0.03em;
 }
 
+.read-only-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 0 26px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 7%, var(--sheet));
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.read-only-mark {
+  padding: 2px 6px;
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
 .route-stop {
   display: flex;
   align-items: center;

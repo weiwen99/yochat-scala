@@ -41,6 +41,7 @@ object ApiJson:
       conversationValues <- sequence(conversations.map(conversation => conversationJson(store, state, conversation)))
     yield ujson.Obj(
       "unlocked"      -> state.lock.isUnlocked,
+      "readOnly"      -> false,
       "identity"      -> identity.map(value => value).getOrElse(ujson.Null),
       "relay"         -> relayJson(config, online),
       "fatal"         -> fatal.map(error => ujson.Str(error.code)).getOrElse(ujson.Null),
