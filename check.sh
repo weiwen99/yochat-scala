@@ -28,6 +28,7 @@ node --check shell/preload.js
 node --check shell/keychain-smoke.js
 node --check shell/perf-start.js
 node --check shell/ui-smoke.js
+node --check shell/electron-smoke.js
 ./mill server.e2e
 ./mill server.assembly
 ./mill transport.assembly
@@ -37,6 +38,7 @@ if [ ! -x shell/node_modules/.bin/electron ]; then
 fi
 node shell/perf-start.js
 node shell/ui-smoke.js
+node shell/electron-smoke.js
 ./models/check.sh
 ./mill spike.checkFormat
 ./mill spike.fix --check

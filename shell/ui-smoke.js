@@ -152,8 +152,16 @@ async function acceptInvitation(page, text, expected, own) {
 async function closeModal(page) {
   stage = "close-modal";
   if (await page.locator(".modal").count() === 0) return;
-  await page.mouse.click(10, 10);
-  await page.locator(".modal").waitFor({ state: "detached", timeout: 5_000 }).catch(() => {});
+  const close = page.locator('.modal button[aria-label="关闭"]').first();
+  if (await close.count() > 0) await close.click({ force: true }).catch(() => {});
+  if (await page.locator(".modal").count() > 0) {
+    await page.keyboard.press("Escape");
+    await page.locator(".modal").waitFor({ state: "detached", timeout: 5_000 }).catch(() => {});
+  }
+  if (await page.locator(".modal").count() > 0) {
+    await page.mouse.click(10, 10);
+    await page.locator(".modal").waitFor({ state: "detached", timeout: 5_000 }).catch(() => {});
+  }
 }
 
 async function openChat(page) {
@@ -334,7 +342,36 @@ async function main() {
   console.log(`UI_SMOKE_RECEIPT path=${receiptPath}`);
 }
 
-main().catch((error) => {
-  console.error(`UI_SMOKE FAIL stage=${stage} error=${error.name || "Error"}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`UI_SMOKE FAIL stage=${stage} error=${error.name || "Error"}`);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  passphrase,
+  serverJar,
+  relayJar,
+  root,
+  freePort,
+  startProcess,
+  waitLog,
+  waitHttp,
+  stopChild,
+  gitHead,
+  sleep,
+  unlock,
+  waitRelayOnline,
+  issueInvitation,
+  acceptInvitation,
+  closeModal,
+  openChat,
+  checkSafetyCodes,
+  assertSafetyClosed,
+  verifySafety,
+  sendBodies,
+  waitCount,
+  bubbleTexts,
+  assertSequence
+};

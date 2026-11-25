@@ -8,11 +8,13 @@
 ## Changes
 
 - `shell/ui-smoke.js`: two real browser contexts, two server JVMs, one relay; directed invitation, safety gate before send, and 100 messages in each direction through the rendered UI.
-- `shell/package.json`: Playwright dev dependency and `ui:smoke`.
-- `check.sh`: builds both assemblies and runs the UI smoke.
+- `shell/electron-smoke.js`: two real Electron windows, 100 messages each way, both windows closed/reopened on the same user-data directories, and post-restart messages delivered.
+- `shell/package.json`: Playwright dev dependency, `ui:smoke`, and `ui:electron`.
+- `check.sh`: builds both assemblies, runs the web UI smoke, then the Electron-window smoke.
 
 ## Verification
 
 - `UI_SMOKE PASS delivered=100 received=100 reciprocal=1 duration_ms=15884`
-- Receipt: `tmp/checks/ui-1795448744125.json` (ignored by git).
-- The test uses installed Chrome via Playwright, not a mocked API.
+- `ELECTRON_UI PASS delivered=100 received=100 restarted=B,A duration_ms=26699`
+- Receipts under `tmp/checks/` (ignored by git).
+- The web test uses installed Chrome via Playwright; the Electron test launches the real shell.
