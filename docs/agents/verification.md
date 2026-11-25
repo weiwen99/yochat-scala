@@ -70,9 +70,10 @@ Unit tests may be rewritten. Every bug fix starts with a failing case. Do not ch
 
 ## Performance gates
 
-- 1,000 messages two-process end-to-end <5s on the S1 setup.
+- 1,000 messages two-process end-to-end <5s on the S1 setup. This is 1,000 total messages, not 1,000 msg/s.
 - 10,000-message protocol replay <50s through real `Application.step`, fixed seed, no IO.
 - 10,000-message two-process end-to-end <60s with real SQLite and the transport harness.
+- `PERF#RATE` is an observational two-process rate measurement: 10,000 fresh 128-byte messages, 1,000 warmup, 64 sends in flight, direct SQLite completion counts. It reports `rate_msg_s` but has no rate threshold until a requirement is signed.
 - 100,000 messages are not an S1 gate; a future run needs its own definition.
 - Cold start p50 ≤2s / p95 ≤4s (calibrate after the first spike).
 - Idle memory ≤800MB.

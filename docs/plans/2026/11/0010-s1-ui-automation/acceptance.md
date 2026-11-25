@@ -8,6 +8,7 @@ Base: `fe9e126`; current source at the status update: `ef14e58` (Electron + cros
 | Behavior contracts | `server.e2e`: 17/17 at `ef14e58` | PASS |
 | 1k two-process | E2E#8: `4243ms`, warmup 1000 | PASS (<5s) |
 | 10k two-process | PERF#10K: `32661ms`, warmup 1000 | PASS (<60s) |
+| ACK throughput (observational) | PERF#RATE: `334.7 msg/s`, 10,000 x 128B, 64 in flight, warmup 1000 | MEASURED |
 | Cold start | five samples, p50 `1257ms`, p95 `1313ms` | PASS (≤2s/≤4s) |
 | Idle memory | 300s established idle, `752.8MB` | PASS (≤800MB) |
 | Two-device UI | `shell/ui-smoke.js`: safety gate before sending, 100 delivered/100 received in each direction, exact rendered sequences | PASS |

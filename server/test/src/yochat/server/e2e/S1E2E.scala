@@ -75,7 +75,8 @@ object S1E2E:
       Contract("E2E#14", "undecryptable message triggers automatic rebuild", () => scenario14()),
       Contract("E2E#15", "dropped data frame recovered by Gap and resend", () => scenario15()),
       Contract("E2E#17", "pending message is rebound to the new session", () => scenario17()),
-      Contract("PERF#10K", "10000 messages end-to-end under 60s", () => scenario10k())
+      Contract("PERF#10K", "10000 messages end-to-end under 60s", () => scenario10k()),
+      Contract("PERF#RATE", "pipelined 10000-message ACK throughput", () => scenarioRate())
     )
     args.toList match
       case Nil         =>
@@ -809,6 +810,67 @@ object S1E2E:
       ensure(onA == 10000L, s"A measured delivered=$onA")
       ensure(elapsedMs < 60_000L, s"10000 messages took ${elapsedMs}ms after warmup")
       s"elapsed_ms=$elapsedMs warmup=1000 bCount=$onB aDelivered=$onA"
+    }
+
+  private def scenarioRate(): String =
+    E2EEnvironment.withPair { pair =>
+      val handshake = E2EEnvironment.handshake(pair)
+      verifySafety(pair, handshake)
+      val total      = 10_000
+      val window     = 64
+      val bodyBytes  = 128
+      val backlog    = window * 2
+      val warmup     = 1_000
+      def payload(prefix: String, number: Int): String =
+        val head = f"$prefix-$number%05d"
+        head + "x" * (bodyBytes - head.length)
+      def send(bodies: Vector[String]): Unit =
+        bodies.grouped(window).foreach { batch =>
+          val sends = batch.map(body => pair.a.sendMessageAsync(handshake.aConversation, body))
+          CompletableFuture.allOf(sends*).orTimeout(30, TimeUnit.SECONDS).join()
+        }
+
+      send((1 to warmup).map(number => payload("w", number)).toVector)
+      E2E.await("rate warmup B", Duration.ofSeconds(60), Duration.ofMillis(25)) {
+        if pair.b.countMessages(handshake.bConversation, state = 3) >= warmup then Some(()) else None
+      }
+      E2E.await("rate warmup A", Duration.ofSeconds(60), Duration.ofMillis(25)) {
+        if pair.a.countMessages(handshake.aConversation, state = 5) >= warmup then Some(()) else None
+      }
+      val bBase = pair.b.countMessages(handshake.bConversation, state = 3)
+      val aBase = pair.a.countMessages(handshake.aConversation, state = 5)
+      ensure(bBase == warmup.toLong, s"B warmup base=$bBase")
+      ensure(aBase == warmup.toLong, s"A warmup base=$aBase")
+
+      val bodies  = (1 to total).map(number => payload("t", number)).toVector
+      val started = System.nanoTime()
+      var sent    = 0
+      bodies.grouped(window).foreach { batch =>
+        send(batch)
+        sent += batch.size
+        val target = math.max(0, sent - backlog)
+        E2E.await(s"B rate received $sent", Duration.ofSeconds(120), Duration.ofMillis(25)) {
+          val count = pair.b.countMessages(handshake.bConversation, state = 3)
+          if count >= bBase + target then Some(count) else None
+        }
+      }
+      val sentMs = (System.nanoTime() - started) / 1_000_000L
+      val bFinal = E2E.await("B rate received all", Duration.ofSeconds(120), Duration.ofMillis(25)) {
+        val count = pair.b.countMessages(handshake.bConversation, state = 3)
+        if count >= bBase + total then Some(count) else None
+      }
+      val bMs = (System.nanoTime() - started) / 1_000_000L
+      val aFinal = E2E.await("A rate delivered all", Duration.ofSeconds(120), Duration.ofMillis(25)) {
+        val count = pair.a.countMessages(handshake.aConversation, state = 5)
+        if count >= aBase + total then Some(count) else None
+      }
+      val aMs = (System.nanoTime() - started) / 1_000_000L
+      ensure(bFinal == bBase + total, s"B rate final=$bFinal expected=${bBase + total}")
+      ensure(aFinal == aBase + total, s"A rate final=$aFinal expected=${aBase + total}")
+      val rate       = total.toDouble * 1000.0 / aMs
+      val bRate      = total.toDouble * 1000.0 / bMs
+      val acceptedRate = total.toDouble * 1000.0 / sentMs
+      s"messages=$total window=$window body_bytes=$bodyBytes sent_ms=$sentMs b_ms=$bMs ack_ms=$aMs rate_msg_s=${f"$rate%.1f"} b_rate_msg_s=${f"$bRate%.1f"} accepted_rate_msg_s=${f"$acceptedRate%.1f"} bCount=$bFinal aDelivered=$aFinal"
     }
 
   private def scenario17(): String =

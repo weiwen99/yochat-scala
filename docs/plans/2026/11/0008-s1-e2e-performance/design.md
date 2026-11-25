@@ -32,3 +32,13 @@ The warmup is separate from the measured window and is recorded explicitly; it i
 - Warm up 1,000 messages; measure 10,000 fresh messages.
 - Send in bounded batches and use the real SQLite message rows for completion counts; no product API is added.
 - Gate: measured elapsed `<60000ms`; report warmup, both counts, and elapsed.
+
+## PERF#RATE
+
+- This is an observational throughput measurement, not a new pass/fail threshold.
+- Same real relay, two server JVMs, SQLite, encryption, and ACK path.
+- Warm up 1,000 messages; measure 10,000 fresh 128-byte bodies.
+- Keep at most `window=64` sends in flight and at most `2*window` accepted-but-not-received messages; this prevents the bounded runtime queue from being the measurement.
+- Use direct SQLite `received`/`delivered` counts for completion. Do not poll the public history API; that would add read load and measure the observer.
+- Report `rate_msg_s` from first measured send to the last ACK, plus B-receive rate and enqueue-phase rate.
+- The test only proves completion and exact counts; it does not assert a msg/s target. A future threshold needs an explicit requirement and sign-off.
