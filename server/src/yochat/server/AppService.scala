@@ -307,10 +307,34 @@ final class AppService private (
     withUnlockedEither { running =>
       running.pairing
         .confirm(requestCode, confirmation, clock.millis())
-        .map {
-          case Left(error) => Left(ServiceError.BadRequest(error))
-          case Right(code) => Right(ujson.Obj("authCode" -> code))
+        .flatMap {
+          case Left(error) => IO.pure(Left(ServiceError.BadRequest(error)))
+          case Right(code) => running.scheduler.publishDeviceList.start.as(Right(ujson.Obj("authCode" -> code)))
         }
+    }
+
+  def contactDevicesJson(userRaw: String): IO[Either[ServiceError, Value]] =
+    withUnlockedEither { running =>
+      ByteVector.fromHex(userRaw).flatMap(Ed25519Public.from(_).toOption) match
+        case None       => IO.pure(Left(ServiceError.BadRequest("user")))
+        case Some(user) =>
+          PeerDeviceListService.devicesFor(running.store, user).map {
+            case Left(error)    => Left(ServiceError.BadRequest(error))
+            case Right(entries) =>
+              Right(
+                ujson.Obj(
+                  "devices" -> ujson.Arr(entries.map { entry =>
+                    ujson.Obj(
+                      "devicePub" -> entry.devicePub.bytes.toHex,
+                      "role"      -> (if entry.role == yochat.core.s2.PeerDeviceRole.Primary then "primary" else "companion"),
+                      "name"      -> entry.name,
+                      "joinedAt"  -> entry.joinedAt,
+                      "revokedAt" -> entry.revokedAt.map(value => ujson.Num(value.toDouble)).getOrElse(ujson.Null)
+                    )
+                  }*)
+                )
+              )
+          }
     }
 
   def devicesJson: IO[Either[ServiceError, Value]] =
@@ -356,7 +380,10 @@ final class AppService private (
 
   def revokeDevice(deviceRaw: String): IO[Either[ServiceError, Unit]] =
     withUnlockedEither { running =>
-      running.pairing.revoke(deviceRaw).map(_.left.map(ServiceError.BadRequest.apply))
+      running.pairing.revoke(deviceRaw).flatMap {
+        case Left(error) => IO.pure(Left(ServiceError.BadRequest(error)))
+        case Right(_)    => running.scheduler.publishDeviceList.start.as(Right(()))
+      }
     }
 
   def close: IO[Unit] = lock
@@ -371,7 +398,7 @@ final class AppService private (
         RelayClient.connect(config.relayHost, config.relayPort, store.identity.devicePublic).allocated.flatMap { case (relay, releaseRelay) =>
           (for
             pairing                       <- DevicePairingService.create(store)
-            scheduler                     <- DeviceSyncScheduler.create(store, relay)
+            scheduler                     <- DeviceSyncScheduler.create(store, relay, IO.delay(hub.publish("state")))
             runtime                       <- AppRuntime
                                                .start(
                                                  store,

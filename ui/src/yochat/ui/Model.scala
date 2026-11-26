@@ -8,6 +8,13 @@ final case class Identity(userId: String, deviceId: String):
 
 final case class Relay(online: Boolean, host: String, port: Int)
 
+final case class PeerDevice(
+  devicePub: String,
+  role: String,
+  name: String,
+  revokedAt: Option[Long]
+)
+
 final case class Contact(
   userPub: String,
   devicePub: String,
@@ -21,7 +28,8 @@ final case class Contact(
   confirmation: String,
   conversationId: Option[String],
   lastMessage: String,
-  lastMessageAt: Long
+  lastMessageAt: Long,
+  devices: Vector[PeerDevice] = Vector.empty
 )
 
 final case class Conversation(
@@ -205,7 +213,18 @@ object Json:
       string(value, "confirmation").getOrElse("pending"),
       string(value, "conversationId"),
       string(value, "lastMessage").getOrElse(""),
-      long(value, "lastMessageAt").getOrElse(0L)
+      long(value, "lastMessageAt").getOrElse(0L),
+      value.obj.get("devices").toVector.flatMap(_.arr).flatMap(parsePeerDevice)
+    )
+
+  private def parsePeerDevice(value: Value): Option[PeerDevice] =
+    string(value, "devicePub").map(device =>
+      PeerDevice(
+        device,
+        string(value, "role").getOrElse("companion"),
+        string(value, "name").getOrElse(""),
+        long(value, "revokedAt")
+      )
     )
 
   private def parseConversation(value: Value): Option[Conversation] =

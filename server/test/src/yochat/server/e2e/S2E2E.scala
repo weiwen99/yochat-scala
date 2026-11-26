@@ -52,6 +52,7 @@ object S2E2E:
         runPairing(pair.a, a2, handshake.aUser, inviteFile)
         a2.start()
         awaitCompanionContact(a2, handshake.bUser)
+        awaitPeerDevices(pair.b, handshake.aUser, expected = 2)
         val oldCount = a2.messages(handshake.aConversation).size
         ensure(oldCount == 0, s"A2 received pre-join messages: $oldCount")
 
@@ -82,6 +83,7 @@ object S2E2E:
         val a2Device = a2.state("identity")("deviceId").str
         val revoked   = new Http().post(s"${pair.a.base}/api/devices/$a2Device/revoke", ujson.Obj())
         ensure(revoked.ok, s"A1 revoke failed: ${revoked.status} ${revoked.body}")
+        awaitPeerRevoked(pair.b, handshake.aUser, a2Device)
         pair.a.sendMessage(handshake.aConversation, "after-revoke")
         pair.b.sendMessage(handshake.bConversation, "after-revoke-b")
         Thread.sleep(2_000L)
@@ -173,6 +175,21 @@ object S2E2E:
       .run(List("pair-accept", "--data-dir", a2.dataDir.toString, "--auth", authFile.toString, "--passphrase", passphrase))
       .unsafeRunSync()
     ensure(acceptExit.contains(cats.effect.ExitCode.Success), "A2 pair-accept failed")
+
+  private def awaitPeerDevices(service: ServiceProcess, user: String, expected: Int): Unit =
+    E2E.awaitTrue(s"peer devices=$expected", Duration.ofSeconds(10)) {
+      contactDevices(service, user).size >= expected
+    }
+
+  private def awaitPeerRevoked(service: ServiceProcess, user: String, device: String): Unit =
+    E2E.awaitTrue(s"peer device revoked $device", Duration.ofSeconds(20)) {
+      contactDevices(service, user).exists { value =>
+        value.obj.get("devicePub").exists(_.str == device) && value.obj.get("revokedAt").exists(_ != ujson.Null)
+      }
+    }
+
+  private def contactDevices(service: ServiceProcess, user: String): Vector[Value] =
+    new Http().get(s"${service.base}/api/contacts/$user/devices").json("devices").arr.toVector
 
   private def awaitCompanionContact(a2: CompanionProcess, user: String): Unit =
     E2E.awaitTrue(s"A2 contact $user", Duration.ofSeconds(20)) {

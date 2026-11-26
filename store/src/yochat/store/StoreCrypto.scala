@@ -100,6 +100,9 @@ private[store] object StoreCrypto:
   def deviceSyncAad(peerDevicePub: ByteVector, version: Long): ByteVector =
     aad("yochat-store/device-sync/v1", peerDevicePub, u64(version))
 
+  def peerDeviceListAad(userPub: ByteVector, version: Long): ByteVector =
+    aad("yochat-store/peer-device-list/v1", userPub, u64(version))
+
   def companionMessageAad(
     sourceId: Long,
     conversationId: ByteVector,

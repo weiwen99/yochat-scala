@@ -947,6 +947,7 @@ object AppRuntime:
               if !state.sessions.contains(accept.sessionId) then IO.pure(None)
               else random.nonce.map(nonce => Some(AppEvent.RekeyAcceptReceived(accept.sessionId, accept, nonce, clock.millis())))
         case RelayPayload.DeviceSync(_)       => IO.pure(None)
+        case RelayPayload.DeviceList(_)       => IO.pure(None)
     }
 
   private def replyEvent(

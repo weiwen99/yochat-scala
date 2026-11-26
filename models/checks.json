@@ -119,5 +119,17 @@
     "temporal": [],
     "maxSteps": 10,
     "note": "ACK 终止重试；Gap 在有界尝试内触发重发；transport 接受不等于送达；失败必须可见。"
+  },
+  {
+    "file": "q8_device_lists.qnt",
+    "main": "q8DeviceLists",
+    "backend": "apalache",
+    "sourceSha256": "59e44e78dfb7eabb09cc98abfca62b5b7462b0958c928b224fc67360659eeb28",
+    "invariants": [
+      "safe"
+    ],
+    "temporal": [],
+    "maxSteps": 8,
+    "note": "B1 设备列表快照：吊销永久、旧快照不复活、版本非负；签名/存储/线格式由 Scala 测试承担。"
   }
 ]

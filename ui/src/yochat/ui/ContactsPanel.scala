@@ -72,6 +72,23 @@ object ContactsPanel:
             div(span(cls := "code-label", "安全码"), span(cls := "code-value", if contact.safetyCode.isEmpty then "—" else contact.safetyCode)),
             div(span(cls := "code-label", "对方账号"), span(cls := "code-value plain", contact.peerChannelAccount.getOrElse("未记录")))
           ),
+          if contact.devices.nonEmpty then
+            div(
+              cls      := "contact-codes",
+              div(
+                span(cls := "code-label", "对方设备"),
+                span(
+                  cls    := "code-value plain",
+                  contact.devices
+                    .map(device =>
+                      (if device.name.nonEmpty then device.name else device.devicePub.take(8)) + (if device.revokedAt.isDefined then "（已吊销）"
+                                                                                                  else "")
+                    )
+                    .mkString(" · ")
+                )
+              )
+            )
+          else div(cls := "hidden", ""),
           div(
             cls := "contact-actions",
             conversation

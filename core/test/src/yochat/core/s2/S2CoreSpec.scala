@@ -65,6 +65,21 @@ final class S2CoreSpec extends FunSuite:
     assert(!request.copy(encryptedName = ByteVector.fill(32)(0x62)).verify)
   }
 
+  test("peer device list round-trips and rejects revocation/version tamper") {
+    val entries = Vector(
+      PeerDeviceEntry(primary.publicKey, PeerDeviceRole.Primary, "laptop", 1_000L, None),
+      PeerDeviceEntry(companion.publicKey, PeerDeviceRole.Companion, "phone", 1_100L, Some(2_000L))
+    )
+    val list = PeerDeviceList
+      .create(user.privateKey, user.publicKey, 4L, 2_500L, entries)
+      .fold(error => fail(error.toString), identity)
+    assert(list.verify)
+    val restored = PeerDeviceList.fromBytes(list.bytes).fold(error => fail(error.toString), identity)
+    assertEquals(restored, list)
+    assert(!list.copy(version = 5L).verify)
+    assert(!list.copy(entries = list.entries.map(entry => if entry.devicePub == companion.publicKey then entry.copy(revokedAt = None) else entry)).verify)
+  }
+
   test("sync status and request bind one complete checkpoint") {
     val status = SyncStatus
       .create(companion.privateKey, hash32, 4L, ByteVector.fill(32)(0x71), 12L)

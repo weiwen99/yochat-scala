@@ -7,6 +7,7 @@ import cats.effect.{IO, Resource}
 import cats.effect.std.Semaphore
 import com.zaxxer.hikari.HikariConfig
 import org.sqlite.{SQLiteConfig, SQLiteDataSource}
+import org.typelevel.doobie.free.connection as FC
 import org.typelevel.doobie.hikari.HikariTransactor
 import org.typelevel.doobie.implicits.*
 import org.typelevel.doobie.ConnectionIO
@@ -396,6 +397,27 @@ final class Store private[store] (
   def listAllMessages(conversationId: ByteVector): IO[Either[StorageError, List[MessageRecord]]] =
     MessageRepository.listAll(runtime, conversationId, 100_000)
 
+  def upsertPeerDeviceList(
+    list: yochat.core.s2.PeerDeviceList,
+    receivedAt: Long
+  ): IO[Either[StorageError, yochat.core.s2.PeerDeviceList]] =
+    PeerDeviceListRepository.upsert(runtime, list, receivedAt)
+
+  def loadPeerDeviceList(userPub: Ed25519Public): IO[Either[StorageError, yochat.core.s2.PeerDeviceList]] =
+    PeerDeviceListRepository.load(runtime, userPub)
+
+  def nextPeerDeviceListVersion: IO[Either[StorageError, Long]] =
+    runtime.run {
+      Sql.meta(Store.PeerDeviceListVersionKey).flatMap {
+        case Some(value) if value == Long.MaxValue => Sql.abort(StorageError.InvalidStateVersion)
+        case Some(value)                           =>
+          val next = value + 1L
+          Sql.writeMeta(Store.PeerDeviceListVersionKey, next).flatMap(_ => FC.pure(next))
+        case None                                  =>
+          Sql.writeMeta(Store.PeerDeviceListVersionKey, 1L).flatMap(_ => FC.pure(1L))
+      }
+    }
+
   def maxMessageId: IO[Either[StorageError, Long]] =
     runtime.run(sql"SELECT COALESCE(MAX(id), 0) FROM messages".query[Long].unique)
 
@@ -448,6 +470,7 @@ final class Store private[store] (
     runtime.transact(program)
 
 object Store:
+  private[store] val PeerDeviceListVersionKey: String = "peer-device-list-version"
 
   import ArtifactState.*
 

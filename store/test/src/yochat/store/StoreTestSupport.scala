@@ -13,6 +13,8 @@ import org.typelevel.doobie.ConnectionIO
 import scodec.bits.ByteVector
 
 import yochat.core.{
+  Ed25519KeyPair,
+  Ed25519Private,
   Ed25519Public,
   Key32,
   MessageHeader,
@@ -153,6 +155,16 @@ object StoreTestSupport:
       Using.resource(Files.walk(directory)) { stream =>
         stream.sorted(Comparator.reverseOrder[Path]()).forEach(path => Files.delete(path))
       }
+
+  def edPair(): Ed25519KeyPair =
+    val generated = java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+    val publicKey = Ed25519Public
+      .from(ByteVector.view(generated.getPublic.getEncoded).drop(12))
+      .fold(error => throw new IllegalStateException(s"generated public key: $error"), identity)
+    val privateKey = Ed25519Private
+      .from(ByteVector.view(generated.getPrivate.getEncoded).drop(16))
+      .fold(error => throw new IllegalStateException(s"generated private key: $error"), identity)
+    Ed25519KeyPair(privateKey, publicKey)
 
   def edPublic(): Ed25519Public =
     Ed25519Public.from(ByteVector.view(random(32))).fold(error => throw new AssertionError(error.toString), identity)

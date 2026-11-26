@@ -4,13 +4,14 @@ import org.typelevel.doobie.*
 import org.typelevel.doobie.free.connection as FC
 import org.typelevel.doobie.implicits.*
 
-/** Schema v3: S1 tables plus the S2-A device, sync and read-only companion projection. */
+/** Schema v4: S1/S2-A plus the S2-B contact-visible signed device-list snapshot. */
 private[store] object Schema:
 
-  val Version: Long = 3L
+  val Version: Long = 4L
 
   private val BaseTables = Vector("meta", "sessions", "messages", "contacts", "invitations", "conversations")
   private val V3Tables   = BaseTables ++ Vector("devices", "device_sync", "companion_messages")
+  private val V4Tables   = V3Tables :+ "peer_device_lists"
 
   def initialize: ConnectionIO[Unit] =
     for
@@ -64,6 +65,7 @@ private[store] object Schema:
                  |  last_applied_seq INTEGER NOT NULL
                  |)""".stripMargin.update.run
       _ <- createV3Tables
+      _ <- createV4Tables
       _ <- sql"CREATE INDEX messages_conversation_order ON messages(conversation_id, author_pub, seq)".update.run
       _ <- sql"CREATE INDEX sessions_peer_user ON sessions(peer_user_pub)".update.run
       _ <- sql"CREATE INDEX messages_sync_seq ON messages(sync_seq)".update.run
@@ -77,7 +79,8 @@ private[store] object Schema:
       _       <- version match
                    case Some(1L) => baseTablesPresent.flatMap(_ => migrateFromOne)
                    case Some(2L) => baseTablesPresent.flatMap(_ => migrateFromTwo)
-                   case Some(3L) => v3TablesPresent
+                   case Some(3L) => v3TablesPresent.flatMap(_ => migrateFromThree)
+                   case Some(4L) => v4TablesPresent
                    case Some(_)  => abort(StorageError.UnsupportedSchema)
                    case None     => abort(StorageError.UnsupportedSchema)
       lock    <- sql"SELECT value FROM meta WHERE key = 'lock-generation'".query[Long].option
@@ -95,6 +98,7 @@ private[store] object Schema:
   private def migrateFromTwo: ConnectionIO[Unit] =
     for
       _ <- createV3Tables
+      _ <- createV4Tables
       _ <- sql"ALTER TABLE messages ADD COLUMN sync_seq INTEGER NOT NULL DEFAULT 0".update.run
       _ <- sql"CREATE INDEX messages_sync_seq ON messages(sync_seq)".update.run
       _ <- writeMeta("schema_version", Version)
@@ -151,6 +155,25 @@ private[store] object Schema:
     requiredTableCount(V3Tables).flatMap { count =>
       if count == V3Tables.size.toLong then FC.unit else abort(StorageError.UnsupportedSchema)
     }
+
+  private def migrateFromThree: ConnectionIO[Unit] =
+    for
+      _ <- createV4Tables
+      _ <- writeMeta("schema_version", Version)
+    yield ()
+
+  private def v4TablesPresent: ConnectionIO[Unit] =
+    requiredTableCount(V4Tables).flatMap { count =>
+      if count == V4Tables.size.toLong then FC.unit else abort(StorageError.UnsupportedSchema)
+    }
+
+  private def createV4Tables: ConnectionIO[Unit] =
+    sql"""CREATE TABLE IF NOT EXISTS peer_device_lists (
+       |  user_pub BLOB PRIMARY KEY NOT NULL,
+       |  version INTEGER NOT NULL,
+       |  payload BLOB NOT NULL,
+       |  received_at INTEGER NOT NULL
+       |)""".stripMargin.update.run.flatMap(_ => FC.unit)
 
   private def tableCount: ConnectionIO[Long] =
     sql"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'".query[Long].unique

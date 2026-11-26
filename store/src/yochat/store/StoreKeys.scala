@@ -20,6 +20,9 @@ final class StoreKeys private (master: MasterKey):
   val companionMessageKey: Key32 =
     derive(database.bytes, ByteVector.empty, Crypto.ascii("yochat-store/companion-message/v1"))
 
+  val peerDeviceListKey: Key32 =
+    derive(database.bytes, ByteVector.empty, Crypto.ascii("yochat-store/peer-device-list/v1"))
+
   def identityKey: Key32 = identity
 
   def stateKey(sessionId: SessionId): Key32 =

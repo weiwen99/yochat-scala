@@ -18,6 +18,8 @@ import yochat.transport.{RelayClient, RelayPayload}
 final class DeviceSyncScheduler private (
   requestFiber: Fiber[IO, Throwable, Unit],
   changeFiber: Fiber[IO, Throwable, Unit],
+  store: Store,
+  relay: RelayClient,
   statusFiber: Fiber[IO, Throwable, Unit],
   changes: Queue[IO, Unit],
   active: Ref[IO, Boolean]
@@ -28,13 +30,16 @@ final class DeviceSyncScheduler private (
 
   def close: IO[Unit] = requestFiber.cancel *> changeFiber.cancel *> statusFiber.cancel
 
+  def publishDeviceList: IO[Unit] =
+    IO.realTime.flatMap(time => PeerDeviceListService.publish(store, relay, time.toMillis)).attempt.void
+
 object DeviceSyncScheduler:
 
-  def create(store: Store, relay: RelayClient): IO[DeviceSyncScheduler] =
+  def create(store: Store, relay: RelayClient, onPeerList: IO[Unit] = IO.unit): IO[DeviceSyncScheduler] =
     for
       changes      <- Queue.bounded[IO, Unit](16)
       active       <- Ref.of[IO, Boolean](false)
-      requestFiber <- listenRequests(store, relay, active).start
+      requestFiber <- listenRequests(store, relay, active, onPeerList).start
       changeFiber  <- listenChanges(store, relay, changes).start
       statusFiber  <- watchRelay(store, relay).start
       initial      <- store.listDevices.map {
@@ -42,12 +47,14 @@ object DeviceSyncScheduler:
                         case Left(_)       => false
                       }
       _            <- active.set(initial)
-    yield new DeviceSyncScheduler(requestFiber, changeFiber, statusFiber, changes, active)
+    yield new DeviceSyncScheduler(requestFiber, changeFiber, store, relay, statusFiber, changes, active)
 
   private def watchRelay(store: Store, relay: RelayClient): IO[Unit] =
     def loop: IO[Unit] =
       relay.awaitOnline(30.seconds).flatMap {
-        case true  => sendStatusRequests(store, relay) *> relay.updates.flatMap(_ => loop)
+        case true  =>
+          IO.realTime.flatMap(time => PeerDeviceListService.publish(store, relay, time.toMillis)).attempt.void *>
+            sendStatusRequests(store, relay) *> relay.updates.flatMap(_ => loop)
         case false => IO.sleep(2.seconds) *> loop
       }
     loop
@@ -68,7 +75,12 @@ object DeviceSyncScheduler:
         }
     }
 
-  private def listenRequests(store: Store, relay: RelayClient, active: Ref[IO, Boolean]): IO[Unit] =
+  private def listenRequests(
+    store: Store,
+    relay: RelayClient,
+    active: Ref[IO, Boolean],
+    onPeerList: IO[Unit]
+  ): IO[Unit] =
     relay.deviceIncoming.flatMap { incoming =>
       incoming.payload match
         case RelayPayload.DeviceSync(bytes) =>
@@ -79,6 +91,15 @@ object DeviceSyncScheduler:
             case Right(authHash) =>
               answer(store, relay, incoming.from, authHash).attempt *>
                 active.set(true)
+        case RelayPayload.DeviceList(bytes) =>
+          IO.realTime
+            .flatMap(time => PeerDeviceListService.receive(store, incoming.from, bytes, time.toMillis))
+            .flatMap {
+              case Right(_) => onPeerList
+              case Left(_)  => IO.unit
+            }
+            .attempt
+            .void
         case _                              => IO.unit
     }.foreverM
 

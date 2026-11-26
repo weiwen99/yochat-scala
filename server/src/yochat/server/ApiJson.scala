@@ -104,6 +104,21 @@ object ApiJson:
     }
 
   private def contactJson(store: Store, state: AppState, contact: AppContact): IO[Value] =
+    PeerDeviceListService.devicesFor(store, contact.userPub).flatMap { devices =>
+      val deviceJson = ujson.Arr(
+        devices.getOrElse(Vector.empty).map { entry =>
+          ujson.Obj(
+            "devicePub" -> entry.devicePub.bytes.toHex,
+            "role"      -> (if entry.role == yochat.core.s2.PeerDeviceRole.Primary then "primary" else "companion"),
+            "name"      -> entry.name,
+            "revokedAt" -> entry.revokedAt.map(value => ujson.Num(value.toDouble)).getOrElse(ujson.Null)
+          )
+        }*
+      )
+      contactJsonWithDevices(store, state, contact, deviceJson)
+    }
+
+  private def contactJsonWithDevices(store: Store, state: AppState, contact: AppContact, devices: Value): IO[Value] =
     val conversation = state.conversations.values.find(_.peerUserPub == contact.userPub)
     val safety       = state.identity
       .flatMap(identity => SafetyNumber.derive(identity.user.publicKey, contact.userPub).toOption)
@@ -125,7 +140,8 @@ object ApiJson:
             "confirmation"       -> confirmation(contact.confirmation),
             "conversationId"     -> ujson.Null,
             "lastMessage"        -> "",
-            "lastMessageAt"      -> 0L
+            "lastMessageAt"      -> 0L,
+            "devices"            -> devices
           )
         )
       case Some(conversation) =>
@@ -143,7 +159,8 @@ object ApiJson:
             "confirmation"       -> confirmation(contact.confirmation),
             "conversationId"     -> conversation.id.toHex,
             "lastMessage"        -> record.map(value => decodeBody(value.body)).getOrElse(""),
-            "lastMessageAt"      -> record.map(_.createdAt).getOrElse(0L)
+            "lastMessageAt"      -> record.map(_.createdAt).getOrElse(0L),
+            "devices"            -> devices
           )
         }
 

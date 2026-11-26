@@ -37,12 +37,13 @@ class RelaySpec extends FunSuite:
     program.unsafeRunSync()
   }
 
-  test("relay payloads cover reply, rekey and device sync") {
+  test("relay payloads cover reply, rekey, device sync and device list") {
     val values = Vector(
       RelayPayload.Reply("reply-text"),
       RelayPayload.RekeyRequest(ByteVector.fill(32)(1)),
       RelayPayload.RekeyAccept(ByteVector.fill(32)(2)),
-      RelayPayload.DeviceSync(ByteVector.fill(32)(3))
+      RelayPayload.DeviceSync(ByteVector.fill(32)(3)),
+      RelayPayload.DeviceList(ByteVector.fill(32)(4))
     )
     values.foreach { value =>
       assertEquals(RelayPayload.decode(RelayPayload.encode(value).toOption.get), Right(value))

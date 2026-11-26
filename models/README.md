@@ -1,4 +1,4 @@
-# S1 Quint 模型
+# S1/S2-A/S2-B Quint 模型
 
 Q1–Q6 的有限模型，对应 `docs/plans/2026/11/0001-yochat-rewrite/design.md` 的协议面。模型只看应用层状态，不建模签名、AEAD、真实网络或 SQLite；这些由 Scala 测试与 E2E 分层承担。模型不是 S1 完成证明。
 
@@ -10,6 +10,7 @@ Q1–Q6 的有限模型，对应 `docs/plans/2026/11/0001-yochat-rewrite/design.
 | `q4_reconnect.qnt` | 离线队列不丢、重连重放有界、稳定连接下送达 |
 | `q5_rekey.qnt` | 旧会话 ReadOnly、新会话 confirm/ack、零 pending 才删除、安全码保留 |
 | `q6_delivery.qnt` | ACK 终止重试、Gap 有界重发、transport 接受不等于送达、失败可见 |
+| `q8_device_lists.qnt` | B1 签名设备列表：吊销永久、旧快照不复活、版本非负 |
 
 ## 命令
 
@@ -19,7 +20,7 @@ Q1–Q6 的有限模型，对应 `docs/plans/2026/11/0001-yochat-rewrite/design.
 ./models/check.sh
 ```
 
-脚本先 `typecheck` 六个文件，再按 `checks.json` 逐个执行：
+脚本先 `typecheck` 七个文件，再按 `checks.json` 逐个执行：
 
 - Apalache `0.62.4` 检查 `safe` 不变量；
 - TLC 检查带公平性前提的 temporal：

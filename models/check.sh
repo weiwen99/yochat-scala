@@ -17,7 +17,7 @@ if [[ ! -f "$REGISTRY" ]]; then
   exit 2
 fi
 
-for file in q1_relationship.qnt q2_order.qnt q3_resend.qnt q4_reconnect.qnt q5_rekey.qnt q6_delivery.qnt; do
+for file in q1_relationship.qnt q2_order.qnt q3_resend.qnt q4_reconnect.qnt q5_rekey.qnt q6_delivery.qnt q8_device_lists.qnt; do
   "${QUINT[@]}" typecheck "$file" >/dev/null
 done
 

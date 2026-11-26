@@ -1,6 +1,6 @@
 # Plan 0012 design: S2-B 设备列表、扇出与 GBNV
 
-- 状态：design draft（2026-11-26）；尚未写实现代码。
+- 状态：B1 implemented（2026-11-26；回执见 `impl.md`）；B2/B3 未开始。
 - 范围：S2-B。建立一个主设备 + 至多一个只读伴随设备、联系人可见设备列表、B 直接向 A2 分发、签名吊销传播、两主设备作者的 GBNV。
 - 前序：ADR-0003、ADR-0004、ADR-0006、ADR-0007、ADR-0008、ADR-0010；新决策见 ADR-0011。
 - 产品依据：`docs/spec/product/users-and-devices.md` 的设备条目/设备列表/吊销条目；`docs/spec/engineering/keys-and-devices.md` 的签名域与合并规则；`docs/spec/engineering/messaging.md` 的最终全序与每设备回执。
@@ -11,7 +11,7 @@
 | 维度 | 需求要什么 | 本计划产出 | 倍率 | 说明 |
 | --- | ---: | ---: | ---: | --- |
 | 需求条数 | 4 | 3 波 | 3× | 设备列表/吊销、直接扇出、GBNV；设备列表与吊销合在第一波 |
-| 新表 | 0（S2-A 可复用设备/同步） | 4 | 不可比 | `peer_device_ops`、`peer_revocations`、`message_order`、`delivery_receipts`；`peer_devices` 作为投影表，合计 5 表但投影不另存原件 |
+| 新表 | 0（S2-A 可复用设备/同步） | 3 | 不可比 | B1 `peer_device_lists`；B2 `delivery_receipts`；B3 `message_order`；不另造投影/操作表 |
 | 新列 | 0 | 0 | 不可比 | 逻辑消息键复用 `(conversation, authorDevice, authorSeq)`；不改正文、wire 或 AAD |
 | 组件 | 1（现有 server/transport 内） | 4 | 4× | 列表合并、设备会话扇出、吊销投影、GBNV 排序；全部现有进程内，不新增服务 |
 | 配置 | 0 用户可调 | 5 个内部常量 | 不可比 | 列表批次、吊销保留、乱序窗口、会话重试、依赖上限 |
@@ -56,14 +56,12 @@
 
 | 表 | 内容 | 保护 |
 | --- | --- | --- |
-| `peer_device_ops` | 每个联系人用户的签名设备操作原件：用户、操作类型、设备、别名、时间、列表版本、签名 | 原件按用户隔离；AAD 绑定用户/操作摘要；不静默删除 |
-| `peer_devices` | 从原件合并出的当前设备投影：用户、设备、别名、加入时间、最后版本 | 只读投影；与原件同事务更新；不独立签发 |
-| `peer_revocations` | 用户签名吊销原件：用户、设备、时间、列表版本、签名 | 永久保留；同用户/设备唯一；不因旧列表或改名删除 |
+| `peer_device_lists` | 每个联系人用户的最新用户签名设备列表快照：用户、列表版本、条目（设备、角色、别名、加入时间、吊销时间）、签名 | 原件按用户隔离；AAD 绑定用户/版本；旧版本不覆盖新版本；吊销条目不能从新快照消失 |
 | `message_order` | 会话、作者设备、作者序号、逻辑消息键、Lamport、因果前驱摘要 | 与消息/正文同事务写入；有界依赖 |
 | `delivery_receipts` | 会话、逻辑消息键、收件设备、状态、时间 | 每设备独立；一个设备 ACK 不替另一个结清 |
 | 逻辑消息键 | `(conversation_id, author_device, author_seq)` 的规范编码；不新增列 | 不含正文；不改 wire/AAD |
 
-S2-B 不把 `peer_devices` 当权威：它永远是 `peer_device_ops` 的投影；吊销/旧列表冲突时以原件合并规则为准。
+B1 只由持有用户私钥的主设备签发设备列表；同一用户没有第二个用户私钥签发者，因此用带版本的签名快照，不需要并发操作合并。若以后做用户私钥同步/多签发者，必须另立 ADR 补操作合并；B1 不假装已支持。
 
 ### 4.2 全局锁序
 
@@ -71,28 +69,28 @@ S2-B 不把 `peer_devices` 当权威：它永远是 `peer_device_ops` 的投影�
 
 ```text
 invitations → contacts → conversations → sessions → messages → message_order
-            → devices → peer_device_ops → peer_devices → peer_revocations
-            → companion_messages → device_sync → delivery_receipts → meta
+            → devices → peer_device_lists → companion_messages
+            → device_sync → delivery_receipts → meta
 ```
 
-- 收到设备操作：写 `peer_device_ops`，同事务重算 `peer_devices`；不持有会话/消息锁。
-- 收到吊销：写 `peer_revocations`，同事务更新 `peer_devices` 的 revoked 投影；不修改既有消息。
+- 收到设备列表：验签、比较版本；新版本写入 `peer_device_lists`，旧版本/同版本不同签名拒绝；不持有会话/消息锁。
+- 吊销包含在签名列表条目中；新快照缺少已知吊销条目时拒绝整份列表，既有历史不修改。
 - 追加业务消息：写 `messages` + `message_order` + `delivery_receipts`（待发目标）同事务；然后才发。
 - 收 ACK：只写对应 `delivery_receipts`；不重写消息正文，不跨设备结清。
 - 每设备会话：`sessions` 已有行；设备会话 ID 绑定双方 device；不新增会话表。
 
 ### 4.3 迁移
 
-- 当前 schema 3。升到 4：新增 4 张表；旧消息的逻辑键直接由 `(conversation, author_device, seq)` 构造，`lamport` 初始为 `seq` 的局部单调值，因果前驱为空；仅用于旧消息展示，不伪造跨作者因果。
+- 当前 schema 3。升到 4：新增 3 张表；B1 只建 `peer_device_lists`，B2/B3 再建其余两张；旧消息的逻辑键直接由 `(conversation, author_device, seq)` 构造，`lamport` 初始为 `seq` 的局部单调值，因果前驱为空；仅用于旧消息展示，不伪造跨作者因果。
 - v3 夹具必须含 S2-A `devices`/`device_sync`/`companion_messages`/`messages.sync_seq`；迁移后 S1/S2-A E2E、查询计划、锁定行为不变。
 - 迁移失败保留旧库并 `UnsupportedSchema` 失败关闭；不自动降级；回退只走备份。
 - S2-B 默认关闭：设备/联系人元数据声明 `s2b=1` 才启用；关闭时旧 S2-A 路径继续工作，列表操作不生成、不发送。
 
 ## 5. 协议
 
-### 5.1 设备列表控制
+### 5.1 设备列表控制（B1）
 
-新增 `RelayPayload.DeviceList`（opaque、同一 relay 设备寻址）。内容为一条或多条签名设备操作，批次有界；接收方逐条验签、按用户隔离、合并投影。签名域与字段沿用 ADR-0011/产品规格：
+新增 `RelayPayload.DeviceList`（opaque、同一 relay 设备寻址）。B1 内容为一份用户签名快照，带版本与全部当前/已吊销条目；接收方验签、按用户隔离、只接受更新版本。签名域与字段沿用 ADR-0011/产品规格：
 
 ```text
 device-entry: devicePriv(userPub, devicePub, joinedAt)
@@ -100,8 +98,7 @@ device-list:  userPriv(userPub, version, operations, issuedAt)
 ```
 
 - 联系人只接受对方用户的签名；设备条目自签名只证明设备持有，不证明归属。
-- 加入/改名/吊销按操作标识取并集；吊销永久；版本只用于补齐。
-- 同一用户同版本不同签名保留冲突并告警，不按到达顺序取一个。
+- B1 只有主设备持有用户私钥；版本必须严格递增，同版本不同签名拒绝，新列表中的已吊销条目不能消失。
 - 列表同步在关系建立、重连、设备变更时触发；设备列表不随每条消息发送。
 
 ### 5.2 wire 与能力声明

@@ -127,6 +127,11 @@ final class HttpApi private ():
                 case Right(id)   => completeResult(service.rejectInvitation(id).map(_.map(_ => ujson.Obj("ok" -> true))))
             }
           } ~
+          path("contacts" / Segment / "devices") { userRaw =>
+            get {
+              completeResult(service.contactDevicesJson(userRaw))
+            }
+          } ~
           path("contacts" / Segment / "alias") { userRaw =>
             post {
               entity(as[String]) { body =>

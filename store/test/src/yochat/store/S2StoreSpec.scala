@@ -54,6 +54,60 @@ final class S2StoreSpec extends FunSuite:
     finally StoreTestSupport.deleteTree(directory)
   }
 
+  test("peer device list round-trips, seals names and rejects revocation rollback") {
+    val directory = StoreTestSupport.temporaryDirectory("yochat-s2-peer-list-")
+    try
+      StoreTestSupport.withStore(directory) { store =>
+        val user      = StoreTestSupport.edPair()
+        val primary   = StoreTestSupport.edPair()
+        val companion = StoreTestSupport.edPair()
+        val first     = yochat.core.s2.PeerDeviceList
+          .create(
+            user.privateKey,
+            user.publicKey,
+            1L,
+            1_000L,
+            Vector(
+              yochat.core.s2.PeerDeviceEntry(primary.publicKey, yochat.core.s2.PeerDeviceRole.Primary, "laptop", 1_000L, None),
+              yochat.core.s2.PeerDeviceEntry(companion.publicKey, yochat.core.s2.PeerDeviceRole.Companion, "phone", 1_100L, None)
+            )
+          )
+          .fold(error => fail(error.toString), identity)
+        ok(store.upsertPeerDeviceList(first, 1_100L))
+        assertEquals(ok(store.loadPeerDeviceList(user.publicKey)), first)
+
+        val revoked = yochat.core.s2.PeerDeviceList
+          .create(
+            user.privateKey,
+            user.publicKey,
+            2L,
+            2_000L,
+            first.entries.map(entry => if entry.devicePub == companion.publicKey then entry.copy(revokedAt = Some(2_000L)) else entry)
+          )
+          .fold(error => fail(error.toString), identity)
+        ok(store.upsertPeerDeviceList(revoked, 2_100L))
+        assertEquals(ok(store.loadPeerDeviceList(user.publicKey)).revoked.keySet, Set(companion.publicKey))
+
+        val rollback = yochat.core.s2.PeerDeviceList
+          .create(user.privateKey, user.publicKey, 3L, 3_000L, first.entries)
+          .fold(error => fail(error.toString), identity)
+        IO(assertEquals(bad(store.upsertPeerDeviceList(rollback, 3_100L)), StorageError.InvalidArgument("revocation-rollback")))
+      }
+      val database = StorePaths.under(directory).database
+      val check    = DriverManager.getConnection(s"jdbc:sqlite:${database.toAbsolutePath}")
+      try
+        val statement = check.createStatement()
+        try
+          val result = statement.executeQuery("SELECT payload FROM peer_device_lists")
+          assert(result.next())
+          val payload = new String(result.getBytes(1), java.nio.charset.StandardCharsets.UTF_8)
+          assert(!payload.contains("phone"))
+          assert(!payload.contains("laptop"))
+        finally statement.close()
+      finally check.close()
+    finally StoreTestSupport.deleteTree(directory)
+  }
+
   test("device sync root round-trips and advances its checkpoint") {
     val directory = StoreTestSupport.temporaryDirectory("yochat-s2-sync-")
     try
@@ -147,18 +201,48 @@ final class S2StoreSpec extends FunSuite:
         try
           val version = statement.executeQuery("SELECT value FROM meta WHERE key = 'schema_version'")
           assert(version.next())
-          assertEquals(version.getLong(1), 3L)
+          assertEquals(version.getLong(1), 4L)
           val count = statement.executeQuery("SELECT count(*) FROM messages")
           assert(count.next())
           assertEquals(count.getLong(1), 1L)
           val tables = statement.executeQuery(
-            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('devices','device_sync','companion_messages')"
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('devices','device_sync','companion_messages','peer_device_lists')"
           )
           assert(tables.next())
-          assertEquals(tables.getLong(1), 3L)
+          assertEquals(tables.getLong(1), 4L)
           val column = statement.executeQuery("SELECT count(*) FROM pragma_table_info('messages') WHERE name = 'sync_seq'")
           assert(column.next())
           assertEquals(column.getLong(1), 1L)
+        finally statement.close()
+      finally check.close()
+    finally StoreTestSupport.deleteTree(directory)
+  }
+
+  test("schema v3 migrates to v4 by adding the peer device list table") {
+    val directory = StoreTestSupport.temporaryDirectory("yochat-s2b-migrate-")
+    try
+      StoreTestSupport.withStore(directory)(_ => IO.unit)
+      val database = StorePaths.under(directory).database
+      val setup    = DriverManager.getConnection(s"jdbc:sqlite:${database.toAbsolutePath}")
+      try
+        val statement = setup.createStatement()
+        try
+          statement.executeUpdate("DROP TABLE peer_device_lists")
+          statement.executeUpdate("UPDATE meta SET value = 3 WHERE key = 'schema_version'")
+        finally statement.close()
+      finally setup.close()
+
+      assertEquals(StoreTestSupport.openResult(StoreTestSupport.config(directory)), Right(()))
+      val check = DriverManager.getConnection(s"jdbc:sqlite:${database.toAbsolutePath}")
+      try
+        val statement = check.createStatement()
+        try
+          val version = statement.executeQuery("SELECT value FROM meta WHERE key = 'schema_version'")
+          assert(version.next())
+          assertEquals(version.getLong(1), 4L)
+          val table = statement.executeQuery("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'peer_device_lists'")
+          assert(table.next())
+          assertEquals(table.getLong(1), 1L)
         finally statement.close()
       finally check.close()
     finally StoreTestSupport.deleteTree(directory)
