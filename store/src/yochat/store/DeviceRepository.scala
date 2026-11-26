@@ -10,8 +10,8 @@ import scodec.bits.ByteVector
 
 import yochat.core.Ed25519Public
 
-/** Device records are local authorization facts. The name and signed join manifest are sealed; public keys, versions and revocation
-  * timestamps remain plaintext metadata. The high-water key prevents a deleted/rolled-back row from being silently reinserted.
+/** Device records are local authorization facts. The name and signed join manifest are sealed; public keys, versions and revocation timestamps
+  * remain plaintext metadata. The high-water key prevents a deleted/rolled-back row from being silently reinserted.
   */
 private[store] object DeviceRepository:
 
@@ -42,19 +42,19 @@ private[store] object DeviceRepository:
     runtime.now.flatMap { now =>
       runtime.run {
         for
-          _           <- Sql.checkLock(expectedLockGeneration)
-          _           <- validateRecord(record)
-          tombstone   <- Sql.meta(Sql.deviceVersionKey(record.devicePub.bytes))
-          _           <- tombstone match
-                           case Some(_) => Sql.abort(StorageError.StaleGeneration)
-                           case None    => FC.unit
-          _           <- row(record.devicePub.bytes).flatMap {
-                           case Some(_) => Sql.abort(StorageError.WriteConflict)
-                           case None    => FC.unit
-                         }
-          sealedName  <- seal(runtime, record, ByteVector.view(record.name.getBytes(StandardCharsets.UTF_8)))
+          _              <- Sql.checkLock(expectedLockGeneration)
+          _              <- validateRecord(record)
+          tombstone      <- Sql.meta(Sql.deviceVersionKey(record.devicePub.bytes))
+          _              <- tombstone match
+                              case Some(_) => Sql.abort(StorageError.StaleGeneration)
+                              case None    => FC.unit
+          _              <- row(record.devicePub.bytes).flatMap {
+                              case Some(_) => Sql.abort(StorageError.WriteConflict)
+                              case None    => FC.unit
+                            }
+          sealedName     <- seal(runtime, record, ByteVector.view(record.name.getBytes(StandardCharsets.UTF_8)))
           sealedManifest <- seal(runtime, record, record.joinManifest)
-          changed     <-
+          changed        <-
             sql"""INSERT INTO devices(
                  |device_pub, user_pub, role, name, authorization, version, created_at, revoked_at,
                  |join_epoch, join_manifest, join_manifest_hash, join_cursor_sync_seq, pairing_nonce, request_hash
@@ -64,8 +64,8 @@ private[store] object DeviceRepository:
                  |${record.joinEpoch}, $sealedManifest, ${record.joinManifestHash.toArray}, ${record.joinCursorSyncSeq},
                  |${record.pairingNonce.map(_.toArray)}, ${record.requestHash.map(_.toArray)}
                  |)""".stripMargin.update.run
-          _           <- Sql.changed(changed)
-          _           <- Sql.writeMeta(Sql.deviceVersionKey(record.devicePub.bytes), 1L)
+          _              <- Sql.changed(changed)
+          _              <- Sql.writeMeta(Sql.deviceVersionKey(record.devicePub.bytes), 1L)
         yield record.copy(version = 1L, createdAt = now)
       }
     }
@@ -104,42 +104,46 @@ private[store] object DeviceRepository:
     runtime.now.flatMap { now =>
       runtime.run {
         for
-          _       <- Sql.checkLock(expectedLockGeneration)
-          current <- loadProgram(runtime, devicePub.bytes).flatMap {
-                       case Some(value) => FC.pure(value)
-                       case None        => Sql.abort(StorageError.NotFound("device"))
-                     }
-          _       <- if current.version == expectedVersion then FC.unit else Sql.abort(StorageError.StaleGeneration)
-          next    <- Sql.nextVersion(current.version)
-          changed <-
-            sql"UPDATE devices SET revoked_at = $now, version = $next WHERE device_pub = ${devicePub.bytes.toArray} AND version = ${current.version}".update.run
-          _       <- Sql.changed(changed)
-          _       <- Sql.writeMeta(Sql.deviceVersionKey(devicePub.bytes), next)
+          _              <- Sql.checkLock(expectedLockGeneration)
+          current        <- loadProgram(runtime, devicePub.bytes).flatMap {
+                              case Some(value) => FC.pure(value)
+                              case None        => Sql.abort(StorageError.NotFound("device"))
+                            }
+          _              <- if current.version == expectedVersion then FC.unit else Sql.abort(StorageError.StaleGeneration)
+          next           <- Sql.nextVersion(current.version)
+          sealedName     <- sealAt(runtime, current, ByteVector.view(current.name.getBytes(StandardCharsets.UTF_8)), next)
+          sealedManifest <- sealAt(runtime, current, current.joinManifest, next)
+          changed        <-
+            sql"""UPDATE devices
+                 |SET name = $sealedName, join_manifest = $sealedManifest, revoked_at = $now, version = $next
+                 |WHERE device_pub = ${devicePub.bytes.toArray} AND version = ${current.version}""".stripMargin.update.run
+          _              <- Sql.changed(changed)
+          _              <- Sql.writeMeta(Sql.deviceVersionKey(devicePub.bytes), next)
         yield current.copy(version = next, revokedAt = Some(now))
       }
     }
 
   private def loadProgram(runtime: StoreRuntime, devicePub: ByteVector): ConnectionIO[Option[DeviceRecord]] =
     row(devicePub).flatMap {
-      case None       => FC.pure(None)
+      case None      => FC.pure(None)
       case Some(row) =>
         Ed25519Public.from(ByteVector.view(row.devicePub)) match
           case Left(_)       => Sql.abort(StorageError.InvalidEnvelope)
           case Right(public) =>
             for
-              _        <- Sql.checkHighWater(Sql.deviceVersionKey(public.bytes), row.version)
-              role     <- fromEither(DeviceRole.fromCode(row.role))
-              plainName <- open(runtime, row, ByteVector.view(row.name))
+              _             <- Sql.checkHighWater(Sql.deviceVersionKey(public.bytes), row.version)
+              role          <- fromEither(DeviceRole.fromCode(row.role))
+              plainName     <- open(runtime, row, ByteVector.view(row.name))
               plainManifest <- open(runtime, row, ByteVector.view(row.joinManifest))
-              _        <- if plainName.size <= MaxNameBytes.toLong then FC.unit else Sql.abort(StorageError.InvalidEnvelope)
-              _        <- if plainManifest.size == 0L || plainManifest.size > 1_048_576L then Sql.abort(StorageError.InvalidEnvelope)
-                          else FC.unit
-              name     <- FC.delay(new String(plainName.toArray, StandardCharsets.UTF_8))
-              user     <- Ed25519Public.from(ByteVector.view(row.userPub)) match
-                            case Left(_)       => Sql.abort(StorageError.InvalidEnvelope)
-                            case Right(value)  => FC.pure(value)
-              _        <- if row.joinManifestHash.length == 32 then FC.unit else Sql.abort(StorageError.InvalidEnvelope)
-              _        <- if row.authorization.nonEmpty then FC.unit else Sql.abort(StorageError.InvalidEnvelope)
+              _             <- if plainName.size <= MaxNameBytes.toLong then FC.unit else Sql.abort(StorageError.InvalidEnvelope)
+              _             <- if plainManifest.size == 0L || plainManifest.size > 1_048_576L then Sql.abort(StorageError.InvalidEnvelope)
+                               else FC.unit
+              name          <- FC.delay(new String(plainName.toArray, StandardCharsets.UTF_8))
+              user          <- Ed25519Public.from(ByteVector.view(row.userPub)) match
+                                 case Left(_)      => Sql.abort(StorageError.InvalidEnvelope)
+                                 case Right(value) => FC.pure(value)
+              _             <- if row.joinManifestHash.length == 32 then FC.unit else Sql.abort(StorageError.InvalidEnvelope)
+              _             <- if row.authorization.nonEmpty then FC.unit else Sql.abort(StorageError.InvalidEnvelope)
             yield Some(
               DeviceRecord(
                 devicePub = public,
@@ -184,7 +188,7 @@ private[store] object DeviceRepository:
       ]
       .option
       .map {
-        case None                                                                                                              => None
+        case None                                                                                                                 => None
         case Some((device, user, role, name, auth, version, created, revoked, epoch, manifest, manifestHash, cursor, nonce, req)) =>
           Some(Row(device, user, role, name, auth, version, created, revoked, epoch, manifest, manifestHash, cursor, nonce, req))
       }
@@ -199,12 +203,20 @@ private[store] object DeviceRepository:
     else FC.unit
 
   private def seal(runtime: StoreRuntime, record: DeviceRecord, plaintext: ByteVector): ConnectionIO[Array[Byte]] =
+    sealAt(runtime, record, plaintext, 1L)
+
+  private def sealAt(
+    runtime: StoreRuntime,
+    record: DeviceRecord,
+    plaintext: ByteVector,
+    version: Long
+  ): ConnectionIO[Array[Byte]] =
     FC.delay(StoreCrypto.randomNonceUnsafe()).flatMap { nonce =>
       fromEither(
         StoreCrypto.seal(
           runtime.keys.deviceKey,
           nonce,
-          StoreCrypto.deviceAad(record.devicePub.bytes, record.userPub.bytes, 1L),
+          StoreCrypto.deviceAad(record.devicePub.bytes, record.userPub.bytes, version),
           plaintext
         )
       )
@@ -215,8 +227,8 @@ private[store] object DeviceRepository:
       case Left(_)       => Sql.abort(StorageError.InvalidEnvelope)
       case Right(device) =>
         Ed25519Public.from(ByteVector.view(row.userPub)) match
-          case Left(_)      => Sql.abort(StorageError.InvalidEnvelope)
-          case Right(user)  =>
+          case Left(_)     => Sql.abort(StorageError.InvalidEnvelope)
+          case Right(user) =>
             fromEither(
               StoreCrypto.open(
                 runtime.keys.deviceKey,

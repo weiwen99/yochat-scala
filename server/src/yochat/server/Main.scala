@@ -10,6 +10,16 @@ import org.apache.pekko.stream.Materializer
 object Main extends IOApp:
 
   def run(args: List[String]): IO[ExitCode] =
+    PairingTool.run(args).flatMap {
+      case Some(code) => IO.pure(code)
+      case None       =>
+        CompanionMain.parse(args) match
+          case None                => serve(args)
+          case Some(Left(message)) => IO.println(s"yochat: $message").as(ExitCode.Error)
+          case Some(Right(config)) => CompanionMain.serve(config)
+    }
+
+  private def serve(args: List[String]): IO[ExitCode] =
     Config.parse(args) match
       case Left(message) => IO.println(s"yochat: $message") *> IO.pure(ExitCode.Error)
       case Right(config) =>

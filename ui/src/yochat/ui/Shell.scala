@@ -30,18 +30,39 @@ object Shell:
               ui.view.set(View.Contacts)
               ui.mobileList.set(true)
             }
-          )
+          ),
+          child.maybe <-- api.state.signal.map { state =>
+            if state.readOnly then None
+            else
+              Some(
+                railButton(
+                  "devices",
+                  "设备",
+                  ui.view.signal.map(_ == View.Devices),
+                  () => {
+                    ui.view.set(View.Devices)
+                    ui.mobileList.set(true)
+                  }
+                )
+              )
+          }
         ),
-        div(
-          cls   := "rail-bottom",
-          button(
-            cls        := "rail-button",
-            title      := "锁定本机",
-            aria.label := "锁定本机",
-            onClick --> (_ => api.lock()),
-            Icons("lock")
-          )
-        )
+        child.maybe <-- api.state.signal.map { state =>
+          if state.readOnly then None
+          else
+            Some(
+              div(
+                cls := "rail-bottom",
+                button(
+                  cls        := "rail-button",
+                  title      := "锁定本机",
+                  aria.label := "锁定本机",
+                  onClick --> (_ => api.lock()),
+                  Icons("lock")
+                )
+              )
+            )
+        }
       ),
       conversationList(api, ui),
       mainTag(
@@ -49,6 +70,7 @@ object Shell:
         child <-- ui.view.signal.map {
           case View.Chat     => ChatPanel(api, ui)
           case View.Contacts => ContactsPanel(api, ui)
+          case View.Devices  => DevicesPanel(api, ui)
         }
       ),
       child.maybe <-- ui.addFriend.signal.map(value => if value then Some(AddFriendDialog(api, ui)) else None),
@@ -73,11 +95,17 @@ object Shell:
         div(
           cls   := "list-title-row",
           h2("通信"),
-          button(cls := "icon-button", aria.label := "添加联系人", title := "添加联系人", onClick --> (_ => ui.addFriend.set(true)), Icons("plus"))
+          child.maybe <-- api.state.signal.map(value =>
+            if value.readOnly then None
+            else
+              Some(
+                button(cls := "icon-button", aria.label := "添加联系人", title := "添加联系人", onClick --> (_ => ui.addFriend.set(true)), Icons("plus"))
+              )
+          )
         )
       ),
       child <-- api.state.signal.map { state =>
-        if state.conversations.isEmpty then emptyList(ui)
+        if state.conversations.isEmpty then emptyList(ui, state.readOnly)
         else
           div(
             cls := "conversation-stack",
@@ -106,17 +134,19 @@ object Shell:
       div(
         cls := "list-foot",
         span(child.text <-- api.state.signal.map(state => s"${state.contacts.size} 位联系人")),
-        button(cls := "text-button", onClick --> (_ => ui.addFriend.set(true)), "添加联系人")
+        child.maybe <-- api.state.signal.map(state =>
+          if state.readOnly then None else Some(button(cls := "text-button", onClick --> (_ => ui.addFriend.set(true)), "添加联系人"))
+        )
       )
     )
 
-  private def emptyList(ui: UiState): HtmlElement =
+  private def emptyList(ui: UiState, readOnly: Boolean): HtmlElement =
     div(
       cls := "list-empty",
-      div(cls    := "empty-rule"),
-      p("还没有联系人。"),
-      span("用一份邀请开始一段只有你们两人的通信。"),
-      button(cls := "secondary-button", onClick --> (_ => ui.addFriend.set(true)), "添加联系人")
+      div(cls := "empty-rule"),
+      p(if readOnly then "只读设备已配对。" else "还没有联系人。"),
+      span(if readOnly then "这里只显示主设备同步来的加入后内容。" else "用一份邀请开始一段只有你们两人的通信。"),
+      if readOnly then div() else button(cls := "secondary-button", onClick --> (_ => ui.addFriend.set(true)), "添加联系人")
     )
 
   private def toast(value: Toast): HtmlElement =

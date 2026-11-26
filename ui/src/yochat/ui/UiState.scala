@@ -5,7 +5,7 @@ import scala.scalajs.js
 import com.raquo.laminar.api.L.*
 
 enum View:
-  case Chat, Contacts
+  case Chat, Contacts, Devices
 
 enum InviteTab:
   case Issued, Received
@@ -23,6 +23,9 @@ final class UiState:
   val aliasDraft: Var[String]    = Var("")
   val inviteText: Var[String]    = Var("")
   val replyText: Var[String]     = Var("")
+  val deviceInvite: Var[String]  = Var("")
+  val deviceRequest: Var[String] = Var("")
+  val deviceAuth: Var[String]    = Var("")
 
   def notify(message: String, kind: String = "info"): Unit =
     toast.set(Some(Toast(message, kind)))

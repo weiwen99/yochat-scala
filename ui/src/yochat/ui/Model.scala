@@ -50,6 +50,16 @@ final case class Invitation(
 
 final case class Session(id: String, conversationId: String, peerDevicePub: String, phase: String, nextSeq: Long)
 
+final case class Device(
+  devicePub: String,
+  role: String,
+  name: String,
+  version: Long,
+  revokedAt: Option[Long],
+  joinEpoch: Long,
+  lastSyncSeq: Long
+)
+
 final case class Lock(locked: Boolean, generation: Long)
 
 final case class AppState(
@@ -119,6 +129,23 @@ object Json:
       invitations = array(value, "invitations").flatMap(parseInvitation),
       sessions = array(value, "sessions").flatMap(parseSession)
     )
+
+  def parseDevices(value: Value): Vector[Device] =
+    array(value, "devices").flatMap { item =>
+      for
+        device <- string(item, "devicePub")
+        role   <- string(item, "role")
+        name   <- string(item, "name")
+      yield Device(
+        device,
+        role,
+        name,
+        long(item, "version").getOrElse(0L),
+        long(item, "revokedAt"),
+        long(item, "joinEpoch").getOrElse(0L),
+        long(item, "lastSyncSeq").getOrElse(0L)
+      )
+    }
 
   def parseMessages(value: Value): Vector[ChatMessage] =
     array(value, "messages") match

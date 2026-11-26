@@ -14,31 +14,32 @@ private[store] object CompanionMessageRepository:
   def upsert(runtime: StoreRuntime, record: CompanionMessageRecord): IO[Either[StorageError, CompanionMessageRecord]] =
     runtime.run {
       for
-        _        <- validate(record)
-        existing <- row(record.sourceId)
-        _        <- existing match
-                      case Some(value) if value.conversationId != record.conversationId ||
-                          value.authorPub != record.authorPub ||
-                          value.devicePub != record.devicePub ||
-                          value.seq != record.seq =>
-                        Sql.abort(StorageError.InvalidArgument("companion_source"))
-                      case _ => FC.unit
-        nonce    <- FC.delay(StoreCrypto.randomNonceUnsafe())
+        _          <- validate(record)
+        existing   <- row(record.sourceId)
+        _          <- existing match
+                        case Some(value)
+                            if value.conversationId != record.conversationId ||
+                              value.authorPub != record.authorPub ||
+                              value.devicePub != record.devicePub ||
+                              value.seq != record.seq =>
+                          Sql.abort(StorageError.InvalidArgument("companion_source"))
+                        case _ => FC.unit
+        nonce      <- FC.delay(StoreCrypto.randomNonceUnsafe())
         sealedBody <- fromEither(
-                      StoreCrypto.seal(
-                        runtime.keys.companionMessageKey,
-                        nonce,
-                        StoreCrypto.companionMessageAad(
-                          record.sourceId,
-                          record.conversationId,
-                          record.authorPub.bytes,
-                          record.devicePub.bytes,
-                          record.seq
-                        ),
-                        record.body
+                        StoreCrypto.seal(
+                          runtime.keys.companionMessageKey,
+                          nonce,
+                          StoreCrypto.companionMessageAad(
+                            record.sourceId,
+                            record.conversationId,
+                            record.authorPub.bytes,
+                            record.devicePub.bytes,
+                            record.seq
+                          ),
+                          record.body
+                        )
                       )
-                    )
-        changed  <-
+        changed    <-
           sql"""INSERT INTO companion_messages(
                |source_id, conversation_id, author_pub, device_pub, seq, body, state, created_at, sync_seq
                |) VALUES (
@@ -49,7 +50,7 @@ private[store] object CompanionMessageRepository:
                |ON CONFLICT(source_id) DO UPDATE SET
                |body = excluded.body, state = excluded.state, created_at = excluded.created_at, sync_seq = excluded.sync_seq
                |""".stripMargin.update.run
-        _        <- Sql.changed(changed)
+        _          <- Sql.changed(changed)
       yield record
     }
 
@@ -94,7 +95,19 @@ private[store] object CompanionMessageRepository:
       .map {
         case None                                                                      => None
         case Some((id, conversation, author, device, seq, body, state, created, sync)) =>
-          Some(CompanionRow(id, ByteVector.view(conversation), ByteVector.view(author), ByteVector.view(device), seq, ByteVector.view(body), state, created, sync))
+          Some(
+            CompanionRow(
+              id,
+              ByteVector.view(conversation),
+              ByteVector.view(author),
+              ByteVector.view(device),
+              seq,
+              ByteVector.view(body),
+              state,
+              created,
+              sync
+            )
+          )
       }
 
   private def open(runtime: StoreRuntime, row: CompanionRow): ConnectionIO[CompanionMessageRecord] =

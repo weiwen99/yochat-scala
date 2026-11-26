@@ -1977,3 +1977,69 @@ textarea.text-input.code-text {
     max-width: calc(100vw - 28px);
   }
 }
+
+/* ---------- devices ---------- */
+
+.devices-panel {
+  height: 100%;
+  overflow-y: auto;
+  padding: 32px 36px 28px;
+  background: var(--paper);
+}
+
+.device-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.device-card.revoked {
+  opacity: 0.62;
+}
+
+.pairing-section {
+  max-width: 880px;
+  margin: 26px auto 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  background: var(--sheet);
+}
+
+.pairing-section h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.pairing-section p {
+  margin: 10px 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pairing-input,
+.pairing-output {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.pairing-section .primary-button {
+  margin-bottom: 4px;
+}
+
+.secondary-button.danger {
+  color: var(--danger, #a33);
+}

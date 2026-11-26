@@ -7,8 +7,8 @@ import yochat.core.{Ed25519Public, Key32}
 import yochat.store.{ContactRecord, ConversationRecord, MessageRecord, MessageState, Store, StoreSnapshot}
 import yochat.transport.{RelayClient, RelayPayload}
 
-/** S2-A primary sender. It snapshots the post-join store view; A2 upserts by source id. This is intentionally not the final
-  * incremental checkpoint protocol.
+/** S2-A primary sender. It snapshots the post-join store view; A2 upserts by source id. This is intentionally not the final incremental
+  * checkpoint protocol.
   */
 final class DeviceSyncService(
   store: Store,
@@ -49,7 +49,7 @@ final class DeviceSyncService(
 
   def sendSnapshot: IO[Either[String, Unit]] =
     buildSnapshot.flatMap {
-      case Left(error) => IO.pure(Left(error))
+      case Left(error)  => IO.pure(Left(error))
       case Right(bytes) =>
         for
           (batchSeq, _) <- readState
@@ -59,9 +59,9 @@ final class DeviceSyncService(
     }
 
   private def records(snapshot: StoreSnapshot, cursor: Long): ujson.Value =
-    val contacts = snapshot.contacts.map(contactJson)
-    val conversations = snapshot.conversations.map(conversationJson)
-    val messages = snapshot.messages.values.flatten
+    val contacts           = snapshot.contacts.map(contactJson)
+    val conversations      = snapshot.conversations.map(conversationJson)
+    val messages           = snapshot.messages.values.flatten
       .filter(_.id > cursor)
       .toVector
       .sortBy(message => (message.id, message.seq))
@@ -85,9 +85,9 @@ final class DeviceSyncService(
 
   private def conversationJson(record: ConversationRecord): ujson.Value =
     ujson.Obj(
-      "id"         -> record.id.toHex,
+      "id"          -> record.id.toHex,
       "peerUserPub" -> record.peerUserPub.bytes.toHex,
-      "createdAt"  -> record.createdAt
+      "createdAt"   -> record.createdAt
     )
 
   private def messageJson(record: MessageRecord): ujson.Value =

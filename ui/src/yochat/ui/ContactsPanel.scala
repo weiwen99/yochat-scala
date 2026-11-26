@@ -16,10 +16,13 @@ object ContactsPanel:
           h1("联系人"),
           p("只保留你主动建立的关系。没有目录，也没有公开资料。")
         ),
-        button(cls := "primary-button", onClick --> (_ => ui.addFriend.set(true)), Icons("plus"), "添加联系人")
+        child.maybe <-- api.state.signal.map(state =>
+          if state.readOnly then None
+          else Some(button(cls := "primary-button", onClick --> (_ => ui.addFriend.set(true)), Icons("plus"), "添加联系人"))
+        )
       ),
       child <-- api.state.signal.map { state =>
-        if state.contacts.isEmpty then empty(ui) else contactList(api, ui, state)
+        if state.contacts.isEmpty then empty(ui, state.readOnly) else contactList(api, ui, state)
       },
       child <-- api.state.signal.map(state => invitationSection(ui, state)),
       div(
@@ -29,19 +32,19 @@ object ContactsPanel:
       )
     )
 
-  private def empty(ui: UiState): HtmlElement =
+  private def empty(ui: UiState, readOnly: Boolean): HtmlElement =
     div(
       cls := "contacts-empty",
       div(
-        cls      := "empty-illustration",
+        cls := "empty-illustration",
         span(cls := "empty-route-line"),
         span(cls := "empty-node"),
         span(cls := "empty-node relay"),
         span(cls := "empty-node")
       ),
-      h2("通讯录是空的。"),
-      p("生成一份邀请，或粘贴朋友发给你的邀请。你们各自确认之后，联系人才会出现。"),
-      button(cls := "primary-button", onClick --> (_ => ui.addFriend.set(true)), "开始加好友")
+      h2(if readOnly then "只读设备已配对。" else "通讯录是空的。"),
+      p(if readOnly then "这里只显示主设备同步来的加入后内容。" else "生成一份邀请，或粘贴朋友发给你的邀请。你们各自确认之后，联系人才会出现。"),
+      if readOnly then div() else button(cls := "primary-button", onClick --> (_ => ui.addFriend.set(true)), "开始加好友")
     )
 
   private def contactList(api: ApiClient, ui: UiState, state: AppState): HtmlElement =
@@ -128,10 +131,11 @@ object ContactsPanel:
         p("邀请是可复制的文本；应答会通过中继回到邀请方。")
       ),
       if state.invitations.isEmpty then
-        div(cls := "invitation-empty", "没有待处理的邀请。", button(cls := "text-button", onClick --> (_ => ui.addFriend.set(true)), "添加联系人"))
+        if state.readOnly then div(cls := "invitation-empty", "只读设备不处理邀请。")
+        else div(cls                   := "invitation-empty", "没有待处理的邀请。", button(cls := "text-button", onClick --> (_ => ui.addFriend.set(true)), "添加联系人"))
       else
         div(
-          cls   := "invitation-list",
+          cls := "invitation-list",
           state.invitations.map { invitation =>
             div(
               cls := "invitation-row",

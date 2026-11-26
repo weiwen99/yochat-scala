@@ -5,14 +5,7 @@ import scodec.bits.ByteVector
 import ujson.Value
 
 import yochat.core.SafetyNumber
-import yochat.store.{
-  CompanionMessageRecord,
-  ContactRecord,
-  ConversationRecord,
-  MessageState,
-  StorageError,
-  Store
-}
+import yochat.store.{CompanionMessageRecord, ContactRecord, ConversationRecord, MessageState, StorageError, Store}
 
 /** Read-only A2 view. It never calls MessageRepository or reconstructs a peer session. */
 object CompanionView:
@@ -32,10 +25,10 @@ object CompanionView:
       contacts      <- store.listContacts
       conversations <- store.listConversations
       result        <- contacts match
-                         case Left(error) => IO.pure(Left(error))
+                         case Left(error)          => IO.pure(Left(error))
                          case Right(contactValues) =>
                            conversations match
-                             case Left(error) => IO.pure(Left(error))
+                             case Left(error)               => IO.pure(Left(error))
                              case Right(conversationValues) =>
                                loadConversations(store, contactValues, conversationValues)
     yield result
@@ -47,7 +40,7 @@ object CompanionView:
     relayPort: Int,
     online: Boolean
   ): Value =
-    val contacts = snapshot.contacts
+    val contacts      = snapshot.contacts
       .sortBy(contact => displayName(contact).toLowerCase)
       .map(contact => contactJson(store, snapshot, contact))
     val conversations = snapshot.conversations
@@ -55,25 +48,25 @@ object CompanionView:
       .map(value => conversationJson(snapshot, value))
 
     ujson.Obj(
-      "unlocked"      -> true,
-      "readOnly"      -> true,
+      "unlocked"       -> true,
+      "readOnly"       -> true,
       "instanceExists" -> true,
-      "identity"      -> ujson.Obj(
+      "identity"       -> ujson.Obj(
         "userId"   -> store.identity.userPublic.bytes.toHex,
         "deviceId" -> store.identity.devicePublic.bytes.toHex
       ),
-      "relay"         -> ujson.Obj(
+      "relay"          -> ujson.Obj(
         "online" -> online,
         "host"   -> relayHost,
         "port"   -> relayPort
       ),
-      "fatal"         -> ujson.Null,
-      "notification"  -> ujson.Null,
-      "lock"          -> ujson.Obj("locked" -> false, "generation" -> 0L),
-      "contacts"      -> ujson.Arr(contacts*),
-      "conversations" -> ujson.Arr(conversations*),
-      "invitations"   -> ujson.Arr(),
-      "sessions"      -> ujson.Arr()
+      "fatal"          -> ujson.Null,
+      "notification"   -> ujson.Null,
+      "lock"           -> ujson.Obj("locked" -> false, "generation" -> 0L),
+      "contacts"       -> ujson.Arr(contacts*),
+      "conversations"  -> ujson.Arr(conversations*),
+      "invitations"    -> ujson.Arr(),
+      "sessions"       -> ujson.Arr()
     )
 
   def messagesJson(store: Store, conversationId: ByteVector, limit: Int): IO[Either[StorageError, Value]] =
@@ -105,10 +98,10 @@ object CompanionView:
     conversations
       .foldLeft(IO.pure[Either[StorageError, List[ConversationView]]](Right(Nil))) { (acc, conversation) =>
         acc.flatMap {
-          case Left(error) => IO.pure(Left(error))
+          case Left(error)   => IO.pure(Left(error))
           case Right(values) =>
             store.listCompanionMessages(conversation.id, 1_000).map {
-              case Left(error)    => Left(error)
+              case Left(error)     => Left(error)
               case Right(messages) => Right(values :+ ConversationView(conversation, messages))
             }
         }
@@ -116,9 +109,9 @@ object CompanionView:
       .map(_.map(values => Snapshot(contacts, values)))
 
   private def contactJson(store: Store, snapshot: Snapshot, record: ContactRecord): Value =
-    val conversation = snapshot.conversations.find(_.conversation.peerUserPub == record.userPub)
-    val last         = conversation.flatMap(_.messages.lastOption)
-    val peerDevice   = conversation.flatMap(_.messages.find(_.authorPub == record.userPub).map(_.devicePub))
+    val conversation            = snapshot.conversations.find(_.conversation.peerUserPub == record.userPub)
+    val last                    = conversation.flatMap(_.messages.lastOption)
+    val peerDevice              = conversation.flatMap(_.messages.find(_.authorPub == record.userPub).map(_.devicePub))
     ujson.Obj(
       "userPub"            -> record.userPub.bytes.toHex,
       "devicePub"          -> peerDevice.map(_.bytes.toHex).getOrElse(""),
@@ -136,8 +129,8 @@ object CompanionView:
     )
 
   private def conversationJson(snapshot: Snapshot, value: ConversationView): Value =
-    val contact = snapshot.contacts.find(_.userPub == value.conversation.peerUserPub)
-    val last    = value.messages.lastOption
+    val contact            = snapshot.contacts.find(_.userPub == value.conversation.peerUserPub)
+    val last               = value.messages.lastOption
     ujson.Obj(
       "id"            -> value.conversation.id.toHex,
       "peerUserPub"   -> value.conversation.peerUserPub.bytes.toHex,

@@ -34,9 +34,9 @@ final case class PairingRequest(
 
 object PairingRequest:
 
-  val Version: Int       = 1
-  val MaxNameBytes: Int  = 512
-  private val Domain     = Crypto.ascii("yochat-s2-pairing-request")
+  val Version: Int      = 1
+  val MaxNameBytes: Int = 512
+  private val Domain    = Crypto.ascii("yochat-s2-pairing-request")
 
   def create(
     companionDevicePrivate: Ed25519Private,

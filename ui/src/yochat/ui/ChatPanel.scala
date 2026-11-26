@@ -11,7 +11,7 @@ object ChatPanel:
     div(
       cls := "chat-panel",
       child <-- api.activeConversation.signal.map {
-        case None     => emptyChat(ui)
+        case None     => emptyChat(api, ui)
         case Some(id) => conversation(api, ui, id)
       }
     )
@@ -195,19 +195,29 @@ object ChatPanel:
       )
     )
 
-  private def emptyChat(ui: UiState): HtmlElement =
+  private def emptyChat(api: ApiClient, ui: UiState): HtmlElement =
     div(
       cls := "empty-chat",
       div(
-        cls      := "empty-illustration",
+        cls := "empty-illustration",
         span(cls := "empty-route-line"),
         span(cls := "empty-node"),
         span(cls := "empty-node relay"),
         span(cls := "empty-node")
       ),
-      h2("还没有联系人。"),
-      p("一段关系从一份邀请开始。生成邀请，或粘贴朋友发给你的邀请。"),
-      button(cls := "primary-button", onClick --> (_ => ui.addFriend.set(true)), "添加联系人")
+      child <-- api.state.signal.map { state =>
+        if state.readOnly then
+          div(
+            h2("只读设备。"),
+            p("这里只显示主设备同步来的加入后内容；不能加好友、发消息或改安全码。")
+          )
+        else
+          div(
+            h2("还没有联系人。"),
+            p("一段关系从一份邀请开始。生成邀请，或粘贴朋友发给你的邀请。"),
+            button(cls := "primary-button", onClick --> (_ => ui.addFriend.set(true)), "添加联系人")
+          )
+      }
     )
 
   private object ChatLedger:

@@ -5,14 +5,7 @@ import scodec.bits.ByteVector
 import ujson.Value
 
 import yochat.core.{Ed25519Public, Key32}
-import yochat.store.{
-  CompanionMessageRecord,
-  ContactConfirmation,
-  ContactData,
-  MessageState,
-  StorageError,
-  Store
-}
+import yochat.store.{CompanionMessageRecord, ContactConfirmation, ContactData, MessageState, StorageError, Store}
 import yochat.transport.{RelayClient, RelayPayload}
 
 /** S2-A receiver. It verifies the A1 snapshot, then upserts contacts, conversations and companion messages. */
@@ -35,7 +28,7 @@ final class CompanionSyncService(
 
   def receive(bytes: ByteVector): IO[Either[String, Unit]] =
     DeviceSyncProtocol.open(syncRoot, primaryDevicePub, authHash, bytes) match
-      case Left(error) => IO.pure(Left(error))
+      case Left(error)  => IO.pure(Left(error))
       case Right(value) => applyRecords(value)
 
   private def applyRecords(value: Value): IO[Either[String, Unit]] =
@@ -71,7 +64,7 @@ final class CompanionSyncService(
 
   private def applyContact(json: Value): IO[Either[String, Unit]] =
     parseHex(json, "userPub").flatMap(Ed25519Public.from(_).left.map(_ => "user-pub")) match
-      case Left(error) => IO.pure(Left(error))
+      case Left(error)    => IO.pure(Left(error))
       case Right(userPub) =>
         val data = ContactData(
           channelLabel = string(json, "channelLabel").getOrElse(""),
@@ -83,55 +76,55 @@ final class CompanionSyncService(
           confirmationState = confirmation(json)
         )
         store.loadContact(userPub).flatMap {
-          case Right(record) => store.updateContact(userPub, data, record.version, lockGeneration).map(mapStore)
+          case Right(record)                  => store.updateContact(userPub, data, record.version, lockGeneration).map(mapStore)
           case Left(StorageError.NotFound(_)) => store.insertContact(userPub, data, lockGeneration).map(mapStore)
-          case Left(error) => IO.pure(Left(error.code))
+          case Left(error)                    => IO.pure(Left(error.code))
         }
 
   private def applyConversation(json: Value): IO[Either[String, Unit]] =
     (parseHex(json, "id"), parseHex(json, "peerUserPub")) match
       case (Right(id), Right(peerRaw)) =>
         Ed25519Public.from(peerRaw) match
-          case Left(_)       => IO.pure(Left("peer-user-pub"))
-          case Right(peer)   =>
+          case Left(_)     => IO.pure(Left("peer-user-pub"))
+          case Right(peer) =>
             store.loadConversation(id).flatMap {
               case Right(_)                       => IO.pure(Right(()))
               case Left(StorageError.NotFound(_)) =>
                 store.createConversation(id, peer, lockGeneration).map(mapStore)
               case Left(error)                    => IO.pure(Left(error.code))
             }
-      case _ => IO.pure(Left("conversation"))
+      case _                           => IO.pure(Left("conversation"))
 
   private def applyMessage(json: Value): IO[Either[String, Unit]] =
     for
-      sourceId   <- IO.pure(long(json, "sourceId"))
+      sourceId     <- IO.pure(long(json, "sourceId"))
       conversation <- IO.pure(parseHex(json, "conversationId"))
-      authorRaw  <- IO.pure(parseHex(json, "authorPub"))
-      deviceRaw  <- IO.pure(parseHex(json, "devicePub"))
-      result     <- (sourceId, conversation, authorRaw, deviceRaw) match
-                      case (Some(id), Right(conv), Right(author), Right(device)) =>
-                        (Ed25519Public.from(author), Ed25519Public.from(device)) match
-                          case (Right(authorPub), Right(devicePub)) =>
-                            store
-                              .upsertCompanionMessage(
-                                CompanionMessageRecord(
-                                  sourceId = id,
-                                  conversationId = conv,
-                                  authorPub = authorPub,
-                                  devicePub = devicePub,
-                                  seq = long(json, "seq").getOrElse(0L),
-                                  body = ByteVector.view(string(json, "body").getOrElse("").getBytes("UTF-8")),
-                                  state = state(json),
-                                  createdAt = long(json, "createdAt").getOrElse(0L),
-                                  syncSeq = long(json, "syncSeq").getOrElse(0L)
+      authorRaw    <- IO.pure(parseHex(json, "authorPub"))
+      deviceRaw    <- IO.pure(parseHex(json, "devicePub"))
+      result       <- (sourceId, conversation, authorRaw, deviceRaw) match
+                        case (Some(id), Right(conv), Right(author), Right(device)) =>
+                          (Ed25519Public.from(author), Ed25519Public.from(device)) match
+                            case (Right(authorPub), Right(devicePub)) =>
+                              store
+                                .upsertCompanionMessage(
+                                  CompanionMessageRecord(
+                                    sourceId = id,
+                                    conversationId = conv,
+                                    authorPub = authorPub,
+                                    devicePub = devicePub,
+                                    seq = long(json, "seq").getOrElse(0L),
+                                    body = ByteVector.view(string(json, "body").getOrElse("").getBytes("UTF-8")),
+                                    state = state(json),
+                                    createdAt = long(json, "createdAt").getOrElse(0L),
+                                    syncSeq = long(json, "syncSeq").getOrElse(0L)
+                                  )
                                 )
-                              )
-                              .map(mapStore)
-                          case _ => IO.pure(Left("message-key"))
-                      case (None, _, _, _) => IO.pure(Left("sourceId"))
-                      case (_, Left(error), _, _) => IO.pure(Left(s"conversation:$error"))
-                      case (_, _, Left(error), _) => IO.pure(Left(s"author:$error"))
-                      case (_, _, _, Left(error)) => IO.pure(Left(s"device:$error"))
+                                .map(mapStore)
+                            case _                                    => IO.pure(Left("message-key"))
+                        case (None, _, _, _)                                       => IO.pure(Left("sourceId"))
+                        case (_, Left(error), _, _)                                => IO.pure(Left(s"conversation:$error"))
+                        case (_, _, Left(error), _)                                => IO.pure(Left(s"author:$error"))
+                        case (_, _, _, Left(error))                                => IO.pure(Left(s"device:$error"))
     yield result
 
   private def lockGeneration: Long = 0L

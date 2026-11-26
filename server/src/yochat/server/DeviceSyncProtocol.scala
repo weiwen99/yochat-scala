@@ -32,14 +32,14 @@ object DeviceSyncProtocol:
     records: Value
   ): Either[String, ByteVector] =
     for
-      _       <- if authHash.size == 32L then Right(()) else Left("auth-hash")
-      _       <- if prevBatchHash.size == 32L then Right(()) else Left("prev-hash")
-      nonce   <- Nonce.from(ByteVector.view(randomBytes(12))).left.map(_ => "nonce")
-      key     <- Crypto.hkdf32(syncRoot.bytes, u64(batchSeq), Domain).left.map(_ => "batch-key")
-      plain    = ByteVector.view(ujson.write(records).getBytes("UTF-8"))
-      cipher  <- Crypto.aeadSeal(key, nonce, aad(authHash, batchSeq, prevBatchHash, nonce), plain).left.map(_ => "seal")
-      header   = headerBytes(authHash, batchSeq, prevBatchHash, nonce)
-      sig     <- Crypto.sign(primaryDevicePrivate, header ++ cipher).left.map(_ => "sign")
+      _      <- if authHash.size == 32L then Right(()) else Left("auth-hash")
+      _      <- if prevBatchHash.size == 32L then Right(()) else Left("prev-hash")
+      nonce  <- Nonce.from(ByteVector.view(randomBytes(12))).left.map(_ => "nonce")
+      key    <- Crypto.hkdf32(syncRoot.bytes, u64(batchSeq), Domain).left.map(_ => "batch-key")
+      plain   = ByteVector.view(ujson.write(records).getBytes("UTF-8"))
+      cipher <- Crypto.aeadSeal(key, nonce, aad(authHash, batchSeq, prevBatchHash, nonce), plain).left.map(_ => "seal")
+      header  = headerBytes(authHash, batchSeq, prevBatchHash, nonce)
+      sig    <- Crypto.sign(primaryDevicePrivate, header ++ cipher).left.map(_ => "sign")
     yield ByteVector.view(
       ujson
         .Obj(

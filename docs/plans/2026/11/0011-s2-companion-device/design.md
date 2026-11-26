@@ -1,6 +1,6 @@
 # Plan 0011 design: S2 只读第二设备
 
-- 状态：draft（2026-11-26）
+- 状态：implementation in progress（2026-11-26；实现检查点见 meta.md）
 - 范围：S2-A。主设备 A1 保持 S1 对端协议不变；第二台设备 A2 只读，经主设备同步加入后的消息。
 - 关联：ADR-0003（v1/S2 范围）、ADR-0004（测试与性能门）、ADR-0006（会话加密）、ADR-0007（存储）、ADR-0008（ACK/窗口）；S1 验收回执见 Plan 0010。
 - 直接来源：2026-11-25 `AI体验营` 群消息（本文末列 id）；仓库既有总结 `docs/evaluations/2026-11-25-d-sync-throughput-requirements.md` 与 `docs/evaluations/2026-11-23-tenk-sync-discussion.md`。

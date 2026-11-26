@@ -83,13 +83,13 @@ object RelayClient:
   ): Resource[IO, RelayClient] =
     Resource.make {
       for
-        incoming      <- Queue.bounded[IO, RelayIncoming](math.max(1, capacity))
+        incoming       <- Queue.bounded[IO, RelayIncoming](math.max(1, capacity))
         deviceIncoming <- Queue.bounded[IO, RelayIncoming](math.max(1, capacity))
-        updates       <- Queue.bounded[IO, Boolean](16)
-        current       <- Ref.of[IO, Option[RelayConnection]](None)
-        closed        <- Ref.of[IO, Boolean](false)
-        inboundBudget <- ByteBudget.create(maxIncomingBytes)
-        supervisor    <- supervise(host, port, localDevice, incoming, deviceIncoming, updates, current, closed, inboundBudget).start
+        updates        <- Queue.bounded[IO, Boolean](16)
+        current        <- Ref.of[IO, Option[RelayConnection]](None)
+        closed         <- Ref.of[IO, Boolean](false)
+        inboundBudget  <- ByteBudget.create(maxIncomingBytes)
+        supervisor     <- supervise(host, port, localDevice, incoming, deviceIncoming, updates, current, closed, inboundBudget).start
       yield new RelayClient(incoming, deviceIncoming, updates, current, closed, inboundBudget, supervisor)
     }(_.close)
 

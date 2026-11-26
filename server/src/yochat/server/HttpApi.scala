@@ -173,6 +173,46 @@ final class HttpApi private ():
                 }
               }
           } ~
+          path("devices") {
+            get {
+              completeResult(service.devicesJson)
+            }
+          } ~
+          path("devices" / "pairing") {
+            post {
+              entity(as[String]) { body =>
+                withObject(body) { json =>
+                  val ttl = optional(json, "ttlHours")(long).toOption.flatten
+                    .map(hours => math.max(1L, math.min(hours, 168L)) * 3_600_000L)
+                    .getOrElse(24L * 3_600_000L)
+                  service.createPairingInvite(ttl)
+                }
+              }
+            }
+          } ~
+          path("devices" / "pairing" / "confirm") {
+            post {
+              entity(as[String]) { body =>
+                withObject(body) { json =>
+                  string(json, "requestCode") match
+                    case Left(error)                         => IO.pure(Left(error))
+                    case Right(code) if code.trim.isEmpty    => IO.pure(Left(ServiceError.BadRequest("request-code")))
+                    case Right(code) if code.length > 32_768 => IO.pure(Left(ServiceError.BadRequest("request-code")))
+                    case Right(code)                         => service.confirmPairing(code)
+                }
+              }
+            }
+          } ~
+          path("devices" / Segment / "revoke") { deviceRaw =>
+            post {
+              completeResult(service.revokeDevice(deviceRaw).map(_.map(_ => ujson.Obj("ok" -> true))))
+            }
+          } ~
+          path("devices" / Segment / "sync") { deviceRaw =>
+            post {
+              completeResult(service.syncDevice(deviceRaw).map(_.map(_ => ujson.Obj("ok" -> true))))
+            }
+          } ~
           path("rekey" / Segment) { sessionRaw =>
             post {
               id(sessionRaw) match

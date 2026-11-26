@@ -25,7 +25,7 @@ final case class PairingInvite(
 
 object PairingInvite:
 
-  val Version: Int = 1
+  val Version: Int   = 1
   private val Domain = Crypto.ascii("yochat-s2-pairing-invite")
 
   def create(

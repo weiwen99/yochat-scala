@@ -6,8 +6,8 @@ import scodec.bits.ByteVector
 
 import yochat.core.{CanonicalReader, CanonicalWriter, CoreError, Crypto, Key32}
 
-/** The authenticated enrollment cutoff: for each (conversation, author, device) stream, the maximum seq that existed when the
-  * companion was authorized. It is small enough to sign directly and does not depend on local SQLite row ids.
+/** The authenticated enrollment cutoff: for each (conversation, author, device) stream, the maximum seq that existed when the companion was
+  * authorized. It is small enough to sign directly and does not depend on local SQLite row ids.
   */
 final case class JoinManifest(entries: Map[ManifestKey, Long]):
 
@@ -35,7 +35,7 @@ final case class JoinManifest(entries: Map[ManifestKey, Long]):
 
 object JoinManifest:
 
-  val Version: Int  = 1
+  val Version: Int    = 1
   val MaxEntries: Int = 1024
 
   val empty: JoinManifest = JoinManifest(Map.empty)
@@ -74,7 +74,7 @@ object JoinManifest:
         _                  <- previous match
                                 case Some(prior) if ManifestKey.ordering(prior).compare(ManifestKey.ordering(key)) >= 0 =>
                                   Left(CoreError.InvalidEncoding)
-                                case _ => Right(())
+                                case _                                                                                  => Right(())
         (maxSeq, r4)       <- r3.u64
         _                  <- if maxSeq >= 0L then Right(()) else Left(CoreError.InvalidEncoding)
         next               <- decodeEntries(r4, remaining - 1, acc.updated(key, maxSeq), Some(key))

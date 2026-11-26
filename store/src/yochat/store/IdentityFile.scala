@@ -25,17 +25,17 @@ object IdentityFile:
 
   val Length: Int = 32
 
-  private val Magic         = Crypto.ascii("YCID")
-  private val VersionOne    = 1
-  private val VersionTwo    = 2
-  private val AadDomainOne  = Crypto.ascii("yochat-store/identity-file/v1")
-  private val AadDomainTwo  = Crypto.ascii("yochat-store/identity-file/v2")
-  private val FileLengthOne = 161
-  private val PlainLengthOne = 4 * Length
+  private val Magic                = Crypto.ascii("YCID")
+  private val VersionOne           = 1
+  private val VersionTwo           = 2
+  private val AadDomainOne         = Crypto.ascii("yochat-store/identity-file/v1")
+  private val AadDomainTwo         = Crypto.ascii("yochat-store/identity-file/v2")
+  private val FileLengthOne        = 161
+  private val PlainLengthOne       = 4 * Length
   private val PlainLengthCompanion = 3 * Length
-  private val HasUserPrivateFlag = 1
-  private val CompanionFlag      = 2
-  private val KnownFlags         = HasUserPrivateFlag | CompanionFlag
+  private val HasUserPrivateFlag   = 1
+  private val CompanionFlag        = 2
+  private val KnownFlags           = HasUserPrivateFlag | CompanionFlag
 
   def isPresent(path: Path): Boolean = SecureFiles.exists(path)
 
@@ -166,14 +166,13 @@ object IdentityFile:
           devicePrivateRaw <- Ed25519Private.from(value.slice(64, 96)).left.map(_ => StorageError.InvalidEnvelope)
           devicePublicRaw  <- Ed25519Public.from(value.slice(96, 128)).left.map(_ => StorageError.InvalidEnvelope)
         yield IdentityKeys(Some(userPrivateRaw), userPublicRaw, devicePrivateRaw, devicePublicRaw, role)
+    else if value.size != PlainLengthCompanion.toLong then Left(StorageError.InvalidEnvelope)
     else
-      if value.size != PlainLengthCompanion.toLong then Left(StorageError.InvalidEnvelope)
-      else
-        for
-          userPublicRaw    <- Ed25519Public.from(value.take(32)).left.map(_ => StorageError.InvalidEnvelope)
-          devicePrivateRaw <- Ed25519Private.from(value.slice(32, 64)).left.map(_ => StorageError.InvalidEnvelope)
-          devicePublicRaw  <- Ed25519Public.from(value.slice(64, 96)).left.map(_ => StorageError.InvalidEnvelope)
-        yield IdentityKeys(None, userPublicRaw, devicePrivateRaw, devicePublicRaw, role)
+      for
+        userPublicRaw    <- Ed25519Public.from(value.take(32)).left.map(_ => StorageError.InvalidEnvelope)
+        devicePrivateRaw <- Ed25519Private.from(value.slice(32, 64)).left.map(_ => StorageError.InvalidEnvelope)
+        devicePublicRaw  <- Ed25519Public.from(value.slice(64, 96)).left.map(_ => StorageError.InvalidEnvelope)
+      yield IdentityKeys(None, userPublicRaw, devicePrivateRaw, devicePublicRaw, role)
 
   private def edPublic(pair: java.security.KeyPair): Ed25519Public =
     Ed25519Public.from(rawPublic(pair)).fold(_ => throw new IllegalStateException("device public key"), identity)

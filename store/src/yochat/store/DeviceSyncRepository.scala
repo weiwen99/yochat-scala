@@ -19,26 +19,26 @@ private[store] object DeviceSyncRepository:
     runtime.now.flatMap { now =>
       runtime.run {
         for
-          _         <- Sql.checkLock(expectedLockGeneration)
-          _         <- validate(record)
-          tombstone <- Sql.meta(Sql.deviceSyncVersionKey(record.peerDevicePub.bytes))
-          _         <- tombstone match
-                         case Some(_) => Sql.abort(StorageError.StaleGeneration)
-                         case None    => FC.unit
-          existing  <- row(record.peerDevicePub.bytes)
-          _         <- existing match
-                         case Some(_) => Sql.abort(StorageError.WriteConflict)
-                         case None    => FC.unit
+          _          <- Sql.checkLock(expectedLockGeneration)
+          _          <- validate(record)
+          tombstone  <- Sql.meta(Sql.deviceSyncVersionKey(record.peerDevicePub.bytes))
+          _          <- tombstone match
+                          case Some(_) => Sql.abort(StorageError.StaleGeneration)
+                          case None    => FC.unit
+          existing   <- row(record.peerDevicePub.bytes)
+          _          <- existing match
+                          case Some(_) => Sql.abort(StorageError.WriteConflict)
+                          case None    => FC.unit
           sealedRoot <- seal(runtime, record, 1L)
-          changed   <-
+          changed    <-
             sql"""INSERT INTO device_sync(
                  |peer_device_pub, sync_root, last_acked_sync_seq, last_batch_seq, last_batch_hash, version, updated_at
                  |) VALUES (
                  |${record.peerDevicePub.bytes.toArray}, $sealedRoot, ${record.lastAckedSyncSeq}, ${record.lastBatchSeq},
                  |${record.lastBatchHash.toArray}, 1, $now
                  |)""".stripMargin.update.run
-          _         <- Sql.changed(changed)
-          _         <- Sql.writeMeta(Sql.deviceSyncVersionKey(record.peerDevicePub.bytes), 1L)
+          _          <- Sql.changed(changed)
+          _          <- Sql.writeMeta(Sql.deviceSyncVersionKey(record.peerDevicePub.bytes), 1L)
         yield record.copy(version = 1L, updatedAt = now)
       }
     }
@@ -60,16 +60,16 @@ private[store] object DeviceSyncRepository:
     runtime.now.flatMap { now =>
       runtime.run {
         for
-          _       <- Sql.checkLock(expectedLockGeneration)
-          _       <- validate(record)
-          current <- loadProgram(runtime, record.peerDevicePub.bytes).flatMap {
-                       case Some(value) => FC.pure(value)
-                       case None        => Sql.abort(StorageError.NotFound("device-sync"))
-                     }
-          _       <- if current.version == expectedVersion then FC.unit else Sql.abort(StorageError.StaleGeneration)
-          next    <- Sql.nextVersion(current.version)
+          _          <- Sql.checkLock(expectedLockGeneration)
+          _          <- validate(record)
+          current    <- loadProgram(runtime, record.peerDevicePub.bytes).flatMap {
+                          case Some(value) => FC.pure(value)
+                          case None        => Sql.abort(StorageError.NotFound("device-sync"))
+                        }
+          _          <- if current.version == expectedVersion then FC.unit else Sql.abort(StorageError.StaleGeneration)
+          next       <- Sql.nextVersion(current.version)
           sealedRoot <- seal(runtime, record, next)
-          changed <-
+          changed    <-
             sql"""UPDATE device_sync SET
                  |sync_root = $sealedRoot,
                  |last_acked_sync_seq = ${record.lastAckedSyncSeq},
@@ -79,8 +79,8 @@ private[store] object DeviceSyncRepository:
                  |updated_at = $now
                  |WHERE peer_device_pub = ${record.peerDevicePub.bytes.toArray} AND version = ${current.version}
                  |""".stripMargin.update.run
-          _       <- Sql.changed(changed)
-          _       <- Sql.writeMeta(Sql.deviceSyncVersionKey(record.peerDevicePub.bytes), next)
+          _          <- Sql.changed(changed)
+          _          <- Sql.writeMeta(Sql.deviceSyncVersionKey(record.peerDevicePub.bytes), next)
         yield record.copy(version = next, updatedAt = now)
       }
     }
@@ -99,7 +99,8 @@ private[store] object DeviceSyncRepository:
                      case None        => Sql.abort(StorageError.NotFound("device-sync"))
                    }
         _       <- if current.version == expectedVersion then FC.unit else Sql.abort(StorageError.StaleGeneration)
-        deleted <- sql"DELETE FROM device_sync WHERE peer_device_pub = ${peerDevicePub.bytes.toArray} AND version = ${current.version}".update.run
+        deleted <-
+          sql"DELETE FROM device_sync WHERE peer_device_pub = ${peerDevicePub.bytes.toArray} AND version = ${current.version}".update.run
         _       <- Sql.changed(deleted)
         next    <- Sql.nextVersion(current.version)
         _       <- Sql.writeMeta(Sql.deviceSyncVersionKey(peerDevicePub.bytes), next)
@@ -135,8 +136,8 @@ private[store] object DeviceSyncRepository:
       .query[(Array[Byte], Array[Byte], Long, Long, Array[Byte], Long, Long)]
       .option
       .map {
-        case None                                                                    => None
-        case Some((peer, root, acked, batch, hash, version, updated))                =>
+        case None                                                     => None
+        case Some((peer, root, acked, batch, hash, version, updated)) =>
           Some(SyncRow(ByteVector.view(peer), ByteVector.view(root), acked, batch, ByteVector.view(hash), version, updated))
       }
 

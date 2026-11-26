@@ -11,8 +11,8 @@ import cats.effect.std.Semaphore
 import scodec.bits.ByteVector
 import ujson.Value
 
+import yochat.core.{Crypto, Ed25519Public, Key32, SessionId}
 import yochat.core.app.{AppEvent, AppLimits, AppState}
-import yochat.core.SessionId
 import yochat.store.{KeySource, MessageRecord, Store, StoreConfig, StorePaths}
 import yochat.transport.RelayClient
 
@@ -53,6 +53,7 @@ final private[server] case class Running(
   store: Store,
   runtime: AppRuntime,
   relay: RelayClient,
+  pairing: DevicePairingService,
   release: IO[Unit]
 ):
 
@@ -283,6 +284,68 @@ final class AppService private (
             .handleErrorWith(error => IO.pure(Left(ServiceError.BadRequest(error.getClass.getSimpleName))))
         }
 
+  def createPairingInvite(ttlMs: Long): IO[Either[ServiceError, Value]] =
+    withUnlockedEither { running =>
+      running.pairing
+        .createInvite(clock.millis(), ttlMs)
+        .map {
+          case Left(error) => Left(ServiceError.BadRequest(error))
+          case Right(code) => Right(ujson.Obj("code" -> code))
+        }
+    }
+
+  def confirmPairing(requestCode: String): IO[Either[ServiceError, Value]] =
+    withUnlockedEither { running =>
+      running.pairing
+        .confirm(requestCode, clock.millis())
+        .map {
+          case Left(error) => Left(ServiceError.BadRequest(error))
+          case Right(code) => Right(ujson.Obj("authCode" -> code))
+        }
+    }
+
+  def devicesJson: IO[Either[ServiceError, Value]] =
+    withUnlockedEither { running =>
+      running.pairing.listDevicesJson.map {
+        case Left(error)  => Left(ServiceError.BadRequest(error))
+        case Right(value) => Right(ujson.Obj("devices" -> value))
+      }
+    }
+
+  def syncDevice(deviceRaw: String): IO[Either[ServiceError, Unit]] =
+    withUnlockedEither { running =>
+      ByteVector.fromHex(deviceRaw).flatMap(Ed25519Public.from(_).toOption) match
+        case None         => IO.pure(Left(ServiceError.BadRequest("device")))
+        case Some(device) =>
+          for
+            loaded <- running.store.loadDevice(device)
+            synced <- running.store.loadDeviceSync(device)
+            result <- (loaded, synced) match
+                        case (Left(error), _)             => IO.pure(Left(ServiceError.BadRequest(error.code)))
+                        case (_, Left(error))             => IO.pure(Left(ServiceError.BadRequest(error.code)))
+                        case (Right(record), Right(sync)) =>
+                          Key32.from(sync.syncRoot) match
+                            case Left(_)     => IO.pure(Left(ServiceError.BadRequest("sync-root")))
+                            case Right(root) =>
+                              DeviceSyncService
+                                .create(
+                                  running.store,
+                                  running.relay,
+                                  device,
+                                  Crypto.sha256(record.authorization).bytes,
+                                  root,
+                                  record.joinCursorSyncSeq
+                                )
+                                .flatMap(_.sendSnapshot)
+                                .map(_.left.map(ServiceError.BadRequest.apply))
+          yield result
+    }
+
+  def revokeDevice(deviceRaw: String): IO[Either[ServiceError, Unit]] =
+    withUnlockedEither { running =>
+      running.pairing.revoke(deviceRaw).map(_.left.map(ServiceError.BadRequest.apply))
+    }
+
   def close: IO[Unit] = lock
 
   private def open(passphrase: Array[Char]): IO[Either[ServiceError, Running]] =
@@ -302,10 +365,12 @@ final class AppService private (
             )
             .allocated
             .flatMap { case (runtime, releaseRuntime) =>
-              val running = Running(store, runtime, relay, releaseRuntime *> releaseRelay *> releaseStore)
-              running.runtime.state.attempt.flatMap {
-                case Right(_)    => IO.pure(Right(running))
-                case Left(error) => running.close.as(Left(ServiceError.RuntimeFailed(error.getClass.getSimpleName)))
+              DevicePairingService.create(store).flatMap { pairing =>
+                val running = Running(store, runtime, relay, pairing, releaseRuntime *> releaseRelay *> releaseStore)
+                running.runtime.state.attempt.flatMap {
+                  case Right(_)    => IO.pure(Right(running))
+                  case Left(error) => running.close.as(Left(ServiceError.RuntimeFailed(error.getClass.getSimpleName)))
+                }
               }
             }
             .handleErrorWith(error => releaseRelay *> releaseStore *> IO.pure(Left(ServiceError.RuntimeFailed(error.getClass.getSimpleName))))

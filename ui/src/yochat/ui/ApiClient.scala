@@ -22,6 +22,7 @@ final class ApiClient:
   val selectedConversation: Var[Option[Conversation]] = Var(None)
   val selectedContact: Var[Option[Contact]]           = Var(None)
   val canSend: Var[Boolean]                           = Var(false)
+  val devices: Var[Vector[Device]]                    = Var(Vector.empty)
 
   private val socket: Var[Option[dom.WebSocket]]   = Var(None)
   private val dismissedNotice: Var[Option[String]] = Var(None)
@@ -59,6 +60,7 @@ final class ApiClient:
           if activeConversation.now() != target then activeConversation.set(target)
           updateSelection(next)
           target.foreach(loadMessages)
+          loadDevices()
         else
           messages.set(Vector.empty)
           selectedConversation.set(None)
@@ -85,6 +87,7 @@ final class ApiClient:
         selectedConversation.set(None)
         selectedContact.set(None)
         canSend.set(false)
+        devices.set(Vector.empty)
         if !serverExited.now() then error.set(None)
         notice.set(None)
         dismissedNotice.set(None)
@@ -179,7 +182,29 @@ final class ApiClient:
 
   def refresh(): Unit = loadSession()
 
+  def createPairingInvite(): Future[String] =
+    post("/api/devices/pairing", ujson.Obj()).map(value => Json.string(value, "code").getOrElse(""))
+
+  def confirmPairing(requestCode: String): Future[String] =
+    post("/api/devices/pairing/confirm", ujson.Obj("requestCode" -> requestCode))
+      .map { value =>
+        loadDevices()
+        Json.string(value, "authCode").getOrElse("")
+      }
+
+  def syncDevice(devicePub: String): Future[Unit] =
+    post(s"/api/devices/$devicePub/sync", ujson.Obj()).map(_ => ())
+
+  def revokeDevice(devicePub: String): Future[Unit] =
+    post(s"/api/devices/$devicePub/revoke", ujson.Obj()).map(_ => loadDevices())
+
   def describeError(failure: Throwable): String = message(failure)
+
+  private def loadDevices(): Unit =
+    request("GET", "/api/devices", None).onComplete {
+      case Success(value)   => devices.set(Json.parseDevices(value))
+      case Failure(failure) => error.set(Some(message(failure)))
+    }
 
   private def updateSelection(current: AppState): Unit =
     val id      = activeConversation.now()

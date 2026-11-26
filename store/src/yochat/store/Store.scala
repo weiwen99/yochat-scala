@@ -8,6 +8,7 @@ import cats.effect.std.Semaphore
 import com.zaxxer.hikari.HikariConfig
 import org.sqlite.{SQLiteConfig, SQLiteDataSource}
 import org.typelevel.doobie.hikari.HikariTransactor
+import org.typelevel.doobie.implicits.*
 import org.typelevel.doobie.ConnectionIO
 import scodec.bits.ByteVector
 
@@ -394,6 +395,9 @@ final class Store private[store] (
   def listAllMessages(conversationId: ByteVector): IO[Either[StorageError, List[MessageRecord]]] =
     MessageRepository.listAll(runtime, conversationId, 100_000)
 
+  def maxMessageId: IO[Either[StorageError, Long]] =
+    runtime.run(sql"SELECT COALESCE(MAX(id), 0) FROM messages".query[Long].unique)
+
   def snapshot: IO[Either[StorageError, StoreSnapshot]] =
     runtime.transact(SnapshotRepository.load(runtime))
 
@@ -534,11 +538,13 @@ object Store:
     userPublic: Ed25519Public
   ): IO[Either[StorageError, Prepared]] =
     val keys = StoreKeys.from(master)
-    IdentityFile.load(config.paths.identityFile, keys.identityKey).map(_.flatMap { identity =>
-      if identity.role == IdentityRole.Companion && identity.userPublic == userPublic && !identity.hasUserPrivate then
-        Right(Prepared(config.paths, keys, identity, isNew = false, config.clock))
-      else Left(StorageError.InvalidEnvelope)
-    })
+    IdentityFile
+      .load(config.paths.identityFile, keys.identityKey)
+      .map(_.flatMap { identity =>
+        if identity.role == IdentityRole.Companion && identity.userPublic == userPublic && !identity.hasUserPrivate then
+          Right(Prepared(config.paths, keys, identity, isNew = false, config.clock))
+        else Left(StorageError.InvalidEnvelope)
+      })
 
   private def createInstance(config: StoreConfig, master: MasterKey): IO[Either[StorageError, Prepared]] =
     val keys = StoreKeys.from(master)

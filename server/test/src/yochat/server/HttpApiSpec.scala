@@ -61,6 +61,39 @@ class HttpApiSpec extends FunSuite:
     finally deleteTree(directory)
   }
 
+  test("device pairing endpoints create, list, and revoke a companion") {
+    val directory    = Files.createTempDirectory("yochat-http-devices-")
+    val companionKey = ExecutorTestSupport.edPair()
+    try
+      val program = for
+        relay  <- RelayServer.start(0)
+        server <- HttpServerFixture.start(directory, relay.port)
+      yield (relay, server)
+      program.use { case (_, server) =>
+        val base = s"http://127.0.0.1:${server.port}"
+        for
+          _       <- postJson(s"$base/api/unlock", ujson.Obj("passphrase" -> "correct horse battery staple"))
+          invite  <- postJson(s"$base/api/devices/pairing", ujson.Obj("ttlHours" -> 1))
+          request <- DevicePairing.request(
+                       invite("code").str,
+                       companionKey.privateKey,
+                       companionKey.publicKey,
+                       "phone"
+                     )
+          requestCode = request.fold(error => throw new AssertionError(error), value => value._1)
+          confirm <- postJson(s"$base/api/devices/pairing/confirm", ujson.Obj("requestCode" -> requestCode))
+          _       = assert(confirm("authCode").str.nonEmpty)
+          devices <- getJson(s"$base/api/devices")
+          _       = assertEquals(devices("devices").arr.size, 1)
+          _       = assertEquals(devices("devices").arr.head("role").str, "companion")
+          _       <- postJson(s"$base/api/devices/${companionKey.publicKey.bytes.toHex}/revoke", ujson.Obj())
+          after   <- getJson(s"$base/api/devices")
+          _       = assert(after("devices").arr.head("revokedAt") != ujson.Null)
+        yield ()
+      }.unsafeRunSync()
+    finally deleteTree(directory)
+  }
+
   test("idle auto-lock gates state and message reads without closing the service") {
     val directory = Files.createTempDirectory("yochat-http-idle-")
     try

@@ -25,7 +25,7 @@ final case class SyncStatus(
 
 object SyncStatus:
 
-  val Version: Int = 1
+  val Version: Int   = 1
   private val Domain = Crypto.ascii("yochat-s2-sync-status")
 
   def create(
@@ -38,9 +38,7 @@ object SyncStatus:
     validate(authHash, lastBatchSeq, lastBatchHash, lastAckedSyncSeq).flatMap { _ =>
       Crypto
         .sign(companionDevicePrivate, signingInput(authHash, lastBatchSeq, lastBatchHash, lastAckedSyncSeq))
-        .map(signature =>
-          SyncStatus(authHash, lastBatchSeq, lastBatchHash, lastAckedSyncSeq, signature)
-        )
+        .map(signature => SyncStatus(authHash, lastBatchSeq, lastBatchHash, lastAckedSyncSeq, signature))
     }
 
   def signingInput(

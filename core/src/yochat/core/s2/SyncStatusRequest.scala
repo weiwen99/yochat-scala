@@ -18,7 +18,7 @@ final case class SyncStatusRequest(
 
 object SyncStatusRequest:
 
-  val Version: Int = 1
+  val Version: Int   = 1
   private val Domain = Crypto.ascii("yochat-s2-sync-status-request")
 
   def create(

@@ -20,22 +20,26 @@ final case class DeviceAuthorization(
   def joinManifestHash: ByteVector = joinManifest.hash.bytes
 
   def verify: Boolean =
-    Crypto.verify(userPub, DeviceAuthorization.signingInput(
+    Crypto.verify(
       userPub,
-      primaryDevicePub,
-      companionDevicePub,
-      joinEpoch,
-      joinManifest,
-      joinCursorSyncSeq,
-      syncRootHash,
-      issuedAt
-    ), signature)
+      DeviceAuthorization.signingInput(
+        userPub,
+        primaryDevicePub,
+        companionDevicePub,
+        joinEpoch,
+        joinManifest,
+        joinCursorSyncSeq,
+        syncRootHash,
+        issuedAt
+      ),
+      signature
+    )
 
   override def toString: String = s"DeviceAuthorization(joinEpoch=$joinEpoch, manifest=${joinManifest.entries.size})"
 
 object DeviceAuthorization:
 
-  val Version: Int = 1
+  val Version: Int   = 1
   private val Domain = Crypto.ascii("yochat-s2-device-authorization")
 
   def create(
