@@ -15,6 +15,8 @@ enum RelayPayload:
   case RekeyAccept(bytes: ByteVector)
   case DeviceSync(bytes: ByteVector)
   case DeviceList(bytes: ByteVector)
+  case Fanout(bytes: ByteVector)
+  case FanoutAck(bytes: ByteVector)
 
 object RelayPayload:
 
@@ -24,6 +26,8 @@ object RelayPayload:
   private val RekeyAcceptKind: Int  = 4
   private val DeviceSyncKind: Int   = 5
   private val DeviceListKind: Int   = 6
+  private val FanoutKind: Int       = 7
+  private val FanoutAckKind: Int    = 8
   val MaxPayload: Int               = 1_048_774
 
   def byteSize(value: RelayPayload): Long =
@@ -34,6 +38,8 @@ object RelayPayload:
       case RelayPayload.RekeyAccept(payload)  => payload.size + 5L
       case RelayPayload.DeviceSync(payload)   => payload.size + 5L
       case RelayPayload.DeviceList(payload)   => payload.size + 5L
+      case RelayPayload.Fanout(payload)       => payload.size + 5L
+      case RelayPayload.FanoutAck(payload)    => payload.size + 5L
 
   def encode(value: RelayPayload): Either[String, ByteVector] =
     val (kind, bytes) = value match
@@ -43,6 +49,8 @@ object RelayPayload:
       case RelayPayload.RekeyAccept(payload)  => (RekeyAcceptKind, payload)
       case RelayPayload.DeviceSync(payload)   => (DeviceSyncKind, payload)
       case RelayPayload.DeviceList(payload)   => (DeviceListKind, payload)
+      case RelayPayload.Fanout(payload)       => (FanoutKind, payload)
+      case RelayPayload.FanoutAck(payload)    => (FanoutAckKind, payload)
     if bytes.size > MaxPayload.toLong then Left("payload-too-large")
     else
       val out  = new ByteArrayOutputStream(bytes.size.toInt + 5)
@@ -73,6 +81,8 @@ object RelayPayload:
             case RekeyAcceptKind  => Right(RelayPayload.RekeyAccept(payload))
             case DeviceSyncKind   => Right(RelayPayload.DeviceSync(payload))
             case DeviceListKind   => Right(RelayPayload.DeviceList(payload))
+            case FanoutKind       => Right(RelayPayload.Fanout(payload))
+            case FanoutAckKind    => Right(RelayPayload.FanoutAck(payload))
             case _                => Left("unknown-kind")
       catch case _: java.io.IOException => Left("invalid-payload")
 

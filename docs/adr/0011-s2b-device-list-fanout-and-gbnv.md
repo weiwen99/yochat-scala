@@ -1,6 +1,6 @@
 # S2-B：联系人可见设备列表、设备扇出与 GBNV
 
-**状态**: accepted for B1 (2026-11-26); B2/B3 remain future waves
+**状态**: accepted and implemented for B1/B2/B3 on `feat/plan-0012-b2-impl` (2026-11-26); S2-B parity sign-off pending
 
 **前序**: ADR-0003（S1/S2 范围）、ADR-0004（测试与性能门）、ADR-0006（S1 加密）、ADR-0007（存储）、ADR-0008（ACK/窗口）、ADR-0010（S2-A 只读伴随设备）。本 ADR 只覆盖 S2-B；S2-A 的本地移除、JoinManifest 与设备同步路径保留。
 

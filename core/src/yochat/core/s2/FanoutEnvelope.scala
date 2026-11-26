@@ -26,17 +26,19 @@ final case class FanoutEnvelope(
   ephemeralPub: X25519Public,
   nonce: Nonce,
   ciphertext: ByteVector,
-  signature: Signature
+  signature: Signature,
+  order: Option[OrderStamp] = None
 ):
+
   def verify: Boolean =
     Crypto.verify(
       senderDevice,
-      FanoutEnvelope.signingInput(senderUser, senderDevice, recipientDevice, conversationId, authorSeq, ephemeralPub, nonce, ciphertext),
+      FanoutEnvelope.signingInput(senderUser, senderDevice, recipientDevice, conversationId, authorSeq, ephemeralPub, nonce, ciphertext, order),
       signature
     )
 
   def canonical: ByteVector =
-    FanoutEnvelope.canonical(senderUser, senderDevice, recipientDevice, conversationId, authorSeq, ephemeralPub, nonce, ciphertext)
+    FanoutEnvelope.canonical(senderUser, senderDevice, recipientDevice, conversationId, authorSeq, ephemeralPub, nonce, ciphertext, order)
 
   def bytes: ByteVector = canonical ++ signature.bytes
 
@@ -44,8 +46,8 @@ final case class FanoutEnvelope(
 
 object FanoutEnvelope:
 
-  val Version: Int = 1
-  private val Domain = Crypto.ascii("yochat-s2b-fanout-envelope")
+  val Version: Int    = 2
+  private val Domain  = Crypto.ascii("yochat-s2b-fanout-envelope")
   private val KeyInfo = Crypto.ascii("yochat-s2b-fanout-message/v1")
 
   def create(
@@ -59,20 +61,33 @@ object FanoutEnvelope:
     body: ByteVector,
     ephemeralPrivate: X25519Private,
     ephemeralPublic: X25519Public,
-    nonce: Nonce
+    nonce: Nonce,
+    order: Option[OrderStamp] = None
   ): Either[CoreError, FanoutEnvelope] =
     validate(conversationId, authorSeq, body, recipientDevice) match
       case Left(error) => Left(error)
       case Right(_)    =>
         for
-          shared <- Crypto.agree(ephemeralPrivate, recipientFanoutPublic)
-          key    <- Crypto.hkdf32(shared.bytes, conversationId, KeyInfo)
-          cipher <- Crypto.aeadSeal(key, nonce, aad(senderUser, senderDevice, recipientDevice, conversationId, authorSeq), body)
-          signature <- Crypto.sign(
-                         senderPrivate,
-                         signingInput(senderUser, senderDevice, recipientDevice, conversationId, authorSeq, ephemeralPublic, nonce, cipher)
-                       )
-        yield FanoutEnvelope(senderUser, senderDevice, recipientDevice, conversationId, authorSeq, ephemeralPublic, nonce, cipher, signature)
+          shared    <- Crypto.agree(ephemeralPrivate, recipientFanoutPublic)
+          key       <- Crypto.hkdf32(shared.bytes, conversationId, KeyInfo)
+          cipher    <- Crypto.aeadSeal(key, nonce, aad(senderUser, senderDevice, recipientDevice, conversationId, authorSeq), body)
+          signature <-
+            Crypto.sign(
+              senderPrivate,
+              signingInput(senderUser, senderDevice, recipientDevice, conversationId, authorSeq, ephemeralPublic, nonce, cipher, order)
+            )
+        yield FanoutEnvelope(
+          senderUser,
+          senderDevice,
+          recipientDevice,
+          conversationId,
+          authorSeq,
+          ephemeralPublic,
+          nonce,
+          cipher,
+          signature,
+          order
+        )
 
   def open(
     recipientFanoutPrivate: X25519Private,
@@ -108,33 +123,52 @@ object FanoutEnvelope:
       for
         unsigned  <- decode(value.dropRight(Signature.Length.toLong))
         signature <- Signature.from(value.takeRight(Signature.Length.toLong))
-        result     = FanoutEnvelope(unsigned._1, unsigned._2, unsigned._3, unsigned._4, unsigned._5, unsigned._6, unsigned._7, unsigned._8, signature)
+        result     = FanoutEnvelope(
+                       unsigned._1,
+                       unsigned._2,
+                       unsigned._3,
+                       unsigned._4,
+                       unsigned._5,
+                       unsigned._6,
+                       unsigned._7,
+                       unsigned._8,
+                       signature,
+                       unsigned._9
+                     )
         _         <- if result.verify then Right(()) else Left(CoreError.InvalidSignature)
       yield result
 
   private def decode(
     value: ByteVector
-  ): Either[CoreError, (Ed25519Public, Ed25519Public, Ed25519Public, ByteVector, Long, X25519Public, Nonce, ByteVector)] =
+  ): Either[CoreError, (Ed25519Public, Ed25519Public, Ed25519Public, ByteVector, Long, X25519Public, Nonce, ByteVector, Option[OrderStamp])] =
     val reader = CanonicalReader(value)
     for
-      (version, r1)   <- reader.u8
-      _               <- if version == Version then Right(()) else Left(CoreError.InvalidVersion(version))
-      (senderUser, r2) <- r1.fixed(32)
-      userPub         <- Ed25519Public.from(senderUser)
-      (senderDevice, r3) <- r2.fixed(32)
-      senderPub       <- Ed25519Public.from(senderDevice)
-      (recipient, r4) <- r3.fixed(32)
-      recipientPub    <- Ed25519Public.from(recipient)
-      (conversation, r5) <- r4.fixed(32)
-      (seq, r6)       <- r5.u64
-      (ephemeral, r7) <- r6.fixed(32)
-      ephemeralPub    <- X25519Public.from(ephemeral)
-      (nonceRaw, r8)  <- r7.fixed(Nonce.Length)
-      nonce           <- Nonce.from(nonceRaw)
-      (cipher, r9)    <- r8.bytes(1_048_576)
-      _               <- r9.finish
-      _               <- validate(conversation, seq, cipher, recipientPub)
-    yield (userPub, senderPub, recipientPub, conversation, seq, ephemeralPub, nonce, cipher)
+      (version, r1)       <- reader.u8
+      _                   <- if version == Version then Right(()) else Left(CoreError.InvalidVersion(version))
+      (senderUser, r2)    <- r1.fixed(32)
+      userPub             <- Ed25519Public.from(senderUser)
+      (senderDevice, r3)  <- r2.fixed(32)
+      senderPub           <- Ed25519Public.from(senderDevice)
+      (recipient, r4)     <- r3.fixed(32)
+      recipientPub        <- Ed25519Public.from(recipient)
+      (conversation, r5)  <- r4.fixed(32)
+      (seq, r6)           <- r5.u64
+      (ephemeral, r7)     <- r6.fixed(32)
+      ephemeralPub        <- X25519Public.from(ephemeral)
+      (nonceRaw, r8)      <- r7.fixed(Nonce.Length)
+      nonce               <- Nonce.from(nonceRaw)
+      (hasOrder, r9)      <- r8.u8
+      (order, afterOrder) <- hasOrder match
+                               case 0 => Right((None, r9))
+                               case 1 =>
+                                 r9.bytes(1_024).flatMap { case (raw, next) =>
+                                   OrderStamp.fromBytes(raw).map(value => (Some(value), next))
+                                 }
+                               case _ => Left(CoreError.InvalidEncoding)
+      (cipher, r10)       <- afterOrder.bytes(1_048_576)
+      _                   <- r10.finish
+      _                   <- validate(conversation, seq, cipher, recipientPub)
+    yield (userPub, senderPub, recipientPub, conversation, seq, ephemeralPub, nonce, cipher, order)
 
   def signingInput(
     senderUser: Ed25519Public,
@@ -144,9 +178,10 @@ object FanoutEnvelope:
     authorSeq: Long,
     ephemeralPub: X25519Public,
     nonce: Nonce,
-    ciphertext: ByteVector
+    ciphertext: ByteVector,
+    order: Option[OrderStamp]
   ): ByteVector =
-    Domain ++ canonical(senderUser, senderDevice, recipientDevice, conversationId, authorSeq, ephemeralPub, nonce, ciphertext)
+    Domain ++ canonical(senderUser, senderDevice, recipientDevice, conversationId, authorSeq, ephemeralPub, nonce, ciphertext, order)
 
   def canonical(
     senderUser: Ed25519Public,
@@ -156,9 +191,10 @@ object FanoutEnvelope:
     authorSeq: Long,
     ephemeralPub: X25519Public,
     nonce: Nonce,
-    ciphertext: ByteVector
+    ciphertext: ByteVector,
+    order: Option[OrderStamp]
   ): ByteVector =
-    CanonicalWriter()
+    val writer = CanonicalWriter()
       .u8(Version)
       .fixed(senderUser.bytes)
       .fixed(senderDevice.bytes)
@@ -167,8 +203,9 @@ object FanoutEnvelope:
       .u64(authorSeq)
       .fixed(ephemeralPub.bytes)
       .fixed(nonce.bytes)
-      .bytes(ciphertext)
-      .result
+      .u8(if order.isDefined then 1 else 0)
+    order.foreach(value => writer.bytes(value.bytes))
+    writer.bytes(ciphertext).result
 
   private def aad(
     senderUser: Ed25519Public,

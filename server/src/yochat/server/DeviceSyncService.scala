@@ -4,7 +4,7 @@ import cats.effect.{IO, Ref}
 import scodec.bits.ByteVector
 
 import yochat.core.{Ed25519Public, Key32}
-import yochat.core.s2.{JoinManifest, ManifestKey}
+import yochat.core.s2.{JoinManifest, LogicalKey, ManifestKey, OrderStamp}
 import yochat.store.{ContactRecord, ConversationRecord, MessageRecord, MessageState, Store}
 import yochat.transport.{RelayClient, RelayPayload}
 
@@ -30,10 +30,12 @@ final class DeviceSyncService(
     for
       syncSeqs <- store.messageSyncSeqs(lastAckedSyncSeq)
       snapshot <- store.snapshot
-      result   <- (syncSeqs, snapshot) match
-                    case (Left(error), _)            => IO.pure(Left(error.code))
-                    case (_, Left(error))            => IO.pure(Left(error.code))
-                    case (Right(seqs), Right(value)) =>
+      orders   <- store.listAllMessageOrders
+      result   <- (syncSeqs, snapshot, orders) match
+                    case (Left(error), _, _)                          => IO.pure(Left(error.code))
+                    case (_, Left(error), _)                          => IO.pure(Left(error.code))
+                    case (_, _, Left(error))                          => IO.pure(Left(error.code))
+                    case (Right(seqs), Right(value), Right(orderMap)) =>
                       val candidates = value.messages.values.flatten
                         .flatMap(message => seqs.get(message.id).map(seq => message -> seq))
                         .toVector
@@ -50,7 +52,8 @@ final class DeviceSyncService(
                       )
                       val baseSize   = ujson.write(base).getBytes("UTF-8").length
                       val packed     = messages.foldLeft((Vector.empty[(MessageRecord, Long)], baseSize)) { case ((acc, size), (message, seq)) =>
-                        val encoded = ujson.write(messageJson(message, seq)).getBytes("UTF-8").length
+                        val order   = orderMap.get(LogicalKey(message.conversationId, message.devicePub, message.seq))
+                        val encoded = ujson.write(messageJson(message, seq, order)).getBytes("UTF-8").length
                         if size + encoded + 1 <= MaxBatchBytes then (acc :+ (message, seq), size + encoded + 1)
                         else (acc, size)
                       }
@@ -60,7 +63,9 @@ final class DeviceSyncService(
                       val records    = ujson.Obj(
                         "contacts"      -> base("contacts"),
                         "conversations" -> base("conversations"),
-                        "messages"      -> ujson.Arr(selected.map { case (message, seq) => messageJson(message, seq) }*)
+                        "messages"      -> ujson.Arr(selected.map { case (message, seq) =>
+                          messageJson(message, seq, orderMap.get(LogicalKey(message.conversationId, message.devicePub, message.seq)))
+                        }*)
                       )
                       if baseSize > MaxBatchBytes || (messages.nonEmpty && selected.isEmpty) then IO.pure(Left("batch-too-large"))
                       else
@@ -114,7 +119,7 @@ final class DeviceSyncService(
       "createdAt"   -> record.createdAt
     )
 
-  private def messageJson(record: MessageRecord, syncSeq: Long): ujson.Value =
+  private def messageJson(record: MessageRecord, syncSeq: Long, order: Option[OrderStamp]): ujson.Value =
     ujson.Obj(
       "sourceId"       -> record.id,
       "conversationId" -> record.conversationId.toHex,
@@ -124,7 +129,9 @@ final class DeviceSyncService(
       "body"           -> new String(record.body.toArray, "UTF-8"),
       "state"          -> stateCode(record.state),
       "createdAt"      -> record.createdAt,
-      "syncSeq"        -> syncSeq
+      "syncSeq"        -> syncSeq,
+      "lamport"        -> order.map(_.lamport).getOrElse(record.seq),
+      "deps"           -> ujson.Arr(order.toVector.flatMap(_.deps).map(dep => ujson.Arr(ujson.Str(dep.device.bytes.toHex), ujson.Num(dep.seq.toDouble)))*)
     )
 
   private def confirmationCode(record: ContactRecord): Int =

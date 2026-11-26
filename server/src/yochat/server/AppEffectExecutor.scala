@@ -16,6 +16,7 @@ import yochat.store.{
   HandshakeWrite,
   InvitationData,
   InvitationState,
+  MessageRecord,
   MessageState,
   RebindOutcome,
   SessionRecord,
@@ -79,7 +80,12 @@ enum AppExecutionError:
   override def toString: String = code
 
 /** Executes the pure `AppEffect` vocabulary against the production store and an explicit transport sink. */
-final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: AppTransport):
+final class AppEffectExecutor(
+  store: Store,
+  identity: LocalIdentity,
+  transport: AppTransport,
+  onOutboundPersisted: (MessageRecord, Long) => IO[Unit] = (_, _) => IO.unit
+):
 
   def executeAll(effects: Vector[AppEffect]): IO[Either[AppExecutionError, Vector[Long]]] =
     effects.foldLeft(IO.pure[Either[AppExecutionError, Vector[Long]]](Right(Vector.empty))) { (accumulator, effect) =>
@@ -206,9 +212,13 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
                               message.body,
                               message.wire.bytes,
                               MessageState.Pending,
-                              message.attempts
+                              message.attempts,
+                              message.order
                             )
-                            .map(mapStore)
+                            .flatMap {
+                              case Right(append) => onOutboundPersisted(append.message, lock).attempt.void.as(Right(()))
+                              case Left(error)   => IO.pure(Left(AppExecutionError.StoreFailed(error)))
+                            }
     yield result
 
   private def persistInbound(
@@ -244,7 +254,8 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
                                                message.devicePub,
                                                message.seq,
                                                message.body,
-                                               message.wire.bytes
+                                               message.wire.bytes,
+                                               message.order
                                              )
                                            else
                                              store.appendInboundAndRetire(
@@ -257,7 +268,8 @@ final class AppEffectExecutor(store: Store, identity: LocalIdentity, transport: 
                                                message.seq,
                                                message.body,
                                                message.wire.bytes,
-                                               retired
+                                               retired,
+                                               message.order
                                              )
                                           ).map(mapStore)
                     yield appended

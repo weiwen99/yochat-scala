@@ -12,6 +12,7 @@ import cats.effect.unsafe.implicits.global
 import ujson.Value
 
 import yochat.server.PairingTool
+import yochat.store.StorePaths
 
 /** Fixed S2-A contract: old-history exclusion, 200 post-join messages, A2 restart catch-up, A1 restart, local revoke. */
 object S2E2E:
@@ -20,10 +21,11 @@ object S2E2E:
 
   def main(args: Array[String]): Unit =
     val perf      = args.contains("--perf")
-    val label     = if perf then "S2PERF" else "S2E2E"
+    val fanoutPerf = args.contains("--fanout-perf")
+    val label     = if fanoutPerf then "S2BPERF" else if perf then "S2PERF" else "S2E2E"
     val started   = System.nanoTime()
     val evidence =
-      try if perf then runPerf() else run()
+      try if fanoutPerf then runFanoutPerf() else if perf then runPerf() else run()
       catch
         case NonFatal(error) =>
           println(s"$label FAIL ${error.getClass.getSimpleName}: ${Option(error.getMessage).getOrElse("")}")
@@ -70,15 +72,56 @@ object S2E2E:
         )
         ensure(a2Post.map(message => (message._2, message._1)).distinct.size == 200, "A2 has duplicate author sequence numbers")
 
+        // B2: B1 reaches A2 directly while A1 is offline. A1's later sync must not duplicate the same logical message.
+        pair.a.stop()
+        val directBody = "b-direct-while-a1-offline"
+        pair.b.sendMessage(handshake.bConversation, directBody)
+        try
+          E2E.awaitTrue("A2 direct fanout", Duration.ofSeconds(20)) {
+            a2.messages(handshake.aConversation).exists(_.obj("body").str == directBody)
+          }
+        catch
+          case NonFatal(error) =>
+            val a2Messages = a2.messages(handshake.aConversation).map(value => (value.obj("conversationId").str, value.obj("body").str, value.obj("seq").render()))
+            throw new AssertionError(s"${error.getMessage}\nA conv=${handshake.aConversation} B conv=${handshake.bConversation} A2 messages=${a2Messages.takeRight(5)}\nA2 log:\n${a2.logTail()}", error)
+        val directCount = a2.messages(handshake.aConversation).size
+        ensure(directCount == 201, s"A2 direct count=$directCount")
+        ensure(receiptCount(pair.b, 2) >= 1L, "B1 did not persist the A2 ACK")
+        pair.a.start(expectExisting = true)
+        pair.a.unlock()
+        pair.a.awaitOnline(online = true)
+        Thread.sleep(3_000L)
+        val afterSync = a2.messages(handshake.aConversation)
+        ensure(afterSync.size == 201, s"A2 duplicated direct message after A1 sync: ${afterSync.size}")
+        ensure(afterSync.count(_.obj("body").str == directBody) == 1, "A2 displayed the direct message twice")
+        ensure(receiptCount(pair.b, 1) == 0L, "B1 left pending fanout receipts after A2 ACK")
+
         a2.stop()
         (1 to 10).foreach(index => pair.a.sendMessage(handshake.aConversation, s"offline-a-$index"))
         (1 to 10).foreach(index => pair.b.sendMessage(handshake.bConversation, s"offline-b-$index"))
         a2.start()
-        awaitCompanionMessages(a2, handshake.aConversation, 220)
+        awaitCompanionMessages(a2, handshake.aConversation, 221)
 
         pair.a.restart()
         pair.a.sendMessage(handshake.aConversation, "after-a1-restart")
-        awaitCompanionMessages(a2, handshake.aConversation, 221)
+        awaitCompanionMessages(a2, handshake.aConversation, 222)
+
+        // B3: concurrent A/B sends converge on the same signed Lamport/device/seq order at A, B and A2.
+        val concurrent = (1 to 10).flatMap { index =>
+          Vector(
+            pair.a.sendMessageAsync(handshake.aConversation, s"concurrent-a-$index"),
+            pair.b.sendMessageAsync(handshake.bConversation, s"concurrent-b-$index")
+          )
+        }
+        CompletableFuture.allOf(concurrent*).orTimeout(30, TimeUnit.SECONDS).join()
+        awaitCompanionMessages(a2, handshake.aConversation, 242)
+        val expectedOrder = (1 to 10).flatMap(index => Vector(s"concurrent-a-$index", s"concurrent-b-$index")).toVector
+        val aOrder        = pair.a.messages(handshake.aConversation, limit = 1000).map(_._4).filter(_.startsWith("concurrent-")).takeRight(20)
+        val bOrder        = pair.b.messages(handshake.bConversation, limit = 1000).map(_._4).filter(_.startsWith("concurrent-")).takeRight(20)
+        val a2Order       = E2E.messageIds(ujson.Arr(a2.messages(handshake.aConversation)*)).map(_._4).filter(_.startsWith("concurrent-")).takeRight(20)
+        ensure(aOrder == a2Order, s"A/A2 concurrent order differs a=${aOrder.take(3)} a2=${a2Order.take(3)}")
+        ensure(bOrder == a2Order, s"B/A2 concurrent order differs b=${bOrder.take(3)} a2=${a2Order.take(3)}")
+        ensure(a2Order.toSet == expectedOrder.toSet, "A2 missed a concurrent message")
 
         val a2Device = a2.state("identity")("deviceId").str
         val revoked   = new Http().post(s"${pair.a.base}/api/devices/$a2Device/revoke", ujson.Obj())
@@ -88,20 +131,59 @@ object S2E2E:
         pair.b.sendMessage(handshake.bConversation, "after-revoke-b")
         Thread.sleep(2_000L)
         val afterRevoke = a2.messages(handshake.aConversation).size
-        ensure(afterRevoke == 221, s"A2 received after revoke: $afterRevoke")
+        ensure(afterRevoke == 242, s"A2 received after revoke: $afterRevoke")
         val send = new Http().post(
           s"${a2.base}/api/conversations/${handshake.aConversation}/messages",
           ujson.Obj("body" -> "forbidden")
         )
         ensure(send.status == 404 || send.status == 405 || send.status == 400, s"A2 mutation accepted: ${send.status}")
 
-        s"old=0 postJoin=200 offline=220 restart=221 revoked=221 a2=${a2Device.take(12)}"
+        s"old=0 postJoin=200 direct=201 offline=221 restart=222 concurrent=242 revoked=242 a2=${a2Device.take(12)}"
       finally
         a2.stop()
         E2E.deleteTree(a2Directory)
     }
 
   /** S2#2: 1,000 post-join messages are already in A1's store; A2 starts cold and must catch up within 5s. */
+  /** B2#2: B1 reaches an active A2 directly with 1,000 messages while A1 is offline, within 5s. */
+  private def runFanoutPerf(): String =
+    E2EEnvironment.withPair { pair =>
+      val a2Directory = Files.createTempDirectory("yochat-e2e-a2-fanout-perf-")
+      val a2          = new CompanionProcess("A2", a2Directory, E2E.freePort(), pair.relay.port)
+      try
+        val handshake = E2EEnvironment.handshake(pair)
+        pair.a.verifySafety(handshake.bUser)
+        pair.b.verifySafety(handshake.aUser)
+        pair.a.awaitSafety(handshake.bUser, verified = true)
+        pair.b.awaitSafety(handshake.aUser, verified = true)
+
+        val inviteResponse = new Http().post(s"${pair.a.base}/api/devices/pairing", ujson.Obj("ttlHours" -> 1))
+        ensure(inviteResponse.ok, s"A1 pairing invite failed: ${inviteResponse.status} ${inviteResponse.body}")
+        val inviteFile = a2Directory.resolve("invite.txt")
+        Files.writeString(inviteFile, inviteResponse.json("code").str, StandardCharsets.UTF_8)
+        runPairing(pair.a, a2, handshake.aUser, inviteFile)
+        a2.start()
+        awaitCompanionContact(a2, handshake.bUser)
+        awaitPeerDevices(pair.b, handshake.aUser, expected = 2)
+        Thread.sleep(6_000L)
+
+        pair.a.stop()
+        val started = System.nanoTime()
+        (1 to 1000).grouped(32).foreach { batch =>
+          val sends = batch.map(index => pair.b.sendMessageAsync(handshake.bConversation, f"direct-$index%04d"))
+          CompletableFuture.allOf(sends*).orTimeout(30, TimeUnit.SECONDS).join()
+        }
+        awaitCompanionMessages(a2, handshake.aConversation, 1_000)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000L
+        ensure(elapsedMs < 5_000L, s"1000 direct messages took ${elapsedMs}ms")
+        val bodies = a2.messages(handshake.aConversation).map(_.obj("body").str).filter(_.startsWith("direct-"))
+        ensure(bodies.size == 1_000 && bodies.distinct.size == 1_000, s"A2 direct bodies=${bodies.size} distinct=${bodies.distinct.size}")
+        s"fanout_ms=$elapsedMs count=1000"
+      finally
+        a2.stop()
+        E2E.deleteTree(a2Directory)
+    }
+
   private def runPerf(): String =
     E2EEnvironment.withPair { pair =>
       val a2Directory = Files.createTempDirectory("yochat-e2e-a2-perf-")
@@ -176,6 +258,17 @@ object S2E2E:
       .unsafeRunSync()
     ensure(acceptExit.contains(cats.effect.ExitCode.Success), "A2 pair-accept failed")
 
+  private def receiptCount(service: ServiceProcess, state: Int): Long =
+    val database = StorePaths.under(service.dataDir).database
+    val connection = java.sql.DriverManager.getConnection(s"jdbc:sqlite:${database.toAbsolutePath}")
+    try
+      val statement = connection.createStatement()
+      try
+        val result = statement.executeQuery(s"SELECT count(*) FROM delivery_receipts WHERE state = $state")
+        if result.next() then result.getLong(1) else 0L
+      finally statement.close()
+    finally connection.close()
+
   private def awaitPeerDevices(service: ServiceProcess, user: String, expected: Int): Unit =
     E2E.awaitTrue(s"peer devices=$expected", Duration.ofSeconds(10)) {
       contactDevices(service, user).size >= expected
@@ -197,9 +290,16 @@ object S2E2E:
     }
 
   private def awaitCompanionMessages(a2: CompanionProcess, conversation: String, expected: Int): Unit =
-    E2E.awaitTrue(s"A2 messages=$expected", Duration.ofSeconds(30)) {
-      a2.messages(conversation).size >= expected
-    }
+    try
+      E2E.awaitTrue(s"A2 messages=$expected", Duration.ofSeconds(30)) {
+        a2.messages(conversation).size >= expected
+      }
+    catch
+      case NonFatal(error) =>
+        throw new AssertionError(
+          s"${error.getMessage} actual=${a2.messages(conversation).size} orders=${a2.orderCount} companion=${a2.companionCount}",
+          error
+        )
 
   private def ensure(condition: Boolean, message: => String): Unit =
     if !condition then throw new AssertionError(message)
@@ -255,3 +355,20 @@ object S2E2E:
 
     def messages(conversation: String): Vector[Value] =
       http.get(s"$base/api/conversations/$conversation/messages?limit=1000").json.arr.toVector
+
+    def orderCount: Long = sqlCount("message_order")
+    def companionCount: Long = sqlCount("companion_messages")
+
+    private def sqlCount(table: String): Long =
+      val connection = java.sql.DriverManager.getConnection(s"jdbc:sqlite:${StorePaths.under(dataDir).database.toAbsolutePath}")
+      try
+        val statement = connection.createStatement()
+        try
+          val result = statement.executeQuery(s"SELECT count(*) FROM $table")
+          if result.next() then result.getLong(1) else 0L
+        finally statement.close()
+      finally connection.close()
+
+    def logTail(lines: Int = 120): String =
+      if Files.exists(log) then Files.readAllLines(log).asScala.toVector.takeRight(lines).mkString("\n")
+      else ""

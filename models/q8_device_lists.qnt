@@ -1,14 +1,17 @@
-// Q8a (B1): signed device-list snapshot and permanent revocation.
-// A contact can only move to a newer list; a revoked device never becomes
-// active again. Signatures, storage and wire encoding are abstracted.
+// Q8b (B1+B2+B3): signed device-list snapshot, permanent revocation, direct fanout,
+// logical dedupe, per-recipient ACK and monotonic Lamport evidence.
+// Signatures, storage and wire encoding are abstracted as authenticated inputs.
 module q8DeviceLists {
-  pure val knownDevices = Set("A1", "A2")
+  pure val knownDevices = Set("A1", "A2", "B1", "B2")
 
   type State = {
     active: Set[str],
     revoked: Set[str],
     everRevoked: Set[str],
     version: int,
+    delivered: Set[int],
+    acked: Set[int],
+    lamport: int,
   }
 
   var s: State
@@ -18,6 +21,9 @@ module q8DeviceLists {
     revoked: Set(),
     everRevoked: Set(),
     version: 0,
+    delivered: Set(),
+    acked: Set(),
+    lamport: 0,
   }
 
   action joinA2 = all {
@@ -37,18 +43,38 @@ module q8DeviceLists {
     },
   }
 
-  // An old snapshot cannot resurrect a revoked device; it is a no-op here.
-  action oldSnapshot = all {
-    s.everRevoked.contains("A2"),
+  // B1 addresses the active A2 directly. A logical message is delivered once.
+  action direct = all {
+    s.active.contains("A2"),
+    s.delivered.size() < 3,
+    s' = {
+      ...s,
+      delivered: s.delivered.union(Set(s.delivered.size() + 1)),
+      lamport: s.lamport + 1,
+    },
+  }
+
+  action duplicate = all {
+    s.delivered.size() > 0,
     s' = s,
   }
 
-  action duplicate = s' = s
+  action ack = all {
+    s.delivered.size() > 0,
+    s.acked.size() < s.delivered.size(),
+    s' = { ...s, acked: s.acked.union(Set(s.acked.size() + 1)) },
+  }
+
+  action sendA = s' = { ...s, lamport: s.lamport + 1 }
+  action sendB = s' = { ...s, lamport: s.lamport + 1 }
+  action oldSnapshot = all { s.everRevoked.contains("A2"), s' = s }
   action idle = s' = s
-  action step = any { joinA2, revokeA2, oldSnapshot, duplicate, idle }
+  action step = any { joinA2, revokeA2, direct, duplicate, ack, sendA, sendB, oldSnapshot, idle }
 
   val revokedNeverActive = s.active.intersect(s.revoked) == Set()
   val everRevokedMonotonic = s.revoked.subseteq(s.everRevoked)
   val versionNonNegative = s.version >= 0
-  val safe = revokedNeverActive and everRevokedMonotonic and versionNonNegative
+  val lamportNonNegative = s.lamport >= 0
+  val ackRequiresDelivery = s.acked.subseteq(s.delivered)
+  val safe = revokedNeverActive and everRevokedMonotonic and versionNonNegative and lamportNonNegative and ackRequiresDelivery
 }

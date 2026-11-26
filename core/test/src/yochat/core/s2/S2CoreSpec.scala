@@ -91,6 +91,22 @@ final class S2CoreSpec extends FunSuite:
     assert(!envelope.copy(authorSeq = 8L).verify)
   }
 
+  test("order stamps round-trip and fanout ACKs bind the recipient device") {
+    val stamp = OrderStamp
+      .create(9L, Vector(OrderDependency(primary.publicKey, 4L), OrderDependency(companion.publicKey, 3L)))
+      .fold(error => fail(error.toString), identity)
+    assertEquals(OrderStamp.fromBytes(stamp.bytes), Right(stamp))
+    assert(OrderStamp.create(9L, Vector(OrderDependency(primary.publicKey, 1L), OrderDependency(primary.publicKey, 2L))).isLeft)
+
+    val conversation = ByteVector.fill(32)(0x51)
+    val ack = FanoutAck
+      .create(companion.privateKey, companion.publicKey, primary.publicKey, conversation, primary.publicKey, 7L, 1_000L)
+      .fold(error => fail(error.toString), identity)
+    assert(ack.verify)
+    assertEquals(FanoutAck.fromBytes(ack.bytes), Right(ack))
+    assert(!ack.copy(authorSeq = 8L).verify)
+  }
+
   test("peer device list round-trips and rejects revocation/version tamper") {
     val entries = Vector(
       PeerDeviceEntry(primary.publicKey, PeerDeviceRole.Primary, "laptop", 1_000L, None),

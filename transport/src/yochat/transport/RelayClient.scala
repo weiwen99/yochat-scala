@@ -186,6 +186,8 @@ final private[transport] class RelayConnection(
         payload match
           case _: RelayPayload.DeviceSync => deviceIncoming
           case _: RelayPayload.DeviceList => deviceIncoming
+          case _: RelayPayload.Fanout     => deviceIncoming
+          case _: RelayPayload.FanoutAck  => deviceIncoming
           case _                          => incoming
       budget.tryReserve(bytes).flatMap {
         case false => IO.unit

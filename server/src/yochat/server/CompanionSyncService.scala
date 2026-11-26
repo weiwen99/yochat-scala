@@ -5,7 +5,7 @@ import scodec.bits.ByteVector
 import ujson.Value
 
 import yochat.core.{Ed25519Public, Key32}
-import yochat.core.s2.{JoinManifest, ManifestKey, SyncStatus}
+import yochat.core.s2.{JoinManifest, LogicalKey, ManifestKey, OrderDependency, OrderStamp, SyncStatus}
 import yochat.store.{CompanionMessageRecord, ContactConfirmation, ContactData, MessageState, StorageError, Store}
 import yochat.transport.{RelayClient, RelayPayload}
 
@@ -16,6 +16,7 @@ final class CompanionSyncService(
   primaryDevicePub: Ed25519Public,
   authHash: ByteVector,
   syncRoot: Key32,
+  fanout: Option[CompanionFanoutService],
   onApplied: IO[Unit] = IO.unit
 ):
 
@@ -23,6 +24,19 @@ final class CompanionSyncService(
     relay.deviceIncoming
       .flatMap(incoming =>
         incoming.payload match
+          case RelayPayload.DeviceList(bytes) =>
+            IO.realTime
+              .flatMap(time => PeerDeviceListService.receiveCompanion(store, incoming.from, bytes, time.toMillis))
+              .flatMap {
+                case Right(_) => fanout.fold(IO.unit)(_.clearAuthorization)
+                case Left(_)  => IO.unit
+              }
+              .attempt
+              .void
+          case RelayPayload.Fanout(bytes)     =>
+            fanout match
+              case None        => IO.unit
+              case Some(value) => value.receive(bytes).attempt.void
           case RelayPayload.DeviceSync(bytes) =>
             DeviceSyncProtocol.decodeSyncStatusRequest(primaryDevicePub, authHash, bytes) match
               case Right(_) =>
@@ -178,9 +192,11 @@ final class CompanionSyncService(
                         case (Some(id), Right(conv), Right(author), Right(device)) =>
                           (Ed25519Public.from(author), Ed25519Public.from(device)) match
                             case (Right(authorPub), Right(devicePub)) =>
-                              val seq = long(json, "seq").getOrElse(0L)
+                              val seq       = long(json, "seq").getOrElse(0L)
+                              val createdAt = long(json, "createdAt").getOrElse(0L)
                               if manifest.covers(ManifestKey(conv, authorPub, devicePub), seq) then IO.pure(Right(()))
                               else
+                                val key = LogicalKey(conv, devicePub, seq)
                                 store
                                   .upsertCompanionMessage(
                                     CompanionMessageRecord(
@@ -191,11 +207,16 @@ final class CompanionSyncService(
                                       seq = seq,
                                       body = ByteVector.view(string(json, "body").getOrElse("").getBytes("UTF-8")),
                                       state = state(json),
-                                      createdAt = long(json, "createdAt").getOrElse(0L),
-                                      syncSeq = long(json, "syncSeq").getOrElse(0L)
-                                    )
+                                      createdAt = createdAt,
+                                      syncSeq = long(json, "syncSeq").getOrElse(0L),
+                                      logicalKey = Some(key)
+                                    ),
+                                    Some(orderStamp(json, seq))
                                   )
-                                  .map(mapStore)
+                                  .flatMap {
+                                    case Left(error) => IO.pure(Left(error.code))
+                                    case Right(_)    => IO.pure(Right(()))
+                                  }
                             case _                                    => IO.pure(Left("message-key"))
                         case (None, _, _, _)                                       => IO.pure(Left("sourceId"))
                         case (_, Left(error), _, _)                                => IO.pure(Left(s"conversation:$error"))
@@ -238,6 +259,27 @@ final class CompanionSyncService(
       case 2L => ContactConfirmation.Confirmed
       case 3L => ContactConfirmation.AccountMismatch
       case _  => ContactConfirmation.Pending
+
+  private def orderStamp(json: Value, seq: Long): OrderStamp =
+    val lamport = long(json, "lamport").getOrElse(seq)
+    val deps    = json.obj.get("deps").collect { case ujson.Arr(values) => values.toVector }.getOrElse(Vector.empty).flatMap {
+      case ujson.Arr(values) if values.size == 2 =>
+        (values(0), values(1)) match
+          case (ujson.Str(raw), value) =>
+            ByteVector
+              .fromHex(raw)
+              .flatMap(Ed25519Public.from(_).toOption)
+              .map(public => OrderDependency(public, longValue(value).getOrElse(0L)))
+          case _                       => None
+      case _                                     => None
+    }
+    OrderStamp.create(lamport, deps).getOrElse(OrderStamp.legacy(seq))
+
+  private def longValue(value: Value): Option[Long] =
+    value match
+      case ujson.Num(number) => Some(number.toLong)
+      case ujson.Str(text)   => text.toLongOption
+      case _                 => None
 
   private def state(json: Value): MessageState =
     long(json, "state").flatMap(value => MessageState.fromCode(value.toInt).toOption).getOrElse(MessageState.Received)

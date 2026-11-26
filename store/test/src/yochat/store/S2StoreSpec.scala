@@ -108,6 +108,59 @@ final class S2StoreSpec extends FunSuite:
     finally StoreTestSupport.deleteTree(directory)
   }
 
+  test("B2 logical key dedupes A1 sync with direct fanout and receipts are per recipient") {
+    val directory = StoreTestSupport.temporaryDirectory("yochat-s2-dedupe-")
+    try
+      StoreTestSupport.withStore(directory) { store =>
+        val conversation = StoreTestSupport.conversationId(13)
+        val author       = StoreTestSupport.edPair()
+        val recipientA   = StoreTestSupport.edPair()
+        val recipientB   = StoreTestSupport.edPair()
+        val key          = yochat.core.s2.LogicalKey(conversation, author.publicKey, 1L)
+        val first        = CompanionMessageRecord(
+          sourceId = 7L,
+          conversationId = conversation,
+          authorPub = StoreTestSupport.edPublic(),
+          devicePub = author.publicKey,
+          seq = 1L,
+          body = StoreTestSupport.body("once"),
+          state = MessageState.Received,
+          createdAt = 100L,
+          syncSeq = 1L,
+          logicalKey = Some(key)
+        )
+        val direct       = first.copy(sourceId = 0L, body = StoreTestSupport.body("once"), syncSeq = 0L, createdAt = 200L)
+        ok(store.upsertCompanionMessage(first))
+        val deduped = ok(store.upsertCompanionMessage(direct))
+        assertEquals(deduped.sourceId, 7L)
+        assertEquals(ok(store.countCompanionMessages(conversation)), 1L)
+        assertEquals(ok(store.loadCompanionMessage(7L)).logicalKey, Some(key))
+
+        val stamp = yochat.core.s2.OrderStamp(3L, Vector(yochat.core.s2.OrderDependency(author.publicKey, 1L)))
+        ok(store.upsertMessageOrder(key, stamp, 200L, 0L))
+        assertEquals(ok(store.listMessageOrders(conversation)).map(_._2), List(stamp))
+
+        val lock = ok(store.lockGeneration)
+        val receipt = DeliveryReceipt(
+          conversationId = conversation,
+          authorDevice = author.publicKey,
+          authorSeq = 1L,
+          recipientDevice = recipientA.publicKey,
+          logicalKey = key,
+          state = 1,
+          createdAt = 200L,
+          updatedAt = 200L,
+          attempts = 1
+        )
+        ok(store.upsertDeliveryReceipt(receipt, lock))
+        assert(ok(store.markDeliveryAcked(key, recipientA.publicKey, 300L, lock)))
+        assertEquals(ok(store.loadDeliveryReceipt(key, recipientA.publicKey)).state, 2)
+        assert(!ok(store.markDeliveryAcked(key, recipientB.publicKey, 300L, lock)))
+        IO.unit
+      }
+    finally StoreTestSupport.deleteTree(directory)
+  }
+
   test("device sync root round-trips and advances its checkpoint") {
     val directory = StoreTestSupport.temporaryDirectory("yochat-s2-sync-")
     try
@@ -201,7 +254,7 @@ final class S2StoreSpec extends FunSuite:
         try
           val version = statement.executeQuery("SELECT value FROM meta WHERE key = 'schema_version'")
           assert(version.next())
-          assertEquals(version.getLong(1), 4L)
+          assertEquals(version.getLong(1), 5L)
           val count = statement.executeQuery("SELECT count(*) FROM messages")
           assert(count.next())
           assertEquals(count.getLong(1), 1L)
@@ -239,7 +292,7 @@ final class S2StoreSpec extends FunSuite:
         try
           val version = statement.executeQuery("SELECT value FROM meta WHERE key = 'schema_version'")
           assert(version.next())
-          assertEquals(version.getLong(1), 4L)
+          assertEquals(version.getLong(1), 5L)
           val table = statement.executeQuery("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'peer_device_lists'")
           assert(table.next())
           assertEquals(table.getLong(1), 1L)

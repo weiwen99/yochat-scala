@@ -4,6 +4,7 @@ import cats.effect.IO
 import scodec.bits.ByteVector
 import ujson.Value
 
+import yochat.core.s2.{JoinManifest, LogicalKey, OrderStamp}
 import yochat.core.SafetyNumber
 import yochat.store.{CompanionMessageRecord, ContactRecord, ConversationRecord, MessageState, StorageError, Store}
 
@@ -24,13 +25,14 @@ object CompanionView:
     for
       contacts      <- store.listContacts
       conversations <- store.listConversations
+      manifest      <- loadManifest(store)
       result        <- contacts match
                          case Left(error)          => IO.pure(Left(error))
                          case Right(contactValues) =>
                            conversations match
                              case Left(error)               => IO.pure(Left(error))
                              case Right(conversationValues) =>
-                               loadConversations(store, contactValues, conversationValues)
+                               loadConversations(store, contactValues, conversationValues, manifest)
     yield result
 
   def stateJson(
@@ -70,12 +72,18 @@ object CompanionView:
     )
 
   def messagesJson(store: Store, conversationId: ByteVector, limit: Int): IO[Either[StorageError, Value]] =
-    store.listCompanionMessages(conversationId, limit).map {
-      case Left(error)   => Left(error)
-      case Right(values) =>
+    for
+      messages <- store.listCompanionMessages(conversationId, limit)
+      orders   <- store.listMessageOrders(conversationId)
+      manifest <- loadManifest(store)
+    yield (messages, orders) match
+      case (Left(error), _)                    => Left(error)
+      case (_, Left(error))                    => Left(error)
+      case (Right(values), Right(orderValues)) =>
+        val ordered = sortMessages(values, orderValues.toMap, manifest)
         Right(
           ujson.Arr(
-            values.map(message =>
+            ordered.map(message =>
               ujson.Obj(
                 "id"             -> message.sourceId,
                 "conversationId" -> message.conversationId.toHex,
@@ -88,21 +96,51 @@ object CompanionView:
             )*
           )
         )
-    }
+
+  private def sortMessages(
+    values: List[CompanionMessageRecord],
+    orders: Map[LogicalKey, OrderStamp],
+    manifest: JoinManifest
+  ): List[CompanionMessageRecord] =
+    val present                                                 = values.map(message => (message.devicePub, message.seq)).toSet ++
+      orders.keys.map(key => (key.authorDevice, key.authorSeq)).toSet
+    def satisfied(dep: yochat.core.s2.OrderDependency): Boolean =
+      present.contains((dep.device, dep.seq)) ||
+        manifest.entries.exists { case (key, maxSeq) => key.devicePub == dep.device && dep.seq <= maxSeq }
+    values
+      .filter(message => message.logicalKey.forall(key => orders.get(key).forall(_.deps.forall(satisfied))))
+      .sortWith { (left, right) =>
+        (for
+          leftKey   <- left.logicalKey
+          rightKey  <- right.logicalKey
+          leftOrder  = orders.get(leftKey)
+          rightOrder = orders.get(rightKey)
+          a         <- leftOrder
+          b         <- rightOrder
+        yield OrderStamp.compare(a, b, left.devicePub, left.seq, right.devicePub, right.seq) < 0).getOrElse {
+          val bySeq = java.lang.Long.compare(left.seq, right.seq)
+          if bySeq != 0 then bySeq < 0 else left.sourceId < right.sourceId
+        }
+      }
 
   private def loadConversations(
     store: Store,
     contacts: List[ContactRecord],
-    conversations: List[ConversationRecord]
+    conversations: List[ConversationRecord],
+    manifest: JoinManifest
   ): IO[Either[StorageError, Snapshot]] =
     conversations
       .foldLeft(IO.pure[Either[StorageError, List[ConversationView]]](Right(Nil))) { (acc, conversation) =>
         acc.flatMap {
           case Left(error)   => IO.pure(Left(error))
           case Right(values) =>
-            store.listCompanionMessages(conversation.id, 1_000).map {
-              case Left(error)     => Left(error)
-              case Right(messages) => Right(values :+ ConversationView(conversation, messages))
+            store.listCompanionMessages(conversation.id, 1_000).flatMap {
+              case Left(error)     => IO.pure(Left(error))
+              case Right(messages) =>
+                store.listMessageOrders(conversation.id).map {
+                  case Left(error)      => Left(error)
+                  case Right(orderRows) => Right(values :+ ConversationView(conversation, sortMessages(messages, orderRows.toMap, manifest)))
+                }
             }
         }
       }
@@ -141,6 +179,12 @@ object CompanionView:
       "waiting"       -> false,
       "buffered"      -> 0
     )
+
+  private def loadManifest(store: Store): IO[JoinManifest] =
+    store.loadDevice(store.identity.devicePublic).map {
+      case Left(_)       => JoinManifest.empty
+      case Right(record) => JoinManifest.fromCanonical(record.joinManifest).getOrElse(JoinManifest.empty)
+    }
 
   private def displayName(record: ContactRecord): String =
     record.data.alias

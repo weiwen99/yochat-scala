@@ -67,7 +67,7 @@ object CompanionPairingMain:
                            case Left(error)  => Resource.eval(IO.raiseError(new IllegalStateException(error.code)))
                            case Right(value) => Resource.pure(value)
           invite      <- Resource.eval(IO.blocking(java.nio.file.Files.readString(config.inviteFile, StandardCharsets.UTF_8)))
-          service     <- Resource.eval(CompanionPairingService.create(store, invite, config.name))
+          service     <- Resource.eval(CompanionPairingService.create(store, config.service.dataDir, invite, config.name))
           binding     <- Resource.make(CompanionPairingHttpApi.start(service, config.service))(value => IO.fromFuture(IO(value.unbind())).void)
         yield (service, binding)
         resources.use { case (service, binding) =>

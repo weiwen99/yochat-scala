@@ -2,7 +2,8 @@ package yochat.store
 
 import scodec.bits.ByteVector
 
-import yochat.core.{Ed25519Public, RatchetState, SessionId}
+import yochat.core.{Ed25519Public, RatchetState, SessionId, X25519Public}
+import yochat.core.s2.LogicalKey
 
 enum MessageState:
   case Pending, Sent, Received, Failed, Delivered
@@ -110,7 +111,8 @@ final case class DeviceRecord(
   joinManifestHash: ByteVector,
   joinCursorSyncSeq: Long,
   pairingNonce: Option[ByteVector],
-  requestHash: Option[ByteVector]
+  requestHash: Option[ByteVector],
+  fanoutPub: Option[X25519Public] = None
 ):
 
   def isRevoked: Boolean = revokedAt.isDefined
@@ -131,6 +133,21 @@ final case class DeviceSyncRecord(
   override def toString: String =
     s"DeviceSyncRecord(lastAckedSyncSeq=$lastAckedSyncSeq, lastBatchSeq=$lastBatchSeq, version=$version)"
 
+final case class DeliveryReceipt(
+  conversationId: ByteVector,
+  authorDevice: Ed25519Public,
+  authorSeq: Long,
+  recipientDevice: Ed25519Public,
+  logicalKey: LogicalKey,
+  state: Int,
+  createdAt: Long,
+  updatedAt: Long,
+  attempts: Int
+):
+
+  override def toString: String =
+    s"DeliveryReceipt(seq=$authorSeq, recipient=${recipientDevice.bytes.toHex.take(8)}, state=$state, attempts=$attempts)"
+
 final case class CompanionMessageRecord(
   sourceId: Long,
   conversationId: ByteVector,
@@ -140,7 +157,8 @@ final case class CompanionMessageRecord(
   body: ByteVector,
   state: MessageState,
   createdAt: Long,
-  syncSeq: Long
+  syncSeq: Long,
+  logicalKey: Option[LogicalKey] = None
 ):
 
   override def toString: String =

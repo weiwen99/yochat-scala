@@ -35,7 +35,7 @@ final class CompanionPairingServiceSpec extends FunSuite:
                              case Left(error)  => IO.raiseError(new AssertionError(error.code))
                              case Right(a2)    =>
                                for
-                                 service <- CompanionPairingService.create(a2, code, "phone")
+                                 service <- CompanionPairingService.create(a2, a2Directory, code, "phone")
                                  before  <- service.status
                                  request = before("requestCode").str
                                  auth    <- pairing.confirm(request, before("confirmation").str, 2_000L)

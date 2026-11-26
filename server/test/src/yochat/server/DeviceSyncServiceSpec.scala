@@ -92,7 +92,8 @@ final class DeviceSyncServiceSpec extends FunSuite:
                                                    relayB,
                                                    a1.identity.devicePublic,
                                                    authHash,
-                                                   syncRoot
+                                                   syncRoot,
+                                                   None
                                                  )
                                       bytes  <- sender.buildSnapshot
                                       direct <- bytes match
@@ -202,7 +203,7 @@ final class DeviceSyncServiceSpec extends FunSuite:
                                       _        <- relayA.awaitOnline(5.seconds)
                                       _        <- relayB.awaitOnline(5.seconds)
                                       scheduler <- DeviceSyncScheduler.create(a1, relayA)
-                                      receiver  = new CompanionSyncService(a2, relayB, a1.identity.devicePublic, authHash, syncRoot)
+                                      receiver  = new CompanionSyncService(a2, relayB, a1.identity.devicePublic, authHash, syncRoot, None)
                                       fiber     <- receiver.run.start
                                       request   <- DeviceSyncProtocol.syncRequest(authHash) match
                                                      case Left(error)  => IO.raiseError(new AssertionError(error))

@@ -174,19 +174,21 @@ final class AppService private (
       unlockedState(running).flatMap {
         case Left(error)  => IO.pure(Left(error))
         case Right(state) =>
-          for records <- running.store.listRecentMessages(conversationId, math.min(1_000, limit + AppLimits.MaxBuffered))
-          yield records
-            .map { values =>
+          for
+            records <- running.store.listRecentMessages(conversationId, math.min(1_000, limit + AppLimits.MaxBuffered))
+            orders  <- running.store.listMessageOrders(conversationId)
+          yield (records, orders) match
+            case (Left(error), _)                    => Left(ServiceError.StoreFailed(error.code))
+            case (_, Left(error))                    => Left(ServiceError.StoreFailed(error.code))
+            case (Right(values), Right(orderValues)) =>
               val localUser    = running.store.identity.userPublic.bytes
               val conversation = state.conversations.get(conversationId)
               val visible      = values.filter(record =>
                 record.authorPub.bytes == localUser ||
                   conversation.exists(value => ApiJson.visible(record, value, localUser))
               )
-              ApiJson.messages(ApiJson.ordered(visible).takeRight(limit), localUser)
-            }
-            .left
-            .map(error => ServiceError.StoreFailed(error.code))
+              val ready        = ApiJson.ready(visible, orderValues.toMap)
+              Right(ApiJson.messages(ApiJson.ordered(ready, orderValues.toMap).takeRight(limit), localUser))
       }
     }
 

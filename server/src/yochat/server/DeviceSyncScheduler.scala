@@ -21,6 +21,7 @@ final class DeviceSyncScheduler private (
   store: Store,
   relay: RelayClient,
   statusFiber: Fiber[IO, Throwable, Unit],
+  fanoutFiber: Fiber[IO, Throwable, Unit],
   changes: Queue[IO, Unit],
   active: Ref[IO, Boolean]
 ):
@@ -28,7 +29,7 @@ final class DeviceSyncScheduler private (
   def notifyChange: IO[Unit] =
     active.get.flatMap(value => if value then changes.tryOffer(()).void else IO.unit) // scalafix:ok DisableSyntax.no-unsafe-get
 
-  def close: IO[Unit] = requestFiber.cancel *> changeFiber.cancel *> statusFiber.cancel
+  def close: IO[Unit] = requestFiber.cancel *> changeFiber.cancel *> statusFiber.cancel *> fanoutFiber.cancel
 
   def publishDeviceList: IO[Unit] =
     IO.realTime.flatMap(time => PeerDeviceListService.publish(store, relay, time.toMillis)).attempt.void
@@ -42,19 +43,30 @@ object DeviceSyncScheduler:
       requestFiber <- listenRequests(store, relay, active, onPeerList).start
       changeFiber  <- listenChanges(store, relay, changes).start
       statusFiber  <- watchRelay(store, relay).start
+      fanoutFiber  <- retryFanout(store, relay).start
       initial      <- store.listDevices.map {
                         case Right(values) => values.exists(isActiveCompanion)
                         case Left(_)       => false
                       }
       _            <- active.set(initial)
-    yield new DeviceSyncScheduler(requestFiber, changeFiber, store, relay, statusFiber, changes, active)
+    yield new DeviceSyncScheduler(requestFiber, changeFiber, store, relay, statusFiber, fanoutFiber, changes, active)
+
+  private def retryFanout(store: Store, relay: RelayClient): IO[Unit] =
+    IO.sleep(5.seconds) *> relay.isOnline.flatMap {
+      case true  =>
+        IO.realTime.flatMap(time => PeerDeviceListService.publish(store, relay, time.toMillis)).attempt.void *>
+          FanoutService.resendPending(store, relay).attempt.void *> retryFanout(store, relay)
+      case false => retryFanout(store, relay)
+    }
 
   private def watchRelay(store: Store, relay: RelayClient): IO[Unit] =
     def loop: IO[Unit] =
       relay.awaitOnline(30.seconds).flatMap {
         case true  =>
           IO.realTime.flatMap(time => PeerDeviceListService.publish(store, relay, time.toMillis)).attempt.void *>
-            sendStatusRequests(store, relay) *> relay.updates.flatMap(_ => loop)
+            FanoutService.resendPending(store, relay).attempt.void *>
+            sendStatusRequests(store, relay) *>
+            IO.sleep(5.seconds) *> loop
         case false => IO.sleep(2.seconds) *> loop
       }
     loop
@@ -100,6 +112,8 @@ object DeviceSyncScheduler:
             }
             .attempt
             .void
+        case RelayPayload.FanoutAck(bytes)  =>
+          FanoutService.handleAck(store, incoming.from, bytes).attempt.void
         case _                              => IO.unit
     }.foreverM
 

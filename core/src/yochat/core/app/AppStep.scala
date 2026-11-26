@@ -3,6 +3,7 @@ package yochat.core.app
 import scodec.bits.ByteVector
 
 import yochat.core.*
+import yochat.core.s2.OrderStamp
 
 /** Pure S1 application kernel. Time, random values, keys, and persistence results enter as events. */
 object Application:
@@ -65,7 +66,14 @@ object Application:
             session    <- activeSession(state, conversationId)
             contact    <- state.contacts.get(session.state.peerUserPub)
             if relationshipUsable(contact)
-            envelope   <- outboundPayload(identity, contact, body, session.nextSeq)
+            clock       = state.order.getOrElse(conversationId, OrderClock())
+            stamp      <- OrderStamp
+                            .create(
+                              if clock.lamport == Long.MaxValue then Long.MaxValue else clock.lamport + 1L,
+                              clock.seen.toVector.map { case (device, seq) => yochat.core.s2.OrderDependency(device, seq) }
+                            )
+                            .toOption
+            envelope   <- outboundPayload(identity, contact, body, session.nextSeq, Some(stamp))
             encrypted  <-
               Ratchet
                 .encryptUser(session.state, identity.device.publicKey, identity.device.privateKey, session.nextSeq, nonce, envelope)
@@ -84,12 +92,15 @@ object Application:
               wire = wire,
               generation = generation,
               state = OutgoingState.Persisting,
-              attempts = 0
+              attempts = 0,
+              order = Some(stamp)
             )
             val nextSession         = session.copy(state = nextRatchet, nextSeq = session.nextSeq + 1L)
+            val nextClock           = clock.observe(stamp, identity.device.publicKey, session.nextSeq)
             val nextState           = state.copy(
               sessions = state.sessions.updated(nextSession.state.sessionId, nextSession),
-              outgoing = state.outgoing.updated(messageId, outgoing)
+              outgoing = state.outgoing.updated(messageId, outgoing),
+              order = state.order.updated(conversationId, nextClock)
             )
             (nextState, Vector(AppEffect.PersistOutbound(outgoing, nextSession)))
           ).getOrElse((state, Vector.empty))
@@ -294,7 +305,7 @@ object Application:
             if isDirectPredecessor(state, message.sessionId, newSessionId)
             contact   <- state.contacts.get(session.state.peerUserPub)
             if relationshipUsable(contact)
-            envelope  <- outboundPayload(identity, contact, message.body, message.seq)
+            envelope  <- outboundPayload(identity, contact, message.body, message.seq, message.order)
             encrypted <-
               Ratchet.encryptUser(session.state, identity.device.publicKey, identity.device.privateKey, message.seq, nonce, envelope).toOption
           yield
@@ -1074,7 +1085,8 @@ object Application:
     identity: LocalIdentity,
     contact: AppContact,
     body: ByteVector,
-    seq: Long
+    seq: Long,
+    order: Option[OrderStamp]
   ): Option[ByteVector] =
     val binding: Option[Option[DataBinding]] =
       if seq == 1L then
@@ -1085,7 +1097,7 @@ object Application:
             .map(safety => Some(DataBinding(contact.channelAccount, peer, safety.digits)))
         }
       else Some(None)
-    binding.flatMap(value => DataPayload.encode(DataPayload(value, body)).toOption)
+    binding.flatMap(value => DataPayload.encode(DataPayload(value, body, order)).toOption)
 
   private def matchOutgoing(
     state: AppState,
@@ -1314,15 +1326,31 @@ object Application:
           case Left(_)        => (state, Vector.empty)
           case Right(payload) =>
             val message                        =
-              BufferedMessage(messageId, session.state.peerUserPub, frame.header.devicePub, frame.header.seq, payload.body, frame)
+              BufferedMessage(
+                messageId,
+                session.state.peerUserPub,
+                frame.header.devicePub,
+                frame.header.seq,
+                payload.body,
+                frame,
+                payload.order
+              )
             val inbound                        = conversation.accept(message)
             val effectiveActive                =
               if firstData && inbound.disposition == InboundDisposition.Overflow then nextSession else active
             val (finalSession, controlEffects) =
               controlResponse(state, sessionId, effectiveActive, inbound.conversation, inbound.gap, responseNonce)
-            val withSession                    = state.copy(
-              sessions = state.sessions.updated(sessionId, finalSession),
-              conversations = state.conversations.updated(inbound.conversation.id, inbound.conversation)
+            val withOrder                      = payload.order.fold(state) { stamp =>
+              state.copy(
+                order = state.order.updated(
+                  conversation.id,
+                  state.order.getOrElse(conversation.id, OrderClock()).observe(stamp, frame.header.devicePub, frame.header.seq)
+                )
+              )
+            }
+            val withSession                    = withOrder.copy(
+              sessions = withOrder.sessions.updated(sessionId, finalSession),
+              conversations = withOrder.conversations.updated(inbound.conversation.id, inbound.conversation)
             )
             val retired                        =
               if firstData && inbound.disposition != InboundDisposition.Overflow then retirementCandidates(state, finalSession)

@@ -190,7 +190,8 @@ final class DevicePairingService(
       joinManifestHash = auth.joinManifestHash,
       joinCursorSyncSeq = auth.joinCursorSyncSeq,
       pairingNonce = Some(request.pairingNonce),
-      requestHash = Some(request.requestHash)
+      requestHash = Some(request.requestHash),
+      fanoutPub = Some(request.companionEphemeralPub)
     )
     for
       created <- store.insertDevice(record, lock)
@@ -372,7 +373,7 @@ private object DevicePairing:
     companionDevicePrivate: Ed25519Private,
     companionDevicePub: Ed25519Public,
     name: String
-  ): IO[Either[String, (String, Key32, Confirmation)]] =
+  ): IO[Either[String, (String, Key32, Confirmation, X25519Private)]] =
     randomX25519.flatMap { ephemeral =>
       val result =
         for
@@ -390,7 +391,7 @@ private object DevicePairing:
                        )
                        .left
                        .map(_ => "request")
-        yield (encodeRequest(request), root, confirmation(request))
+        yield (encodeRequest(request), root, confirmation(request), ephemeral.privateKey)
       result.fold(error => IO.pure(Left(error)), value => IO.pure(Right(value)))
     }
 

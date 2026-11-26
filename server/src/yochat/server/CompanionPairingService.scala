@@ -1,6 +1,7 @@
 package yochat.server
 
 import java.nio.charset.StandardCharsets
+import java.nio.file.Path
 
 import scala.concurrent.duration.*
 
@@ -8,7 +9,7 @@ import cats.effect.{IO, Ref}
 import scodec.bits.ByteVector
 import ujson.Value
 
-import yochat.core.{Crypto, Key32}
+import yochat.core.{Crypto, Key32, X25519Private}
 import yochat.store.Store
 
 /** Browser-facing A2 bootstrap. The invite and auth codes still travel out of band; the browser only carries the codes and displays the A2
@@ -16,6 +17,7 @@ import yochat.store.Store
   */
 final class CompanionPairingService private (
   store: Store,
+  dataDir: Path,
   pending: Ref[IO, Option[CompanionPairingService.Pending]],
   paired: Ref[IO, Boolean]
 ):
@@ -45,10 +47,13 @@ final class CompanionPairingService private (
         DevicePairing.accept(authCode.trim, store.identity.userPublic, store.identity.devicePublic) match
           case Left(error) => IO.pure(Left(error))
           case Right(auth) =>
-            DevicePairingStore.persist(store, authCode.trim, auth, value.root, value.name, Some(value.requestHash)).flatMap {
-              case Left(error) => IO.pure(Left(error))
-              case Right(_)    => paired.set(true) *> pending.set(None).as(Right(()))
-            }
+            DevicePairingStore
+              .persist(store, authCode.trim, auth, value.root, value.name, Some(value.requestHash), Some(value.fanoutPrivate))
+              .flatMap {
+                case Left(error) => IO.pure(Left(error))
+                case Right(_)    =>
+                  FanoutKeyFile.write(dataDir, value.fanoutPrivate) *> paired.set(true) *> pending.set(None).as(Right(()))
+              }
     }
 
 object CompanionPairingService:
@@ -59,17 +64,18 @@ object CompanionPairingService:
     confirmation: String,
     fingerprint: String,
     name: String,
-    requestHash: ByteVector
+    requestHash: ByteVector,
+    fanoutPrivate: X25519Private
   )
 
-  def create(store: Store, inviteCode: String, name: String): IO[CompanionPairingService] =
+  def create(store: Store, dataDir: Path, inviteCode: String, name: String): IO[CompanionPairingService] =
     for
       pending <- Ref.of[IO, Option[Pending]](None)
       paired  <- Ref.of[IO, Boolean](false)
       request <- DevicePairing.request(inviteCode.trim, store.identity.devicePrivate, store.identity.devicePublic, name)
       _       <- request match
-                   case Left(error)                       => IO.raiseError(new IllegalArgumentException(error))
-                   case Right((code, root, confirmation)) =>
+                   case Left(error)                                      => IO.raiseError(new IllegalArgumentException(error))
+                   case Right((code, root, confirmation, fanoutPrivate)) =>
                      pending.set(
                        Some(
                          Pending(
@@ -78,8 +84,9 @@ object CompanionPairingService:
                            confirmation.code,
                            confirmation.fingerprint,
                            name,
-                           Crypto.sha256(ByteVector.view(code.getBytes(StandardCharsets.UTF_8))).bytes
+                           Crypto.sha256(ByteVector.view(code.getBytes(StandardCharsets.UTF_8))).bytes,
+                           fanoutPrivate
                          )
                        )
                      )
-    yield new CompanionPairingService(store, pending, paired)
+    yield new CompanionPairingService(store, dataDir, pending, paired)

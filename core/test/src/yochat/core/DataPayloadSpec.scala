@@ -35,7 +35,7 @@ class DataPayloadSpec extends FunSuite:
   }
 
   test("unknown version, flags, trailing bytes, and malformed digits are rejected") {
-    assert(DataPayload.decode(ByteVector.fromValidHex("0200") ++ ByteVector.fromValidHex("00000000")).isLeft)
+    assert(DataPayload.decode(ByteVector.fromValidHex("0300") ++ ByteVector.fromValidHex("00000000")).isLeft)
     assert(DataPayload.decode(ByteVector.fromValidHex("0102") ++ ByteVector.fromValidHex("00000000")).isLeft)
     assert(DataPayload.decode(right(DataPayload.encode(DataPayload(None, Body))) :+ 0.toByte).isLeft)
     assert(

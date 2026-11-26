@@ -64,6 +64,28 @@ object ApiJson:
   def ordered(records: List[MessageRecord]): List[MessageRecord] =
     records.sortBy(record => (record.seq, record.id))
 
+  def ready(records: List[MessageRecord], orders: Map[yochat.core.s2.LogicalKey, yochat.core.s2.OrderStamp]): List[MessageRecord] =
+    val present = records.map(record => (record.devicePub, record.seq)).toSet ++
+      orders.keys.map(key => (key.authorDevice, key.authorSeq)).toSet
+    records.filter { record =>
+      orders.get(yochat.core.s2.LogicalKey(record.conversationId, record.devicePub, record.seq)).forall { stamp =>
+        stamp.deps.forall(dep => present.contains((dep.device, dep.seq)))
+      }
+    }
+
+  def ordered(records: List[MessageRecord], orders: Map[yochat.core.s2.LogicalKey, yochat.core.s2.OrderStamp]): List[MessageRecord] =
+    records.sortWith { (left, right) =>
+      val leftOrder  = orders.get(yochat.core.s2.LogicalKey(left.conversationId, left.devicePub, left.seq))
+      val rightOrder = orders.get(yochat.core.s2.LogicalKey(right.conversationId, right.devicePub, right.seq))
+      (leftOrder, rightOrder) match
+        case (Some(a), Some(b)) =>
+          val compared = yochat.core.s2.OrderStamp.compare(a, b, left.devicePub, left.seq, right.devicePub, right.seq)
+          if compared != 0 then compared < 0 else left.id < right.id
+        case _                  =>
+          val bySeq = java.lang.Long.compare(left.seq, right.seq)
+          if bySeq != 0 then bySeq < 0 else left.id < right.id
+    }
+
   def messages(records: List[MessageRecord], localUser: ByteVector): Value =
     ujson.Arr(records.map(messageJson(_, localUser))*)
 
@@ -98,10 +120,13 @@ object ApiJson:
     ujson.Obj("error" -> error.code)
 
   private def lastVisible(store: Store, conversation: Conversation, localUser: ByteVector): IO[Option[MessageRecord]] =
-    store.listRecentMessages(conversation.id, AppLimits.MaxBuffered + 1).map {
-      case Right(records) => ordered(records.filter(record => visible(record, conversation, localUser))).lastOption
-      case Left(_)        => None
-    }
+    for
+      records <- store.listRecentMessages(conversation.id, AppLimits.MaxBuffered + 1)
+      orders  <- store.listMessageOrders(conversation.id)
+    yield (records, orders) match
+      case (Right(values), Right(orderValues)) =>
+        ordered(ready(values.filter(record => visible(record, conversation, localUser)), orderValues.toMap), orderValues.toMap).lastOption
+      case _                                   => None
 
   private def contactJson(store: Store, state: AppState, contact: AppContact): IO[Value] =
     PeerDeviceListService.devicesFor(store, contact.userPub).flatMap { devices =>

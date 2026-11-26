@@ -4,14 +4,15 @@ import org.typelevel.doobie.*
 import org.typelevel.doobie.free.connection as FC
 import org.typelevel.doobie.implicits.*
 
-/** Schema v4: S1/S2-A plus the S2-B contact-visible signed device-list snapshot. */
+/** Schema v5: S1/S2-A/B1 plus B2 fanout keys, logical-key dedupe and per-device delivery receipts. */
 private[store] object Schema:
 
-  val Version: Long = 4L
+  val Version: Long = 5L
 
   private val BaseTables = Vector("meta", "sessions", "messages", "contacts", "invitations", "conversations")
   private val V3Tables   = BaseTables ++ Vector("devices", "device_sync", "companion_messages")
   private val V4Tables   = V3Tables :+ "peer_device_lists"
+  private val V5Tables   = V4Tables ++ Vector("delivery_receipts", "message_order")
 
   def initialize: ConnectionIO[Unit] =
     for
@@ -66,6 +67,7 @@ private[store] object Schema:
                  |)""".stripMargin.update.run
       _ <- createV3Tables
       _ <- createV4Tables
+      _ <- createV5Tables
       _ <- sql"CREATE INDEX messages_conversation_order ON messages(conversation_id, author_pub, seq)".update.run
       _ <- sql"CREATE INDEX sessions_peer_user ON sessions(peer_user_pub)".update.run
       _ <- sql"CREATE INDEX messages_sync_seq ON messages(sync_seq)".update.run
@@ -80,7 +82,8 @@ private[store] object Schema:
                    case Some(1L) => baseTablesPresent.flatMap(_ => migrateFromOne)
                    case Some(2L) => baseTablesPresent.flatMap(_ => migrateFromTwo)
                    case Some(3L) => v3TablesPresent.flatMap(_ => migrateFromThree)
-                   case Some(4L) => v4TablesPresent
+                   case Some(4L) => v4TablesPresent.flatMap(_ => migrateFromFour)
+                   case Some(5L) => v5TablesPresent
                    case Some(_)  => abort(StorageError.UnsupportedSchema)
                    case None     => abort(StorageError.UnsupportedSchema)
       lock    <- sql"SELECT value FROM meta WHERE key = 'lock-generation'".query[Long].option
@@ -99,6 +102,7 @@ private[store] object Schema:
     for
       _ <- createV3Tables
       _ <- createV4Tables
+      _ <- createV5Tables
       _ <- sql"ALTER TABLE messages ADD COLUMN sync_seq INTEGER NOT NULL DEFAULT 0".update.run
       _ <- sql"CREATE INDEX messages_sync_seq ON messages(sync_seq)".update.run
       _ <- writeMeta("schema_version", Version)
@@ -120,7 +124,8 @@ private[store] object Schema:
                  |  join_manifest_hash BLOB NOT NULL,
                  |  join_cursor_sync_seq INTEGER NOT NULL,
                  |  pairing_nonce BLOB,
-                 |  request_hash BLOB
+                 |  request_hash BLOB,
+                 |  fanout_pub BLOB
                  |)""".stripMargin.update.run
       _ <- sql"""CREATE TABLE device_sync (
                  |  peer_device_pub BLOB PRIMARY KEY NOT NULL,
@@ -140,7 +145,8 @@ private[store] object Schema:
                  |  body BLOB NOT NULL,
                  |  state INTEGER NOT NULL,
                  |  created_at INTEGER NOT NULL,
-                 |  sync_seq INTEGER NOT NULL
+                 |  sync_seq INTEGER NOT NULL,
+                 |  logical_key BLOB
                  |)""".stripMargin.update.run
       _ <- sql"CREATE INDEX companion_messages_conversation_order ON companion_messages(conversation_id, seq, source_id)".update.run
       _ <- sql"CREATE INDEX companion_messages_sync_seq ON companion_messages(sync_seq)".update.run
@@ -159,12 +165,37 @@ private[store] object Schema:
   private def migrateFromThree: ConnectionIO[Unit] =
     for
       _ <- createV4Tables
-      _ <- writeMeta("schema_version", Version)
+      _ <- migrateFromFour
     yield ()
 
   private def v4TablesPresent: ConnectionIO[Unit] =
     requiredTableCount(V4Tables).flatMap { count =>
       if count == V4Tables.size.toLong then FC.unit else abort(StorageError.UnsupportedSchema)
+    }
+
+  private def migrateFromFour: ConnectionIO[Unit] =
+    for
+      _ <- addColumnIfMissing("devices", "fanout_pub", sql"ALTER TABLE devices ADD COLUMN fanout_pub BLOB".update.run.map(_ => ()))
+      _ <- addColumnIfMissing(
+             "companion_messages",
+             "logical_key",
+             sql"ALTER TABLE companion_messages ADD COLUMN logical_key BLOB".update.run.map(_ => ())
+           )
+      _ <- createV5Tables
+      _ <-
+        sql"CREATE UNIQUE INDEX IF NOT EXISTS companion_messages_logical_key ON companion_messages(logical_key) WHERE logical_key IS NOT NULL".update.run
+      _ <- writeMeta("schema_version", Version)
+    yield ()
+
+  private def addColumnIfMissing(table: String, column: String, alter: => ConnectionIO[Unit]): ConnectionIO[Unit] =
+    sql"SELECT count(*) FROM pragma_table_info($table) WHERE name = $column".query[Long].unique.flatMap {
+      case 0L => alter
+      case _  => FC.unit
+    }
+
+  private def v5TablesPresent: ConnectionIO[Unit] =
+    requiredTableCount(V5Tables).flatMap { count =>
+      if count == V5Tables.size.toLong then FC.unit else abort(StorageError.UnsupportedSchema)
     }
 
   private def createV4Tables: ConnectionIO[Unit] =
@@ -174,6 +205,37 @@ private[store] object Schema:
        |  payload BLOB NOT NULL,
        |  received_at INTEGER NOT NULL
        |)""".stripMargin.update.run.flatMap(_ => FC.unit)
+
+  private def createV5Tables: ConnectionIO[Unit] =
+    for
+      _ <- sql"""CREATE TABLE IF NOT EXISTS delivery_receipts (
+                 |  conversation_id BLOB NOT NULL,
+                 |  author_device BLOB NOT NULL,
+                 |  author_seq INTEGER NOT NULL,
+                 |  recipient_device BLOB NOT NULL,
+                 |  logical_key BLOB NOT NULL,
+                 |  state INTEGER NOT NULL,
+                 |  created_at INTEGER NOT NULL,
+                 |  updated_at INTEGER NOT NULL,
+                 |  attempts INTEGER NOT NULL,
+                 |  PRIMARY KEY (conversation_id, author_device, author_seq, recipient_device)
+                 |)""".stripMargin.update.run
+      _ <- sql"""CREATE TABLE IF NOT EXISTS message_order (
+                 |  conversation_id BLOB NOT NULL,
+                 |  author_device BLOB NOT NULL,
+                 |  author_seq INTEGER NOT NULL,
+                 |  logical_key BLOB NOT NULL,
+                 |  lamport INTEGER NOT NULL,
+                 |  deps BLOB NOT NULL,
+                 |  created_at INTEGER NOT NULL,
+                 |  PRIMARY KEY (logical_key)
+                 |)""".stripMargin.update.run
+      _ <-
+        sql"CREATE INDEX IF NOT EXISTS message_order_conversation ON message_order(conversation_id, lamport, author_device, author_seq)".update.run
+      _ <- sql"CREATE INDEX IF NOT EXISTS delivery_receipts_pending ON delivery_receipts(state, updated_at)".update.run
+      _ <-
+        sql"CREATE UNIQUE INDEX IF NOT EXISTS companion_messages_logical_key ON companion_messages(logical_key) WHERE logical_key IS NOT NULL".update.run
+    yield ()
 
   private def tableCount: ConnectionIO[Long] =
     sql"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'".query[Long].unique

@@ -8,7 +8,7 @@ import cats.effect.{ExitCode, IO}
 import scodec.bits.ByteVector
 import ujson.Value
 
-import yochat.core.{Crypto, Ed25519Public, Key32}
+import yochat.core.{Crypto, Ed25519Public, Key32, X25519Private}
 import yochat.store.{KeySource, Store, StoreConfig}
 
 /** A2-side manual pairing. Request and accept are separate processes so the two codes can travel through any existing channel. The pending root
@@ -70,16 +70,17 @@ object PairingTool:
                     DevicePairing
                       .request(invite.trim, store.identity.devicePrivate, store.identity.devicePublic, value.name)
                       .flatMap {
-                        case Left(error)                              => IO.println(s"yochat: $error").as(ExitCode.Error)
-                        case Right((requestCode, root, confirmation)) =>
+                        case Left(error)                                             => IO.println(s"yochat: $error").as(ExitCode.Error)
+                        case Right((requestCode, root, confirmation, fanoutPrivate)) =>
                           val pending = ujson.Obj(
-                            "userPub"      -> userPub.bytes.toHex,
-                            "devicePub"    -> store.identity.devicePublic.bytes.toHex,
-                            "root"         -> root.bytes.toHex,
-                            "requestCode"  -> requestCode,
-                            "name"         -> value.name,
-                            "confirmation" -> confirmation.code,
-                            "fingerprint"  -> confirmation.fingerprint
+                            "userPub"       -> userPub.bytes.toHex,
+                            "devicePub"     -> store.identity.devicePublic.bytes.toHex,
+                            "root"          -> root.bytes.toHex,
+                            "requestCode"   -> requestCode,
+                            "name"          -> value.name,
+                            "confirmation"  -> confirmation.code,
+                            "fingerprint"   -> confirmation.fingerprint,
+                            "fanoutPrivate" -> fanoutPrivate.bytes.toHex
                           )
                           writePending(value.dataDir, pending) *>
                             IO.blocking(
@@ -105,8 +106,9 @@ object PairingTool:
               readText(authFile).flatMap { authCode =>
                 (pending, storeFromPending(value.dataDir, passphrase, pending)) match
                   case (Right(json), Right(pendingStore)) =>
-                    val userRaw = json.obj.get("userPub").collect { case ujson.Str(v) => v }.toRight("pending-user")
-                    val rootRaw = json.obj.get("root").collect { case ujson.Str(v) => v }.toRight("pending-root")
+                    val userRaw   = json.obj.get("userPub").collect { case ujson.Str(v) => v }.toRight("pending-user")
+                    val rootRaw   = json.obj.get("root").collect { case ujson.Str(v) => v }.toRight("pending-root")
+                    val fanoutRaw = json.obj.get("fanoutPrivate").collect { case ujson.Str(v) => v }
                     (userRaw, rootRaw) match
                       case (Right(userHex), Right(rootHex)) =>
                         parsePublic(userHex) match
@@ -122,7 +124,9 @@ object PairingTool:
                                       case Left(error)                                                         => IO.println(s"yochat: $error").as(ExitCode.Error)
                                       case Right(auth) if Crypto.sha256(root.bytes).bytes != auth.syncRootHash =>
                                         IO.println("yochat: sync-root").as(ExitCode.Error)
-                                      case Right(auth)                                                         => persist(store, value.dataDir, json, authCode.trim, auth, root).as(ExitCode.Success)
+                                      case Right(auth)                                                         =>
+                                        val fanout = fanoutRaw.flatMap(hex => ByteVector.fromHex(hex)).flatMap(X25519Private.from(_).toOption)
+                                        persist(store, value.dataDir, json, authCode.trim, auth, root, fanout).as(ExitCode.Success)
                                 }
                       case _                                => IO.println("yochat: pending-file").as(ExitCode.Error)
                   case (Left(error), _)                   => IO.println(s"yochat: $error").as(ExitCode.Error)
@@ -138,16 +142,18 @@ object PairingTool:
     pending: Value,
     authCode: String,
     auth: yochat.core.s2.DeviceAuthorization,
-    root: Key32
+    root: Key32,
+    fanoutPrivate: Option[X25519Private]
   ): IO[Unit] =
     val requestHash = pending.obj.get("requestCode").collect { case ujson.Str(value) =>
       Crypto.sha256(ByteVector.view(value.getBytes(StandardCharsets.UTF_8))).bytes
     }
     val name        = pending.obj.get("name").collect { case ujson.Str(value) => value }.getOrElse("companion")
-    DevicePairingStore.persist(store, authCode, auth, root, name, requestHash).flatMap {
+    DevicePairingStore.persist(store, authCode, auth, root, name, requestHash, fanoutPrivate).flatMap {
       case Left(error) => IO.println(s"yochat: $error")
       case Right(_)    =>
-        IO.blocking(Files.deleteIfExists(dataDir.resolve(PendingFile))).void *>
+        val writeFanout = fanoutPrivate.fold(IO.unit)(key => FanoutKeyFile.write(dataDir, key))
+        writeFanout *> IO.blocking(Files.deleteIfExists(dataDir.resolve(PendingFile))).void *>
           IO.println("paired")
     }
 

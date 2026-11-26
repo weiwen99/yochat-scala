@@ -1,6 +1,6 @@
 # Plan 0012 B2 design: direct companion fanout
 
-- 状态：design draft（2026-11-26）；B1 已实现，B2 尚未写生产代码。
+- 状态：implemented（2026-11-26）；B2 直投与 B3 order metadata 已实现，回执见 `b2-impl.md`/`impl.md`。
 - 范围：B2 only。一个只读伴随设备直接接收对方主设备的消息；不实现 B3 GBNV。
 - 关联：ADR-0011 §3/§5、Plan 0012 design §5.3。
 

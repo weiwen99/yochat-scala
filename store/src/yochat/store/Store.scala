@@ -53,7 +53,8 @@ final class Store private[store] (
     body: ByteVector,
     wire: ByteVector,
     messageState: MessageState,
-    attempts: Int = 0
+    attempts: Int = 0,
+    order: Option[yochat.core.s2.OrderStamp] = None
   ): IO[Either[StorageError, AppendResult]] =
     MessageRepository.appendOutbound(
       runtime,
@@ -67,7 +68,8 @@ final class Store private[store] (
       body,
       wire,
       messageState,
-      attempts
+      attempts,
+      order
     )
 
   def appendInboundAndRetire(
@@ -80,7 +82,8 @@ final class Store private[store] (
     seq: Long,
     body: ByteVector,
     wire: ByteVector,
-    retired: Vector[(SessionId, CutoverRole, CutoverEvidence)]
+    retired: Vector[(SessionId, CutoverRole, CutoverEvidence)],
+    order: Option[yochat.core.s2.OrderStamp] = None
   ): IO[Either[StorageError, AppendResult]] =
     MessageRepository.appendInboundAndRetire(
       runtime,
@@ -93,7 +96,8 @@ final class Store private[store] (
       seq,
       body,
       wire,
-      retired
+      retired,
+      order
     )
 
   def appendInbound(
@@ -105,7 +109,8 @@ final class Store private[store] (
     devicePub: Ed25519Public,
     seq: Long,
     body: ByteVector,
-    wire: ByteVector
+    wire: ByteVector,
+    order: Option[yochat.core.s2.OrderStamp] = None
   ): IO[Either[StorageError, AppendResult]] =
     MessageRepository.appendInbound(
       runtime,
@@ -117,7 +122,8 @@ final class Store private[store] (
       devicePub,
       seq,
       body,
-      wire
+      wire,
+      order
     )
 
   def loadMessage(
@@ -128,6 +134,28 @@ final class Store private[store] (
     seq: Long
   ): IO[Either[StorageError, MessageRecord]] =
     MessageRepository.load(runtime, conversationId, sessionId, authorPub, devicePub, seq)
+
+  def loadMessageById(messageId: Long): IO[Either[StorageError, MessageRecord]] =
+    MessageRepository.loadById(runtime, messageId)
+
+  def loadMessageByLogicalKey(key: yochat.core.s2.LogicalKey): IO[Either[StorageError, MessageRecord]] =
+    MessageRepository.loadByLogicalKey(runtime, key)
+
+  def listMessageOrders(
+    conversationId: ByteVector
+  ): IO[Either[StorageError, List[(yochat.core.s2.LogicalKey, yochat.core.s2.OrderStamp)]]] =
+    MessageOrderRepository.list(runtime, conversationId)
+
+  def listAllMessageOrders: IO[Either[StorageError, Map[yochat.core.s2.LogicalKey, yochat.core.s2.OrderStamp]]] =
+    MessageOrderRepository.listAll(runtime)
+
+  def upsertMessageOrder(
+    key: yochat.core.s2.LogicalKey,
+    stamp: yochat.core.s2.OrderStamp,
+    createdAt: Long,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, Unit]] =
+    MessageOrderRepository.upsert(runtime, key, stamp, createdAt, expectedLockGeneration)
 
   def listMessages(
     conversationId: ByteVector,
@@ -302,9 +330,10 @@ final class Store private[store] (
     DeviceSyncRepository.delete(runtime, peerDevicePub, expectedVersion, expectedLockGeneration)
 
   def upsertCompanionMessage(
-    record: CompanionMessageRecord
+    record: CompanionMessageRecord,
+    order: Option[yochat.core.s2.OrderStamp] = None
   ): IO[Either[StorageError, CompanionMessageRecord]] =
-    CompanionMessageRepository.upsert(runtime, record)
+    CompanionMessageRepository.upsert(runtime, record, order)
 
   def loadCompanionMessage(sourceId: Long): IO[Either[StorageError, CompanionMessageRecord]] =
     CompanionMessageRepository.load(runtime, sourceId)
@@ -317,6 +346,29 @@ final class Store private[store] (
 
   def countCompanionMessages(conversationId: ByteVector): IO[Either[StorageError, Long]] =
     CompanionMessageRepository.count(runtime, conversationId)
+
+  def upsertDeliveryReceipt(
+    receipt: DeliveryReceipt,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, DeliveryReceipt]] =
+    DeliveryReceiptRepository.upsert(runtime, receipt, expectedLockGeneration)
+
+  def markDeliveryAcked(
+    logicalKey: yochat.core.s2.LogicalKey,
+    recipientDevice: Ed25519Public,
+    now: Long,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, Boolean]] =
+    DeliveryReceiptRepository.markAcked(runtime, logicalKey, recipientDevice, now, expectedLockGeneration)
+
+  def listPendingDeliveryReceipts(limit: Int): IO[Either[StorageError, List[DeliveryReceipt]]] =
+    DeliveryReceiptRepository.listPending(runtime, limit)
+
+  def loadDeliveryReceipt(
+    logicalKey: yochat.core.s2.LogicalKey,
+    recipientDevice: Ed25519Public
+  ): IO[Either[StorageError, DeliveryReceipt]] =
+    DeliveryReceiptRepository.load(runtime, logicalKey, recipientDevice)
 
   def insertInvitation(
     id: ByteVector,

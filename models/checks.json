@@ -124,12 +124,12 @@
     "file": "q8_device_lists.qnt",
     "main": "q8DeviceLists",
     "backend": "apalache",
-    "sourceSha256": "59e44e78dfb7eabb09cc98abfca62b5b7462b0958c928b224fc67360659eeb28",
+    "sourceSha256": "51d4715d8db7791dabb9262d290a399884bdd5d0df3838bd62e48da4b8e9eda4",
     "invariants": [
       "safe"
     ],
     "temporal": [],
-    "maxSteps": 8,
-    "note": "B1 设备列表快照：吊销永久、旧快照不复活、版本非负；签名/存储/线格式由 Scala 测试承担。"
+    "maxSteps": 10,
+    "note": "B1+B2+B3 设备列表快照：吊销永久、旧快照不复活、直投按 logical key 去重、ACK 只对已投递消息、Lamport 单调；签名/存储/线格式由 Scala 测试承担。"
   }
 ]

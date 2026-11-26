@@ -54,8 +54,12 @@ object CompanionService:
               relay                 <- RelayClient.connect(config.relayHost, config.relayPort, store.identity.devicePublic).allocated
               (client, releaseRelay) = relay
               received              <- Ref.of[IO, Boolean](false)
+              fanoutKey             <- FanoutKeyFile.read(config.dataDir)
               hash                   = authHash(sync._2)
-              receiver               = CompanionSyncService(store, client, auth.primaryDevicePub, hash, sync._1, received.set(true))
+              authCache             <- Ref.of[IO, Set[yochat.core.Ed25519Public]](Set.empty)
+              conversationCache     <- Ref.of[IO, Map[yochat.core.Ed25519Public, ByteVector]](Map.empty)
+              fanout                 = fanoutKey.map(key => CompanionFanoutService(store, client, key, authCache, conversationCache))
+              receiver               = CompanionSyncService(store, client, auth.primaryDevicePub, hash, sync._1, fanout, received.set(true))
               fiber                 <- receiver.run.start
               status                 = receiver.statusBytes
               requestFiber          <- requestLoop(client, auth.primaryDevicePub, status, received).start

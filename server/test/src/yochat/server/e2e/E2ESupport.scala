@@ -448,7 +448,8 @@ final case class Pair(a: ServiceProcess, b: ServiceProcess, relay: RelayControl)
     try relay.stop()
     catch case NonFatal(_) => ()
 
-  def diagnostics: String = s"${a.diagnostics}\n\n${b.diagnostics}"
+  def diagnostics: String =
+    s"${a.diagnostics}\n${a.logTail(120)}\n\n${b.diagnostics}\n${b.logTail(120)}"
 
 object E2EEnvironment:
   def withPair[A](body: Pair => A): A =

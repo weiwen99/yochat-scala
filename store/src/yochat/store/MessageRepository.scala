@@ -7,6 +7,7 @@ import org.typelevel.doobie.implicits.*
 import scodec.bits.ByteVector
 
 import yochat.core.{Ed25519Public, MessageKind, SessionId, WireFrame}
+import yochat.core.s2.{LogicalKey, OrderStamp}
 
 private[store] object MessageRepository:
 
@@ -40,7 +41,8 @@ private[store] object MessageRepository:
     body: ByteVector,
     wire: ByteVector,
     messageState: MessageState,
-    attempts: Int = 0
+    attempts: Int = 0,
+    order: Option[OrderStamp] = None
   ): IO[Either[StorageError, AppendResult]] =
     append(
       runtime,
@@ -54,7 +56,9 @@ private[store] object MessageRepository:
       body,
       wire,
       messageState,
-      attempts
+      attempts,
+      Vector.empty,
+      order
     )
 
   def appendInboundAndRetire(
@@ -68,7 +72,8 @@ private[store] object MessageRepository:
     seq: Long,
     body: ByteVector,
     wire: ByteVector,
-    retired: Vector[(SessionId, CutoverRole, CutoverEvidence)]
+    retired: Vector[(SessionId, CutoverRole, CutoverEvidence)],
+    order: Option[OrderStamp] = None
   ): IO[Either[StorageError, AppendResult]] =
     append(
       runtime,
@@ -83,7 +88,8 @@ private[store] object MessageRepository:
       wire,
       MessageState.Received,
       0,
-      retired
+      retired,
+      order
     )
 
   def appendInbound(
@@ -96,7 +102,8 @@ private[store] object MessageRepository:
     devicePub: Ed25519Public,
     seq: Long,
     body: ByteVector,
-    wire: ByteVector
+    wire: ByteVector,
+    order: Option[OrderStamp] = None
   ): IO[Either[StorageError, AppendResult]] =
     append(
       runtime,
@@ -111,7 +118,8 @@ private[store] object MessageRepository:
       wire,
       MessageState.Received,
       0,
-      Vector.empty
+      Vector.empty,
+      order
     )
 
   private def append(
@@ -127,7 +135,8 @@ private[store] object MessageRepository:
     wire: ByteVector,
     messageState: MessageState,
     attempts: Int,
-    retired: Vector[(SessionId, CutoverRole, CutoverEvidence)] = Vector.empty
+    retired: Vector[(SessionId, CutoverRole, CutoverEvidence)],
+    order: Option[OrderStamp]
   ): IO[Either[StorageError, AppendResult]] =
     runtime.now.flatMap { now =>
       runtime.run {
@@ -167,6 +176,11 @@ private[store] object MessageRepository:
           messageId  <- sql"SELECT last_insert_rowid()".query[Long].unique
           _          <- SessionRepository.writeHighWater(prepared)
           _          <- if seq == 1L then Sql.writeMeta(Sql.bindingKey(conversationId), 1L) else FC.unit
+          _          <- MessageOrderRepository.write(
+                          LogicalKey(conversationId, devicePub, seq),
+                          order.getOrElse(OrderStamp.legacy(seq)),
+                          now
+                        )
           _          <- retired.foldLeft(FC.unit) { case (acc, (sessionId, role, evidence)) =>
                           acc.flatMap(_ => SessionRepository.retireProgram(runtime, sessionId, lock, role, evidence))
                         }
@@ -211,6 +225,29 @@ private[store] object MessageRepository:
             acc.flatMap(values => decode(runtime, toRow(tuple)).map(values :+ _))
           })
       }
+
+  def loadById(runtime: StoreRuntime, messageId: Long): IO[Either[StorageError, MessageRecord]] =
+    runtime.run {
+      rowById(messageId).flatMap {
+        case Some(value) => decode(runtime, value)
+        case None        => Sql.abort(StorageError.NotFound("message"))
+      }
+    }
+
+  def loadByLogicalKey(runtime: StoreRuntime, key: yochat.core.s2.LogicalKey): IO[Either[StorageError, MessageRecord]] =
+    runtime.run {
+      sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts
+           |FROM messages
+           |WHERE conversation_id = ${key.conversationId.toArray} AND device_pub = ${key.authorDevice.bytes.toArray}
+           |  AND seq = ${key.authorSeq}
+           |ORDER BY id DESC LIMIT 1""".stripMargin
+        .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]
+        .option
+        .flatMap {
+          case Some(value) => decode(runtime, toRow(value))
+          case None        => Sql.abort(StorageError.NotFound("message"))
+        }
+    }
 
   def listRecent(
     runtime: StoreRuntime,
@@ -494,6 +531,13 @@ private[store] object MessageRepository:
     MessageState.fromCode(value) match
       case Right(state) => FC.pure(state)
       case Left(_)      => Sql.abort(StorageError.InvalidEnvelope)
+
+  private def rowById(messageId: Long): ConnectionIO[Option[Row]] =
+    sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts
+         |FROM messages WHERE id = $messageId""".stripMargin
+      .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]
+      .option
+      .map(_.map(toRow))
 
   private def row(
     conversationId: ByteVector,

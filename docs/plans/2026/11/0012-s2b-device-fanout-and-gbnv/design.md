@@ -1,6 +1,6 @@
 # Plan 0012 design: S2-B 设备列表、扇出与 GBNV
 
-- 状态：B1 implemented（2026-11-26；回执见 `impl.md`）；B2/B3 未开始。
+- 状态：B1/B2/B3 implemented on `feat/plan-0012-b2-impl`（2026-11-26；回执见 `impl.md`）；S2-B owner parity sign-off pending。
 - 范围：S2-B。建立一个主设备 + 至多一个只读伴随设备、联系人可见设备列表、B 直接向 A2 分发、签名吊销传播、两主设备作者的 GBNV。
 - 前序：ADR-0003、ADR-0004、ADR-0006、ADR-0007、ADR-0008、ADR-0010；新决策见 ADR-0011。
 - 产品依据：`docs/spec/product/users-and-devices.md` 的设备条目/设备列表/吊销条目；`docs/spec/engineering/keys-and-devices.md` 的签名域与合并规则；`docs/spec/engineering/messaging.md` 的最终全序与每设备回执。

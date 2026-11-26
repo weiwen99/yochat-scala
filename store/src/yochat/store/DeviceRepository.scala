@@ -8,7 +8,7 @@ import org.typelevel.doobie.free.connection as FC
 import org.typelevel.doobie.implicits.*
 import scodec.bits.ByteVector
 
-import yochat.core.Ed25519Public
+import yochat.core.{Ed25519Public, X25519Public}
 
 /** Device records are local authorization facts. The name and signed join manifest are sealed; public keys, versions and revocation timestamps
   * remain plaintext metadata. The high-water key prevents a deleted/rolled-back row from being silently reinserted.
@@ -31,7 +31,8 @@ private[store] object DeviceRepository:
     joinManifestHash: Array[Byte],
     joinCursorSyncSeq: Long,
     pairingNonce: Option[Array[Byte]],
-    requestHash: Option[Array[Byte]]
+    requestHash: Option[Array[Byte]],
+    fanoutPub: Option[Array[Byte]]
   )
 
   def insert(
@@ -57,12 +58,12 @@ private[store] object DeviceRepository:
           changed        <-
             sql"""INSERT INTO devices(
                  |device_pub, user_pub, role, name, authorization, version, created_at, revoked_at,
-                 |join_epoch, join_manifest, join_manifest_hash, join_cursor_sync_seq, pairing_nonce, request_hash
+                 |join_epoch, join_manifest, join_manifest_hash, join_cursor_sync_seq, pairing_nonce, request_hash, fanout_pub
                  |) VALUES (
                  |${record.devicePub.bytes.toArray}, ${record.userPub.bytes.toArray}, ${record.role.code}, $sealedName,
                  |${record.authorization.toArray}, 1, $now, ${record.revokedAt},
                  |${record.joinEpoch}, $sealedManifest, ${record.joinManifestHash.toArray}, ${record.joinCursorSyncSeq},
-                 |${record.pairingNonce.map(_.toArray)}, ${record.requestHash.map(_.toArray)}
+                 |${record.pairingNonce.map(_.toArray)}, ${record.requestHash.map(_.toArray)}, ${record.fanoutPub.map(_.bytes.toArray)}
                  |)""".stripMargin.update.run
           _              <- Sql.changed(changed)
           _              <- Sql.writeMeta(Sql.deviceVersionKey(record.devicePub.bytes), 1L)
@@ -144,6 +145,12 @@ private[store] object DeviceRepository:
                                  case Right(value) => FC.pure(value)
               _             <- if row.joinManifestHash.length == 32 then FC.unit else Sql.abort(StorageError.InvalidEnvelope)
               _             <- if row.authorization.nonEmpty then FC.unit else Sql.abort(StorageError.InvalidEnvelope)
+              fanout        <- row.fanoutPub match
+                                 case None      => FC.pure(None)
+                                 case Some(raw) =>
+                                   X25519Public.from(ByteVector.view(raw)) match
+                                     case Left(_)      => Sql.abort(StorageError.InvalidEnvelope)
+                                     case Right(value) => FC.pure(Some(value))
             yield Some(
               DeviceRecord(
                 devicePub = public,
@@ -159,14 +166,15 @@ private[store] object DeviceRepository:
                 joinManifestHash = ByteVector.view(row.joinManifestHash),
                 joinCursorSyncSeq = row.joinCursorSyncSeq,
                 pairingNonce = row.pairingNonce.map(ByteVector.view),
-                requestHash = row.requestHash.map(ByteVector.view)
+                requestHash = row.requestHash.map(ByteVector.view),
+                fanoutPub = fanout
               )
             )
     }
 
   private def row(devicePub: ByteVector): ConnectionIO[Option[Row]] =
     sql"""SELECT device_pub, user_pub, role, name, authorization, version, created_at, revoked_at,
-         |join_epoch, join_manifest, join_manifest_hash, join_cursor_sync_seq, pairing_nonce, request_hash
+         |join_epoch, join_manifest, join_manifest_hash, join_cursor_sync_seq, pairing_nonce, request_hash, fanout_pub
          |FROM devices WHERE device_pub = ${devicePub.toArray}""".stripMargin
       .query[
         (
@@ -183,14 +191,15 @@ private[store] object DeviceRepository:
           Array[Byte],
           Long,
           Option[Array[Byte]],
+          Option[Array[Byte]],
           Option[Array[Byte]]
         )
       ]
       .option
       .map {
-        case None                                                                                                                 => None
-        case Some((device, user, role, name, auth, version, created, revoked, epoch, manifest, manifestHash, cursor, nonce, req)) =>
-          Some(Row(device, user, role, name, auth, version, created, revoked, epoch, manifest, manifestHash, cursor, nonce, req))
+        case None                                                                                                                         => None
+        case Some((device, user, role, name, auth, version, created, revoked, epoch, manifest, manifestHash, cursor, nonce, req, fanout)) =>
+          Some(Row(device, user, role, name, auth, version, created, revoked, epoch, manifest, manifestHash, cursor, nonce, req, fanout))
       }
 
   private def validateRecord(record: DeviceRecord): ConnectionIO[Unit] =
@@ -199,6 +208,7 @@ private[store] object DeviceRepository:
     else if record.authorization.isEmpty then Sql.abort(StorageError.InvalidArgument("device_authorization"))
     else if record.joinManifestHash.size != 32L then Sql.abort(StorageError.InvalidArgument("join_manifest_hash"))
     else if record.joinCursorSyncSeq < 0L then Sql.abort(StorageError.InvalidArgument("join_cursor"))
+    else if record.fanoutPub.exists(_.bytes.size != 32L) then Sql.abort(StorageError.InvalidArgument("fanout_pub"))
     else if record.devicePub.bytes == record.userPub.bytes then Sql.abort(StorageError.InvalidArgument("device_user"))
     else FC.unit
 

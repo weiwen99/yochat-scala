@@ -342,7 +342,12 @@ object AppRuntime:
       random           = new RuntimeRandom
       notificationRef <- Ref.of[IO, Option[Notification]](None)
       transport        = new RelayAppTransport(relay, queue, notifications, notificationRef, clock, timers)
-      executor         = new AppEffectExecutor(store, identity, transport)
+      executor         = new AppEffectExecutor(
+                           store,
+                           identity,
+                           transport,
+                           (message, _) => FanoutService.sendForMessageRecord(store, relay, message).start.void
+                         )
       loop            <- eventLoop(transport, queue, inboundBudget, stateRef, messageIds, random, executor, fatal, clock, onState).start
       inbound         <- relay.incoming
                            .flatMap(incoming =>
@@ -948,6 +953,8 @@ object AppRuntime:
               else random.nonce.map(nonce => Some(AppEvent.RekeyAcceptReceived(accept.sessionId, accept, nonce, clock.millis())))
         case RelayPayload.DeviceSync(_)       => IO.pure(None)
         case RelayPayload.DeviceList(_)       => IO.pure(None)
+        case RelayPayload.Fanout(_)           => IO.pure(None)
+        case RelayPayload.FanoutAck(_)        => IO.pure(None)
     }
 
   private def replyEvent(

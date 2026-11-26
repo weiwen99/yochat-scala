@@ -1,6 +1,6 @@
-# Plan 0012 B1 implementation
+# Plan 0012 implementation
 
-Status: B1 implemented; B2 direct fanout and B3 GBNV are not started. Q8 model is frozen for the B1 device-list/revocation slice.
+Status: B1, B2 and the B3 order-metadata slice are implemented and green. Q8 is extended to B2/B3 and frozen by the model check; S2-B owner parity sign-off remains pending.
 
 ## Delivered
 
@@ -20,14 +20,21 @@ Status: B1 implemented; B2 direct fanout and B3 GBNV are not started. Q8 model i
 | Core | `./mill core.test` (S2CoreSpec added) | PASS |
 | Store | `./mill store.test` | PASS; peer list round-trip/sealing/revocation rollback and schema migration |
 | Server | `./mill server.test` | PASS |
-| S2-A regression + B1 list | `./mill server.s2e2e` | PASS; `old=0 postJoin=200 offline=220 restart=221 revoked=221`; B sees two A devices and A2 revoked |
-| S2 1k sync | `./mill server.s2perf` | PASS; `sync_ms=2694 count=1000` |
-| Full S1/S2-A gate | `./check.sh` | PASS 696.06s; S1 E2E 18/18, E2E#8 3818ms, `PERF#10K` 35,332ms, `PERF#RATE` 294.4 msg/s, cold start 1297/1328ms, idle 757.6MB; `QUINT_CHECKS PASS` |
+| S2-A/B2 + B3 E2E | `./mill server.s2e2e` | PASS; `old=0 postJoin=200 direct=201 offline=221 restart=222 concurrent=242 revoked=242`; B1 ACK persisted; no duplicate after A1 resync; no post-revoke delivery |
+| S2 1k sync | `./mill server.s2perf` | PASS; `sync_ms=3054 count=1000` |
+| Full S1/S2-A gate | `./check.sh` | PASS 697.82s; S1 E2E 18/18, E2E#8 3827ms, `PERF#10K` 34,176ms, `PERF#RATE` 300.9 msg/s, cold start 1224/1282ms, idle 732.2MB; `QUINT_CHECKS PASS` |
+
+## B2/B3 delivered
+
+- Pairing fanout key, signed device-list fanout public, schema 5, direct `Fanout`/`FanoutAck`, logical-key dedupe and per-device receipts.
+- B3 `OrderStamp` inside `DataPayload` v2 (v1 remains readable), `message_order`, Lamport/device/seq ordering in the main API and companion view, causal readiness with join-cutoff handling.
+- `S2E2E` now covers A1-offline direct fanout, A2 ACK persistence, no duplicate after A1 resync, concurrent A/B ordering across A1/B1/A2, and post-revocation stop.
+- Receipts: core/store/server tests PASS; `server.s2e2e` PASS `direct=201 ... concurrent=242 revoked=242`; `server.s2perf` PASS `sync_ms=3054`; `server.s2bperf` PASS `fanout_ms=4697`; `models/check.sh` PASS; `./check.sh` PASS 697.82s.
 
 ## Known limits
 
 - B1 has one user-private-key signer. Multi-signer device-list merge and user-private sync are out of scope and need another ADR.
-- B2 direct device sessions, per-device receipts and B/GBNV are not implemented.
+- B2 direct fanout, per-device receipts and B3 order metadata are implemented; see `b2-impl.md`.
 - `test-parity.md` S2-B owner sign-off is pending.
 - The contact-side list is a signed snapshot; old S2-A peers that do not send the new kind simply retain the primary-only projection.
 - A v3→v4 migration regression was added after the full gate and passes in `store.test.testOnly yochat.store.S2StoreSpec`.

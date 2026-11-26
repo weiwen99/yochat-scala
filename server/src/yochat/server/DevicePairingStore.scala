@@ -5,7 +5,7 @@ import java.nio.charset.StandardCharsets
 import cats.effect.IO
 import scodec.bits.ByteVector
 
-import yochat.core.{Crypto, Key32}
+import yochat.core.{Crypto, Key32, X25519KeyPair, X25519Private}
 import yochat.core.s2.DeviceAuthorization
 import yochat.store.{DeviceRecord, DeviceRole, DeviceSyncRecord, Store}
 
@@ -20,8 +20,10 @@ private[server] object DevicePairingStore:
     auth: DeviceAuthorization,
     root: Key32,
     name: String,
-    requestHash: Option[ByteVector]
+    requestHash: Option[ByteVector],
+    fanoutPrivate: Option[X25519Private] = None
   ): IO[Either[String, Unit]] =
+    val fanout = fanoutPrivate.flatMap(value => X25519KeyPair.fromSeed(value).toOption.map(_.publicKey))
     val record = DeviceRecord(
       devicePub = store.identity.devicePublic,
       userPub = auth.userPub,
@@ -36,7 +38,8 @@ private[server] object DevicePairingStore:
       joinManifestHash = auth.joinManifestHash,
       joinCursorSyncSeq = auth.joinCursorSyncSeq,
       pairingNonce = None,
-      requestHash = requestHash
+      requestHash = requestHash,
+      fanoutPub = fanout
     )
     val sync   = DeviceSyncRecord(
       peerDevicePub = auth.primaryDevicePub,

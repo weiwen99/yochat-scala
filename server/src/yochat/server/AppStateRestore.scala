@@ -27,11 +27,15 @@ object AppStateRestore:
     for
       lock     <- store.lockGeneration
       snapshot <- store.snapshot
-    yield for
-      generation <- lock
-      values     <- snapshot
-      state      <- fromSnapshot(store, generation, values)
-    yield state
+      result   <- (lock, snapshot) match
+                    case (Left(error), _)                   => IO.pure(Left(error))
+                    case (_, Left(error))                   => IO.pure(Left(error))
+                    case (Right(generation), Right(values)) =>
+                      fromSnapshot(store, generation, values) match
+                        case Left(error)  => IO.pure(Left(error))
+                        case Right(state) =>
+                          ordersFrom(store, values).map(_.map(orders => state.copy(order = orders)))
+    yield result
 
   private def fromSnapshot(store: Store, generation: Long, snapshot: StoreSnapshot): Either[StorageError, AppState] =
     for
@@ -55,6 +59,28 @@ object AppStateRestore:
       outgoing = outgoing,
       connection = ConnectionState.Offline
     )
+
+  private def ordersFrom(store: Store, snapshot: StoreSnapshot): IO[Either[StorageError, Map[ByteVector, OrderClock]]] =
+    snapshot.conversations.foldLeft(IO.pure[Either[StorageError, Map[ByteVector, OrderClock]]](Right(Map.empty))) { (acc, conversation) =>
+      acc.flatMap {
+        case Left(error)   => IO.pure(Left(error))
+        case Right(values) =>
+          store.listMessageOrders(conversation.id).map {
+            case Left(error)      => Left(error)
+            case Right(orderRows) =>
+              val legacy = snapshot.messages.getOrElse(conversation.id, Nil).groupBy(_.devicePub).map { case (device, messages) =>
+                device -> messages.map(_.seq).max
+              }
+              val base   = legacy.foldLeft(OrderClock()) { case (clock, (device, seq)) =>
+                clock.copy(lamport = math.max(clock.lamport, seq), seen = clock.seen.updated(device, seq))
+              }
+              val clock  = orderRows.foldLeft(base) { case (current, (key, stamp)) =>
+                current.observe(stamp, key.authorDevice, key.authorSeq)
+              }
+              Right(values.updated(conversation.id, clock))
+          }
+      }
+    }
 
   private def contactsFrom(snapshot: StoreSnapshot): Either[StorageError, Map[Ed25519Public, AppContact]] =
     snapshot.contacts.foldLeft[Either[StorageError, Map[Ed25519Public, AppContact]]](Right(Map.empty)) { (acc, record) =>

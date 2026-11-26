@@ -152,6 +152,17 @@ object server extends CommonModule with ScalafmtModule with ScalafixModule:
     ()
   }
 
+  /** B2#2: 1k direct B1→A2 messages while A1 is offline, within 5s. */
+  def s2bperf(): Command[Unit] = Task.Command {
+    val classpath = test.runClasspath().map(_.path).mkString(java.io.File.pathSeparator)
+    os.proc("java", "-cp", classpath, "yochat.server.e2e.S2E2E", "--fanout-perf").call(
+      cwd = moduleDir,
+      stdout = os.Inherit,
+      stderr = os.Inherit
+    )
+    ()
+  }
+
   /** S2#2: 1k post-join messages sync from A1 to A2 within 5s. */
   def s2perf(): Command[Unit] = Task.Command {
     val classpath = test.runClasspath().map(_.path).mkString(java.io.File.pathSeparator)

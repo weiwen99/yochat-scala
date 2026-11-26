@@ -2,7 +2,7 @@
 
 - Plan: 0012
 - Date: 2026-11-26
-- Status: B1 implemented (device list/revocation, Q8a frozen). B2 core fanout envelope implemented; direct runtime wiring pending. B3 GBNV not started.
+- Status: B1/B2/B3 implemented and green; full gate PASS 697.82s. Q8 extended to fanout/dedupe/receipts/order. S2-B owner parity sign-off pending.
 - Domain: product/protocol/storage/UI
 - Summary: 关闭 ADR-0010 留下的联系人可见设备列表、签名吊销与跨作者最终全序；A2/B2 作为只读伴随设备直接接收对方主设备的消息，不再只经 A1 转发。
 - Predecessor: `9413244` (S2-A T1 sign-off and P2P evaluation); ADR-0010, ADR-0003
@@ -11,4 +11,4 @@
 - Open decisions: B1/B2/B3 split; read-only companion only; Lamport GBNV vs certificates; mixed-version policy; 1k direct fanout gate. See design §11.
 - Test parity: `test-parity.md`; S2-B owner sign-off pending. B1 receipts: `impl.md`.
 - Verification: `./mill server.s2e2e` PASS 21.1s with B seeing two A devices and revoked A2; `./mill server.s2perf` PASS `sync_ms=2694`; `./mill core.test`, `store.test`, `server.test`, `transport.test` PASS; `./models/check.sh` PASS including Q8; full `./check.sh` PASS 696.06s (S1 E2E 18/18, `PERF#RATE` 294.4 msg/s, cold 1297/1328ms, idle 757.6MB).
-- Next step: wire pairing fanout keys, direct send/receive/ACK and logical-key dedupe per `b2-impl.md`; B3 GBNV remains.
+- Next step: owner parity sign-off and merge decision. See `impl.md`/`b2-impl.md`.

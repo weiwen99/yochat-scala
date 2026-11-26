@@ -3,6 +3,7 @@ package yochat.core.app
 import scodec.bits.ByteVector
 
 import yochat.core.{Ed25519KeyPair, Ed25519Public, Invitation, RatchetState, SessionId, WireFrame, X25519Private}
+import yochat.core.s2.{OrderDependency, OrderStamp}
 
 enum LockState:
   case Locked(generation: Long)
@@ -81,7 +82,8 @@ final case class OutgoingMessage(
   wire: WireFrame,
   generation: Long,
   state: OutgoingState,
-  attempts: Int
+  attempts: Int,
+  order: Option[OrderStamp] = None
 ):
 
   override def toString: String = s"OutgoingMessage(id=$id, seq=$seq, state=$state, attempts=$attempts)"
@@ -147,7 +149,8 @@ final case class BufferedMessage(
   devicePub: Ed25519Public,
   seq: Long,
   body: ByteVector,
-  wire: WireFrame
+  wire: WireFrame,
+  order: Option[OrderStamp] = None
 ):
 
   override def toString: String = s"BufferedMessage(id=$id, seq=$seq)"
@@ -157,7 +160,8 @@ final case class AppliedMessage(
   authorPub: Ed25519Public,
   devicePub: Ed25519Public,
   seq: Long,
-  body: ByteVector
+  body: ByteVector,
+  order: Option[OrderStamp] = None
 ):
 
   override def toString: String = s"AppliedMessage(id=$id, seq=$seq)"
@@ -235,7 +239,7 @@ final case class Conversation(
 extension (message: BufferedMessage)
 
   private def toApplied: AppliedMessage =
-    AppliedMessage(message.id, message.authorPub, message.devicePub, message.seq, message.body)
+    AppliedMessage(message.id, message.authorPub, message.devicePub, message.seq, message.body, message.order)
 
 object AppLimits:
 
@@ -254,6 +258,27 @@ object AppLimits:
   val RekeyRetryMs: Long          = 2_500L
   val MaxReplyCandidates: Int     = 8
 
+final case class OrderClock(lamport: Long = 0L, seen: Map[Ed25519Public, Long] = Map.empty):
+
+  def next(device: Ed25519Public, seq: Long): (OrderStamp, OrderClock) =
+    val stamp  = OrderStamp(
+      if lamport == Long.MaxValue then Long.MaxValue else lamport + 1L,
+      seen.toVector.map { case (key, value) => OrderDependency(key, value) }
+    )
+    val merged = seen.updated(device, seq)
+    (stamp, OrderClock(stamp.lamport, merged))
+
+  def observe(stamp: OrderStamp, device: Ed25519Public, seq: Long): OrderClock =
+    val merged = stamp.depsMap
+      .foldLeft(seen) { case (current, (key, value)) =>
+        current.updated(key, math.max(current.getOrElse(key, 0L), value))
+      }
+      .updated(device, math.max(mergedValue(stamp.depsMap, device, seen), seq))
+    OrderClock(math.max(lamport, stamp.lamport), merged)
+
+  private def mergedValue(deps: Map[Ed25519Public, Long], device: Ed25519Public, seen: Map[Ed25519Public, Long]): Long =
+    math.max(deps.getOrElse(device, 0L), seen.getOrElse(device, 0L))
+
 final case class AppState(
   identity: Option[LocalIdentity] = None,
   lock: LockState = LockState.Locked(0L),
@@ -269,7 +294,8 @@ final case class AppState(
   nextTimerInstallation: Long = 1L,
   connection: ConnectionState = ConnectionState.Offline,
   rekeyWindowStartedAtMs: Long = 0L,
-  rekeyWindowAttempts: Int = 0
+  rekeyWindowAttempts: Int = 0,
+  order: Map[ByteVector, OrderClock] = Map.empty
 ):
 
   override def toString: String =
