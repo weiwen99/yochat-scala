@@ -31,6 +31,7 @@ enum ServiceError:
   case AlreadyUnlocked
   case SessionUnavailable
   case NotFound
+  case SendRefused(reason: String)
   case BadRequest(message: String)
   case StoreFailed(detail: String)
   case RuntimeFailed(detail: String)
@@ -43,6 +44,7 @@ enum ServiceError:
       case AlreadyUnlocked       => "already-unlocked"
       case SessionUnavailable    => "session-unavailable"
       case NotFound              => "not-found"
+      case SendRefused(reason)   => s"send-refused:$reason"
       case BadRequest(message)   => s"bad-request:$message"
       case StoreFailed(detail)   => s"store-failed:$detail"
       case RuntimeFailed(detail) => s"runtime-failed:$detail"
@@ -260,8 +262,12 @@ final class AppService private (
         .sendMessage(conversationId, body)
         .map(id => Right(id))
         .handleErrorWith {
-          case error: RuntimeError => IO.pure(Left(ServiceError.BadRequest(error.getMessage)))
-          case error               => IO.pure(Left(ServiceError.RuntimeFailed(error.getClass.getSimpleName)))
+          case error: RuntimeError if error.getMessage.startsWith("runtime-fatal:") =>
+            IO.pure(Left(ServiceError.RuntimeFailed(error.getMessage)))
+          case error: RuntimeError                                                  =>
+            IO.pure(Left(ServiceError.SendRefused(error.getMessage)))
+          case error                                                                =>
+            IO.pure(Left(ServiceError.RuntimeFailed(error.getClass.getSimpleName)))
         }
     }
 

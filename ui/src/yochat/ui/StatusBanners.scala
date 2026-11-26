@@ -9,7 +9,7 @@ object StatusBanners:
       cls := "status-stack",
       child.maybe <-- api.error.signal.map(_.map(message => banner("error", "本机服务", message, None))),
       child.maybe <-- api.notice.signal
-        .map(_.filterNot(_ == "waiting").map(code => banner("notice", "状态", noticeText(code), Some(() => api.dismissNotice())))),
+        .map(_.map(code => banner("notice", "状态", noticeText(code), Some(() => api.dismissNotice())))),
       child.maybe <-- api.state.signal.map(_.fatal.map(code => banner("fatal", "本机服务错误", fatalText(code), None)))
     )
 
@@ -36,8 +36,9 @@ object StatusBanners:
       case "queue-full"       => "待发消息已满。中继恢复前，新消息不会继续发送。"
       case "inbound-overflow" => "收到的消息暂时超出本机缓冲，正在请求补发。"
       case "message-failed"   => "有消息重试失败，正文仍保留在本机。"
-      case "rekey-failed"     => "加密通道重建失败，可在聊天右侧重试。"
+      case "rekey-failed"     => "加密通道重建失败，可在聊天中重试。"
       case "rekey-required"   => "对方要求重建加密通道。"
+      case "waiting"          => "有消息正在等待较早的消息，服务会自动继续。"
       case other              => s"本机状态需要处理（$other）。"
 
   private def fatalText(code: String): String =

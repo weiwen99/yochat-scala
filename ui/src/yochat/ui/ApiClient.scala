@@ -25,6 +25,7 @@ final class ApiClient:
 
   private val socket: Var[Option[dom.WebSocket]]   = Var(None)
   private val dismissedNotice: Var[Option[String]] = Var(None)
+  private val serverExited: Var[Boolean]           = Var(false)
 
   def start(): Unit =
     listenForServerExit()
@@ -48,7 +49,7 @@ final class ApiClient:
         updateNotice(next.notification)
         if unlocked.now() != next.unlocked then unlocked.set(next.unlocked)
         if loading.now() then loading.set(false)
-        error.set(None)
+        if !serverExited.now() then error.set(None)
         if next.unlocked then
           val selected = activeConversation.now().filter(id => next.conversations.exists(_.id == id))
           val target   = selected.orElse(next.conversations.headOption.map(_.id))
@@ -62,7 +63,7 @@ final class ApiClient:
           canSend.set(false)
       case Failure(failure) =>
         loading.set(false)
-        error.set(Some(message(failure)))
+        if !serverExited.now() then error.set(Some(message(failure)))
     }
 
   def unlock(passphrase: String): Future[Unit] =
@@ -195,14 +196,14 @@ final class ApiClient:
           val title = state.now().contacts.find(_.conversationId.contains(conversationId)).map(_.displayName).getOrElse("YoChat")
           notifyNative(title)
       case Failure(fail)  =>
-        error.set(Some(message(fail)))
+        if !serverExited.now() then error.set(Some(message(fail)))
     }
 
   private def connectSocket(): Unit =
     val protocol    = if dom.window.location.protocol == "https:" then "wss" else "ws"
     val socketValue = new dom.WebSocket(s"$protocol://${dom.window.location.host}/api/events")
     socketValue.onopen = _ =>
-      error.set(None)
+      if !serverExited.now() then error.set(None)
       loadSession()
     socketValue.onmessage = event =>
       Try(ujson.read(event.data.toString)).toOption.foreach { value =>
@@ -210,7 +211,7 @@ final class ApiClient:
       }
     socketValue.onclose = _ =>
       socket.set(None)
-      error.set(Some("本机服务连接已断开，正在重连。"))
+      if !serverExited.now() then error.set(Some("本机服务连接已断开，正在重连。"))
       scheduleReconnect()
     socketValue.onerror = _ => socketValue.close()
     socket.set(Some(socketValue))
@@ -224,13 +225,16 @@ final class ApiClient:
     if value.isEmpty then
       dismissedNotice.set(None)
       notice.set(None)
-    else if value != dismissedNotice.now() then notice.set(value)
+    else if value != dismissedNotice.now() then
+      dismissedNotice.set(None)
+      notice.set(value)
 
   private def listenForServerExit(): Unit =
     if js.typeOf(js.Dynamic.global.yochat) != "undefined" then
       val bridge = js.Dynamic.global.yochat
       if js.typeOf(bridge.onServerExited) == "function" then
         bridge.applyDynamic("onServerExited")((() => {
+          serverExited.set(true)
           loading.set(false)
           error.set(Some("本机服务已退出。请重启 YoChat。"))
         }): js.Function0[Unit])
@@ -244,7 +248,13 @@ final class ApiClient:
       .flatMap { response =>
         response.text().toFuture.flatMap { text =>
           val parsed = Try(ujson.read(text)).toOption
-          if response.ok then parsed.fold(Future.failed(new ApiException("invalid-json")))(Future.successful)
+          if response.ok then
+            parsed match
+              case Some(value) =>
+                Json.errorCode(value) match
+                  case Some(code) => Future.failed(new ApiException(code))
+                  case None       => Future.successful(value)
+              case None        => Future.failed(new ApiException("invalid-json"))
           else
             val code = parsed.flatMap(Json.errorCode).getOrElse(s"http-${response.status}")
             Future.failed(new ApiException(code))
@@ -265,15 +275,21 @@ final class ApiClient:
 
   private def codeMessage(code: String): String =
     code match
-      case "queue-full" | "bad-request:queue-full"     => "待发消息已满，请等中继恢复后再发送。"
-      case "bad-request:send-rejected"                 => "现在不能发送：安全码或关系状态不允许。"
-      case "bad-request:event-queue-full"              => "本机处理队列已满，请稍后重试。"
-      case "locked"                                    => "本机已锁定，请重新解锁。"
-      case "unlock-failed"                             => "口令不正确，或这台设备的密钥无法打开。"
-      case "weak-passphrase"                           => "本机口令至少需要 8 个字符。"
-      case "session-unavailable"                       => "本机会话已不可用，请重新解锁。"
-      case value if value.startsWith("runtime-fatal:") => "本机服务遇到无法恢复的错误。请重启 YoChat。"
-      case value if value.startsWith("bad-request:")   => s"操作被拒绝：${value.stripPrefix("bad-request:")}"
-      case value                                       => s"操作失败（$value）"
+      case "queue-full" | "bad-request:queue-full" | "send-refused:queue-full"                =>
+        "待发消息已满，请等中继恢复后再发送。"
+      case "bad-request:send-rejected" | "send-refused:send-rejected"                         =>
+        "现在不能发送：安全码或关系状态不允许。"
+      case "send-refused:send-timeout"                                                        =>
+        "本机服务没有确认这次发送，请重试。"
+      case "bad-request:event-queue-full"                                                     => "本机处理队列已满，请稍后重试。"
+      case "locked"                                                                           => "本机已锁定，请重新解锁。"
+      case "unlock-failed"                                                                    => "口令不正确，或这台设备的密钥无法打开。"
+      case "weak-passphrase"                                                                  => "本机口令至少需要 8 个字符。"
+      case "session-unavailable"                                                              => "本机会话已不可用，请重新解锁。"
+      case value if value.startsWith("runtime-fatal:") || value.startsWith("runtime-failed:") =>
+        "本机服务遇到无法恢复的错误。请重启 YoChat。"
+      case value if value.startsWith("send-refused:")                                         => s"发送被拒绝：${value.stripPrefix("send-refused:")}"
+      case value if value.startsWith("bad-request:")                                          => s"操作被拒绝：${value.stripPrefix("bad-request:")}"
+      case value                                                                              => s"操作失败（$value）"
 
 final private[ui] class ApiException(val code: String) extends RuntimeException(code)

@@ -5,7 +5,7 @@ import java.time.Clock
 
 import scala.concurrent.duration.*
 
-import cats.effect.{FiberIO, IO, Ref, Resource}
+import cats.effect.{Deferred, FiberIO, IO, Ref, Resource}
 import cats.effect.std.Queue
 import scodec.bits.ByteVector
 
@@ -35,6 +35,7 @@ final private[server] class RuntimeError(message: String) extends RuntimeExcepti
 
 private[server] enum RuntimeCommand:
   case App(event: AppEvent)
+  case Send(messageId: Long, event: AppEvent, reply: Deferred[IO, Either[String, Long]])
   case Inbound(from: Ed25519Public, payload: RelayPayload, bytes: Long)
   case Connection(online: Boolean, nowMs: Long)
 
@@ -84,16 +85,14 @@ final class AppRuntime private (
                   else IO.raiseError(new RuntimeError("send-rejected"))
       id       <- messageIds.updateAndGet(AppRuntime.nextId)
       nonce    <- random.nonce
-      accepted <- submit(
-                    AppEvent.UserSend(
-                      id,
-                      conversationId,
-                      Crypto.text(body),
-                      nonce,
-                      clock.millis()
-                    )
-                  )
+      event     = AppEvent.UserSend(id, conversationId, Crypto.text(body), nonce, clock.millis())
+      reply    <- Deferred[IO, Either[String, Long]]
+      accepted <- queue.tryOffer(RuntimeCommand.Send(id, event, reply))
       _        <- if accepted then IO.unit else IO.raiseError(new RuntimeError("event-queue-full"))
+      outcome  <- reply.get.timeoutTo(10.seconds, IO.pure(Left("send-timeout"))) // scalafix:ok DisableSyntax.no-unsafe-get
+      _        <- outcome match
+                    case Right(_)     => IO.unit
+                    case Left(reason) => IO.raiseError(new RuntimeError(reason))
     yield id
 
   def createInvitation(
@@ -263,6 +262,17 @@ object AppRuntime:
   private[server] def readRef[A](ref: Ref[IO, A]): IO[A] =
     ref.get // scalafix:ok DisableSyntax.no-unsafe-get
 
+  /** Publish a fatal condition through the same state callback the UI already subscribes to; otherwise the runtime stops before the next state
+    * event and an open window keeps showing stale content.
+    */
+  private[server] def publishFatal(
+    fatal: Ref[IO, Option[AppExecutionError]],
+    stateRef: Ref[IO, AppState],
+    onState: AppState => IO[Unit],
+    error: AppExecutionError
+  ): IO[Unit] =
+    fatal.set(Some(error)) *> readRef(stateRef).flatMap(onState)
+
   private[server] def isDurable(effect: AppEffect): Boolean =
     effect match
       case _: AppEffect.PersistOutbound | _: AppEffect.PersistInbound | _: AppEffect.PersistInboundAndRetire | _: AppEffect.PersistContact |
@@ -402,7 +412,12 @@ object AppRuntime:
           .flatMap {
             case Right(_)    => eventLoop(transport, queue, inboundBudget, stateRef, messageIds, random, executor, fatal, clock, onState)
             case Left(error) =>
-              fatal.set(Some(AppExecutionError.Unsupported(s"runtime-loop:${error.getClass.getSimpleName}")))
+              AppRuntime.publishFatal(
+                fatal,
+                stateRef,
+                onState,
+                AppExecutionError.Unsupported(s"runtime-loop:${error.getClass.getSimpleName}")
+              )
           }
     }
 
@@ -419,7 +434,27 @@ object AppRuntime:
     onState: AppState => IO[Unit]
   ): IO[Unit] =
     command match
-      case RuntimeCommand.App(event)                =>
+      case RuntimeCommand.Send(messageId, event, reply) =>
+        applyEvent(transport, event, queue, stateRef, random, executor, fatal, clock, onState).attempt.flatMap {
+          case Left(error) =>
+            AppRuntime.publishFatal(
+              fatal,
+              stateRef,
+              onState,
+              AppExecutionError.Unsupported(s"runtime-send:${error.getClass.getSimpleName}")
+            ) *> reply.complete(Left("runtime-send-failed")).void
+          case Right(_)    =>
+            for
+              state      <- AppRuntime.readRef(stateRef)
+              fatalError <- AppRuntime.readRef(fatal)
+              outcome     = if state.outgoing.contains(messageId) then Right(messageId)
+                            else if fatalError.isDefined then Left(fatalError.map(_.code).getOrElse("runtime-fatal"))
+                            else if state.outgoing.size >= AppLimits.MaxOutgoing then Left("queue-full")
+                            else Left("send-rejected")
+              _          <- reply.complete(outcome)
+            yield ()
+        }
+      case RuntimeCommand.App(event)                    =>
         val applied = event match
           case AppEvent.TimerFired(TimerId.Rekey(sessionId, RekeyTimerStage.Confirm), _, nowMs) =>
             random.nonce.flatMap(nonce =>
@@ -499,7 +534,7 @@ object AppRuntime:
                 recoverRetirements(transport, queue, stateRef, random, executor, fatal, clock, onState) *>
                 recoverRekeys(transport, queue, stateRef, random, executor, fatal, clock, onState)
             case _                        => IO.unit)
-      case RuntimeCommand.Connection(on, now)       =>
+      case RuntimeCommand.Connection(on, now)           =>
         applyEvent(transport, AppEvent.ConnectionChanged(on, now), queue, stateRef, random, executor, fatal, clock, onState) *>
           (if on then
              resumeGaps(queue, stateRef, random, clock) *> recoverRebinds(
@@ -515,7 +550,7 @@ object AppRuntime:
                recoverRetirements(transport, queue, stateRef, random, executor, fatal, clock, onState) *>
                recoverRekeys(transport, queue, stateRef, random, executor, fatal, clock, onState)
            else IO.unit)
-      case RuntimeCommand.Inbound(from, payload, _) =>
+      case RuntimeCommand.Inbound(from, payload, _)     =>
         translateInbound(from, payload, messageIds, random, stateRef, clock).flatMap {
           case None        => IO.unit
           case Some(event) => applyEvent(transport, event, queue, stateRef, random, executor, fatal, clock, onState)
@@ -569,7 +604,7 @@ object AppRuntime:
       external        = effects.filterNot(AppRuntime.isDurable)
       result         <- executor.executeAll(durable)
       _              <- result match
-                          case Left(error)    => fatal.set(Some(error))
+                          case Left(error)    => AppRuntime.publishFatal(fatal, stateRef, onState, error)
                           case Right(skipped) =>
                             val skippedTimers = current.timers.keys
                               .filter(timer => skipped.contains(timer.messageId))
@@ -676,7 +711,13 @@ object AppRuntime:
                                 RuntimeCommand.App(AppEvent.StartRekey(sessionId, r1, id, nonce, clock.millis()))
                               )
                   _        <- if accepted then IO.unit
-                              else fatal.set(Some(AppExecutionError.Unsupported("rekey-queue-full")))
+                              else
+                                AppRuntime.publishFatal(
+                                  fatal,
+                                  stateRef,
+                                  onState,
+                                  AppExecutionError.Unsupported("rekey-queue-full")
+                                )
                 yield ()
               case AppEffect.RebindPending(oldSessionId, newSessionId)       =>
                 def loop: IO[Unit] =
@@ -723,11 +764,13 @@ object AppRuntime:
                     onState
                   )
                 )
+              case AppEffect.Notify(notification)                            =>
+                transport.notify(notification) *> AppRuntime.readRef(stateRef).flatMap(onState)
               case _                                                         =>
                 executor.execute(effect).flatMap {
                   case Right(_)                                => IO.unit
                   case Left(AppExecutionError.TransportFailed) => IO.unit
-                  case Left(error)                             => fatal.set(Some(error))
+                  case Left(error)                             => AppRuntime.publishFatal(fatal, stateRef, onState, error)
                 }
         }
       }

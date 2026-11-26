@@ -177,6 +177,21 @@ async function checkStatusBanners(browser, url) {
     if (!errorText.includes("本机服务暂时不可用")) throw new Error(`load error banner mismatch: ${errorText}`);
     await loadError.close();
 
+    const envelope = await context.newPage();
+    await envelope.route("**/api/session", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "runtime-failed:test" })
+      })
+    );
+    await envelope.goto(url);
+    const envelopeBanner = envelope.locator(".status-banner.error").first();
+    await envelopeBanner.waitFor({ timeout: 10_000 });
+    const envelopeText = await envelopeBanner.innerText();
+    if (!envelopeText.includes("无法恢复")) throw new Error(`error envelope banner mismatch: ${envelopeText}`);
+    await envelope.close();
+
     const statePage = await context.newPage();
     await statePage.route("**/api/session", (route) =>
       route.fulfill({
@@ -195,6 +210,23 @@ async function checkStatusBanners(browser, url) {
     if (!fatalText.includes("无法恢复")) throw new Error(`fatal banner mismatch: ${fatalText}`);
     if (!noticeText.includes("待发消息已满")) throw new Error(`notice banner mismatch: ${noticeText}`);
     await statePage.close();
+
+    const pushPage = await context.newPage();
+    let sessionCalls = 0;
+    await pushPage.route("**/api/session", (route) => {
+      sessionCalls += 1;
+      const body =
+        sessionCalls === 1
+          ? { unlocked: true, instanceExists: true, fatal: null, notification: null }
+          : { unlocked: true, instanceExists: true, fatal: "test-fatal", notification: null };
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+    });
+    await pushPage.goto(url);
+    const pushedFatal = pushPage.locator(".status-banner.fatal").first();
+    await pushedFatal.waitFor({ timeout: 10_000 });
+    const pushedText = await pushedFatal.innerText();
+    if (!pushedText.includes("无法恢复")) throw new Error(`pushed fatal banner mismatch: ${pushedText}`);
+    await pushPage.close();
   } finally {
     await context.close();
   }
@@ -214,8 +246,37 @@ async function checkModalKeyboard(page) {
     const inside = await page.evaluate(() => !!document.activeElement?.closest?.(".modal"));
     if (!inside) throw new Error("focus escaped the modal");
   }
-  await page.keyboard.press("Escape");
-  await page.locator(".modal").waitFor({ state: "detached", timeout: 5_000 });
+
+  const pattern = "**/api/invitations";
+  const handler = (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    return new Promise((resolve) => {
+      setTimeout(
+        () =>
+          resolve(
+            route.fulfill({
+              status: 400,
+              contentType: "application/json",
+              body: JSON.stringify({ error: "bad-request:test" })
+            })
+          ),
+        500
+      );
+    });
+  };
+  await page.route(pattern, handler);
+  try {
+    const inputs = page.locator(".modal .dialog-body .form-grid input");
+    await inputs.nth(0).fill("微信");
+    await inputs.nth(1).fill("@A");
+    await page.getByRole("button", { name: "生成邀请" }).click();
+    await page.getByRole("button", { name: "正在生成…" }).waitFor({ timeout: 5_000 });
+    await page.keyboard.press("Escape");
+    await page.locator(".modal").waitFor({ state: "detached", timeout: 5_000 });
+    await page.waitForTimeout(600);
+  } finally {
+    await page.unroute(pattern, handler);
+  }
   const restored = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") === "添加联系人");
   if (!restored) throw new Error("modal did not restore focus");
 }
@@ -223,32 +284,83 @@ async function checkModalKeyboard(page) {
 async function checkQueueFullFeedback(page) {
   stage = "queue-full-feedback";
   const pattern = "**/api/conversations/*/messages";
-  let intercepted = false;
+  let posts = 0;
   const handler = (route) => {
-    if (!intercepted && route.request().method() === "POST") {
-      intercepted = true;
-      return route.fulfill({
-        status: 400,
-        contentType: "application/json",
-        body: JSON.stringify({ error: "bad-request:queue-full" })
+    if (route.request().method() !== "POST") return route.continue();
+    posts += 1;
+    if (posts === 1) {
+      return new Promise((resolve) => {
+        setTimeout(
+          () => resolve(route.fulfill({ status: 200, contentType: "application/json", body: "{}" })),
+          500
+        );
       });
     }
-    return route.continue();
+    return route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "send-refused:queue-full" })
+    });
   };
   await page.route(pattern, handler);
   try {
     const composer = page.locator(".composer-input");
-    await composer.fill("queue-full-probe");
+    await composer.fill("queue-full-a");
+    await composer.press("Enter");
+    await composer.fill("queue-full-b");
     await composer.press("Enter");
     const toast = page.locator(".toast.error").first();
     await toast.waitFor({ timeout: 10_000 });
     const toastText = await toast.innerText();
     if (!toastText.includes("待发消息已满")) throw new Error(`queue-full toast mismatch: ${toastText}`);
+    await page.waitForTimeout(700);
     const value = await composer.inputValue();
-    if (value !== "queue-full-probe") throw new Error("queue-full cleared the draft");
+    if (value !== "queue-full-b") throw new Error(`delayed success cleared the newer draft: ${value}`);
     await composer.fill("");
   } finally {
     await page.unroute(pattern, handler);
+  }
+}
+
+async function checkElectronExitReason(browser, url, server) {
+  stage = "electron-exit-reason";
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.yochat = {
+      isElectron: true,
+      onServerExited(callback) {
+        window.__serverExited = callback;
+      },
+      notify() {},
+      keychainAvailable() {
+        return Promise.resolve(false);
+      },
+      loadPassphrase() {
+        return Promise.resolve(null);
+      },
+      savePassphrase() {
+        return Promise.resolve(false);
+      },
+      clearPassphrase() {
+        return Promise.resolve(true);
+      }
+    };
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(url);
+    await page.locator(".shell").waitFor({ timeout: 10_000 });
+    await page.evaluate(() => window.__serverExited());
+    const banner = page.locator(".status-banner.error").first();
+    await banner.waitFor({ timeout: 10_000 });
+    const first = await banner.innerText();
+    if (!first.includes("已退出")) throw new Error(`electron exit banner mismatch: ${first}`);
+    await stopChild(server);
+    await page.waitForTimeout(1_200);
+    const after = await banner.innerText();
+    if (!after.includes("已退出")) throw new Error(`electron exit reason overwritten: ${after}`);
+  } finally {
+    await context.close();
   }
 }
 
@@ -405,6 +517,7 @@ async function main() {
     assertSequence(await bubbleTexts(b, ".message.peer .bubble"), "ui", 100);
     assertSequence(await bubbleTexts(a, ".message.peer .bubble"), "ui-b", 100);
     assertSequence(await bubbleTexts(b, ".message.own .bubble"), "ui-b", 100);
+    await checkElectronExitReason(browser, `http://127.0.0.1:${portA}/`, serverA);
     await checkServiceDown(a, serverA);
     result = {
       delivered: 100,
@@ -413,6 +526,7 @@ async function main() {
       statusBanners: true,
       modalKeyboard: true,
       queueFullFeedback: true,
+      electronExitReason: true,
       serviceDown: true
     };
   } catch (error) {

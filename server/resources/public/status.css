@@ -1,0 +1,99 @@
+/* Status banners: fatal, background and service-exit conditions. */
+
+.status-stack {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(620px, calc(100vw - 28px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.status-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--control-line);
+  background: var(--sheet);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+}
+
+.status-banner.error,
+.status-banner.fatal {
+  border-color: var(--accent);
+}
+
+.status-mark {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.status-banner.error .status-mark,
+.status-banner.fatal .status-mark {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.status-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.status-title {
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.status-text {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.status-close {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.status-close:hover {
+  color: var(--ink);
+}
+
+.electron .status-stack {
+  top: 40px;
+}
+
+@media (max-width: 700px) {
+  .status-stack {
+    top: 10px;
+  }
+
+  .electron .status-stack {
+    top: 38px;
+  }
+}

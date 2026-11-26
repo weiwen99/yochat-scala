@@ -238,6 +238,7 @@ final class HttpApi private ():
     error match
       case ServiceError.Locked | ServiceError.UnlockFailed | ServiceError.SessionUnavailable => StatusCodes.Unauthorized
       case ServiceError.WeakPassphrase | ServiceError.BadRequest(_)                          => StatusCodes.BadRequest
+      case ServiceError.SendRefused(_)                                                       => StatusCodes.Conflict
       case ServiceError.AlreadyUnlocked                                                      => StatusCodes.Conflict
       case ServiceError.NotFound                                                             => StatusCodes.NotFound
       case ServiceError.StoreFailed(_) | ServiceError.RuntimeFailed(_)                       => StatusCodes.InternalServerError

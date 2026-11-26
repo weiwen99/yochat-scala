@@ -38,6 +38,14 @@ function ratio(foreground, background) {
   return (values[1] + 0.05) / (values[0] + 0.05);
 }
 
+function usesControlLine(source, selector) {
+  const pattern = new RegExp(`\\${selector}\\s*\\{([\\s\\S]*?)\\}`, "g");
+  for (let match = pattern.exec(source); match; match = pattern.exec(source)) {
+    if (match[1].includes("var(--control-line)")) return true;
+  }
+  return false;
+}
+
 function tokenSet(block, label) {
   return {
     label,
@@ -72,9 +80,15 @@ for (const [label, foreground, background, minimum] of checks) {
   console.log(`${label}: ${actual.toFixed(2)}:1 (minimum ${minimum.toFixed(1)}:1)`);
 }
 
-if (failures.length > 0) {
-  console.error(`CONTRAST FAIL checks=${checks.length} failures=${failures.length}`);
+const controlSelectors = [".icon-button", ".back-button"];
+const selectorFailures = controlSelectors.filter((selector) => !usesControlLine(css, selector));
+for (const selector of controlSelectors) {
+  console.log(`${selector} boundary: ${selectorFailures.includes(selector) ? "FAIL" : "PASS"}`);
+}
+
+if (failures.length > 0 || selectorFailures.length > 0) {
+  console.error(`CONTRAST FAIL checks=${checks.length} contrastFailures=${failures.length} selectorFailures=${selectorFailures.length}`);
   process.exit(1);
 }
 
-console.log(`CONTRAST PASS checks=${checks.length}`);
+console.log(`CONTRAST PASS checks=${checks.length} selectors=${controlSelectors.length}`);

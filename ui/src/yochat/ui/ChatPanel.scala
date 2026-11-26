@@ -25,7 +25,7 @@ object ChatPanel:
       val text = draft.now().trim
       if text.nonEmpty && api.canSend.now() then
         api.sendMessage(conversationId, text).onComplete {
-          case Success(_)    => draft.set("")
+          case Success(_)    => if draft.now().trim == text then draft.set("")
           case Failure(fail) => ui.failure(api.describeError(fail))
         }
 

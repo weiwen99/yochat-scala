@@ -1,6 +1,7 @@
 package yochat.ui
 
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.scalajs.js
 import scala.util.{Failure, Success}
 
 import com.raquo.laminar.api.L.*
@@ -11,7 +12,8 @@ object AddFriendDialog:
   private val FocusableSelector = "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href]"
 
   def apply(api: ApiClient, ui: UiState): HtmlElement =
-    val previousFocus: Var[Option[dom.HTMLElement]] = Var(None)
+    val previousFocus: Var[Option[dom.HTMLElement]]                    = Var(None)
+    val keyHandler: Var[Option[js.Function1[dom.KeyboardEvent, Unit]]] = Var(None)
 
     def close(): Unit = ui.addFriend.set(false)
 
@@ -43,7 +45,10 @@ object AddFriendDialog:
               val first  = focusables.head
               val last   = focusables.last
               val active = dom.document.activeElement
-              if event.shiftKey && active == first then
+              if !focusables.exists(_ == active) then
+                event.preventDefault()
+                first.focus()
+              else if event.shiftKey && active == first then
                 event.preventDefault()
                 last.focus()
               else if !event.shiftKey && active == last then
@@ -65,10 +70,19 @@ object AddFriendDialog:
           previousFocus.set(dom.document.activeElement match
             case element: dom.HTMLElement => Some(element)
             case _                        => None)
+          val handler: js.Function1[dom.KeyboardEvent, Unit] = event => trapFocus(event)
+          keyHandler.set(Some(handler))
+          dom.document.addEventListener("keydown", handler)
           focusFirst(context.thisNode.ref)
         },
-        onUnmountCallback(_ => previousFocus.now().foreach(_.focus())),
-        onKeyDown --> trapFocus,
+        onUnmountCallback { _ =>
+          keyHandler.now().foreach(handler => dom.document.removeEventListener("keydown", handler))
+          val previous = previousFocus.now().filter(_.isConnected)
+          val fallback = Option(dom.document.querySelector("button[aria-label=\"添加联系人\"]")) match
+            case Some(element: dom.HTMLElement) => Some(element)
+            case _                              => None
+          previous.orElse(fallback).foreach(_.focus())
+        },
         div(
           cls   := "modal-head",
           div(
