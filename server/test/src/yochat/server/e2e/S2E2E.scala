@@ -3,7 +3,7 @@ package yochat.server.e2e
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import java.time.Duration
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{CompletableFuture, TimeUnit}
 
 import scala.jdk.CollectionConverters.*
 import scala.util.control.NonFatal
@@ -19,16 +19,18 @@ object S2E2E:
   private val passphrase = E2E.Passphrase
 
   def main(args: Array[String]): Unit =
-    val started = System.nanoTime()
+    val perf      = args.contains("--perf")
+    val label     = if perf then "S2PERF" else "S2E2E"
+    val started   = System.nanoTime()
     val evidence =
-      try run()
+      try if perf then runPerf() else run()
       catch
         case NonFatal(error) =>
-          println(s"S2E2E FAIL ${error.getClass.getSimpleName}: ${Option(error.getMessage).getOrElse("")}")
+          println(s"$label FAIL ${error.getClass.getSimpleName}: ${Option(error.getMessage).getOrElse("")}")
           System.exit(1)
           ""
     val elapsed = (System.nanoTime() - started) / 1_000_000L
-    println(s"S2E2E PASS duration_ms=$elapsed evidence=$evidence")
+    println(s"$label PASS duration_ms=$elapsed evidence=$evidence")
 
   private def run(): String =
     E2EEnvironment.withPair { pair =>
@@ -56,6 +58,16 @@ object S2E2E:
         (1 to 100).foreach(index => pair.a.sendMessage(handshake.aConversation, s"a-post-$index"))
         (1 to 100).foreach(index => pair.b.sendMessage(handshake.bConversation, s"b-post-$index"))
         awaitCompanionMessages(a2, handshake.aConversation, 200)
+        val a1Post    = pair.a.messages(handshake.aConversation, limit = 1000).filter(message => message._4.startsWith("a-post-") || message._4.startsWith("b-post-")).takeRight(200)
+        val a2Post    = E2E.messageIds(ujson.Arr(a2.messages(handshake.aConversation)*))
+        val a1Pairs   = a1Post.map(message => (message._1, message._4))
+        val a2Pairs   = a2Post.map(message => (message._1, message._4))
+        val firstDiff = a1Pairs.zipAll(a2Pairs, (-1L, ""), (-1L, "")).zipWithIndex.find { case ((left, right), _) => left != right }
+        ensure(
+          a2Pairs == a1Pairs,
+          s"A2 history differs from A1 a1=${a1Pairs.size} a2=${a2Pairs.size} diff=$firstDiff a1Head=${a1Pairs.take(3)} a2Head=${a2Pairs.take(3)} a1Tail=${a1Pairs.takeRight(3)} a2Tail=${a2Pairs.takeRight(3)}"
+        )
+        ensure(a2Post.map(message => (message._2, message._1)).distinct.size == 200, "A2 has duplicate author sequence numbers")
 
         a2.stop()
         (1 to 10).foreach(index => pair.a.sendMessage(handshake.aConversation, s"offline-a-$index"))
@@ -82,6 +94,47 @@ object S2E2E:
         ensure(send.status == 404 || send.status == 405 || send.status == 400, s"A2 mutation accepted: ${send.status}")
 
         s"old=0 postJoin=200 offline=220 restart=221 revoked=221 a2=${a2Device.take(12)}"
+      finally
+        a2.stop()
+        E2E.deleteTree(a2Directory)
+    }
+
+  /** S2#2: 1,000 post-join messages are already in A1's store; A2 starts cold and must catch up within 5s. */
+  private def runPerf(): String =
+    E2EEnvironment.withPair { pair =>
+      val a2Directory = Files.createTempDirectory("yochat-e2e-a2-perf-")
+      val a2          = new CompanionProcess("A2", a2Directory, E2E.freePort(), pair.relay.port)
+      try
+        val handshake = E2EEnvironment.handshake(pair)
+        pair.a.verifySafety(handshake.bUser)
+        pair.b.verifySafety(handshake.aUser)
+        pair.a.awaitSafety(handshake.bUser, verified = true)
+        pair.b.awaitSafety(handshake.aUser, verified = true)
+
+        val inviteResponse = new Http().post(s"${pair.a.base}/api/devices/pairing", ujson.Obj("ttlHours" -> 1))
+        ensure(inviteResponse.ok, s"A1 pairing invite failed: ${inviteResponse.status} ${inviteResponse.body}")
+        val inviteFile = a2Directory.resolve("invite.txt")
+        Files.writeString(inviteFile, inviteResponse.json("code").str, StandardCharsets.UTF_8)
+        runPairing(pair.a, a2, handshake.aUser, inviteFile)
+
+        val bodies = (1 to 1000).map(index => f"sync-$index%04d").toVector
+        bodies.grouped(32).foreach { batch =>
+          val sends = batch.map(body => pair.a.sendMessageAsync(handshake.aConversation, body))
+          CompletableFuture.allOf(sends*).orTimeout(30, TimeUnit.SECONDS).join()
+        }
+        val onA = pair.a.messages(handshake.aConversation, limit = 1000)
+        ensure(onA.size == 1000, s"A1 count=${onA.size}")
+
+        val started = System.nanoTime()
+        a2.start()
+        awaitCompanionMessages(a2, handshake.aConversation, 1000)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000L
+        val onA2      = E2E.messageIds(ujson.Arr(a2.messages(handshake.aConversation)*))
+        ensure(onA2.size == 1000, s"A2 count=${onA2.size}")
+        ensure(elapsedMs < 5_000L, s"1000 sync messages took ${elapsedMs}ms")
+        ensure(onA2.map(_._1) == (1L to 1000L).toVector, "A2 sequence differs")
+        ensure(onA2.map(message => (message._1, message._4)) == onA.map(message => (message._1, message._4)), "A2 history differs from A1")
+        s"sync_ms=$elapsedMs count=1000 firstSeq=${onA2.head._1} lastSeq=${onA2.last._1}"
       finally
         a2.stop()
         E2E.deleteTree(a2Directory)

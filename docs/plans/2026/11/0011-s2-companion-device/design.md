@@ -1,6 +1,6 @@
 # Plan 0011 design: S2 只读第二设备
 
-- 状态：implementation in progress（2026-11-26；实现检查点见 meta.md）
+- 状态：S2-A implementation complete；owner acceptance 与 T1 签字待定（2026-11-26；回执见 `impl.md`）
 - 范围：S2-A。主设备 A1 保持 S1 对端协议不变；第二台设备 A2 只读，经主设备同步加入后的消息。
 - 关联：ADR-0003（v1/S2 范围）、ADR-0004（测试与性能门）、ADR-0006（会话加密）、ADR-0007（存储）、ADR-0008（ACK/窗口）；S1 验收回执见 Plan 0010。
 - 直接来源：2026-11-25 `AI体验营` 群消息（本文末列 id）；仓库既有总结 `docs/evaluations/2026-11-25-d-sync-throughput-requirements.md` 与 `docs/evaluations/2026-11-23-tenk-sync-discussion.md`。
@@ -433,7 +433,8 @@ invitations → contacts → conversations → sessions → messages
 命令（实现后）：
 
 ```sh
-./mill server.e2e          # S2#1–S2#5；扩展现有 E2E 套件
+./mill server.s2e2e        # S2#1/S2#3–S2#5 的固定伴随设备契约
+./mill server.s2perf       # S2#2：1k 同步 ≤5s
 ./mill store.test          # devices/device_sync/companion_messages/messages.sync_seq
 ./mill server.test         # role-aware ApiJson/AppStateRestore
 ./check.sh                 # 构建 server/transport assembly 并运行 shell/ui-smoke.js；
@@ -442,7 +443,7 @@ invitations → contacts → conversations → sessions → messages
 
 `test-parity.md` 的 T1 行必须由 owner 签字；未签字前不能把 S2 写成完成。
 
-本计划当前只写了设计，没有实现；上述命令尚未运行，不能写成 PASS。
+实现回执见 `impl.md`。S2#2 已通过（`sync_ms=2552 count=1000`）；S2-A 仍不等于完整 S2，GBNV 与联系人可见签名吊销未关闭。
 
 ## 19. 群消息依据与数据边界
 
