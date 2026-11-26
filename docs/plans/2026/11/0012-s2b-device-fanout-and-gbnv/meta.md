@@ -2,7 +2,7 @@
 
 - Plan: 0012
 - Date: 2026-11-26
-- Status: B1/B2/B3 implemented and green; full gate PASS 697.82s. Q8 extended to fanout/dedupe/receipts/order. S2-B owner parity sign-off pending.
+- Status: B1/B2/B3 implemented and green; full gate PASS 695.48s. Q8 extended to fanout/dedupe/receipts/order. S2-B owner parity sign-off pending.
 - Domain: product/protocol/storage/UI
 - Summary: 关闭 ADR-0010 留下的联系人可见设备列表、签名吊销与跨作者最终全序；A2/B2 作为只读伴随设备直接接收对方主设备的消息，不再只经 A1 转发。
 - Predecessor: `9413244` (S2-A T1 sign-off and P2P evaluation); ADR-0010, ADR-0003

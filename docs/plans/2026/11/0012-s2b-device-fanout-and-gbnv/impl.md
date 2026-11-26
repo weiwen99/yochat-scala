@@ -22,14 +22,14 @@ Status: B1, B2 and the B3 order-metadata slice are implemented and green. Q8 is 
 | Server | `./mill server.test` | PASS |
 | S2-A/B2 + B3 E2E | `./mill server.s2e2e` | PASS; `old=0 postJoin=200 direct=201 offline=221 restart=222 concurrent=242 revoked=242`; B1 ACK persisted; no duplicate after A1 resync; no post-revoke delivery |
 | S2 1k sync | `./mill server.s2perf` | PASS; `sync_ms=3054 count=1000` |
-| Full S1/S2-A gate | `./check.sh` | PASS 697.82s; S1 E2E 18/18, E2E#8 3827ms, `PERF#10K` 34,176ms, `PERF#RATE` 300.9 msg/s, cold start 1224/1282ms, idle 732.2MB; `QUINT_CHECKS PASS` |
+| Full S1/S2-A gate | `./check.sh` | PASS 695.48s; S1 E2E 18/18, E2E#8 3776ms, `PERF#10K` 35,802ms, `PERF#RATE` 186.2 msg/s, cold start 1225/1298ms, idle 752.4MB; `QUINT_CHECKS PASS` |
 
 ## B2/B3 delivered
 
 - Pairing fanout key, signed device-list fanout public, schema 5, direct `Fanout`/`FanoutAck`, logical-key dedupe and per-device receipts.
 - B3 `OrderStamp` inside `DataPayload` v2 (v1 remains readable), `message_order`, Lamport/device/seq ordering in the main API and companion view, causal readiness with join-cutoff handling.
 - `S2E2E` now covers A1-offline direct fanout, A2 ACK persistence, no duplicate after A1 resync, concurrent A/B ordering across A1/B1/A2, and post-revocation stop.
-- Receipts: core/store/server tests PASS; `server.s2e2e` PASS `direct=201 ... concurrent=242 revoked=242`; `server.s2perf` PASS `sync_ms=3054`; `server.s2bperf` PASS `fanout_ms=4697`; `models/check.sh` PASS; `./check.sh` PASS 697.82s.
+- Receipts: core/store/server tests PASS; `server.s2e2e` PASS `direct=201 ... concurrent=242 revoked=242`; `server.s2perf` PASS `sync_ms=3054`; `server.s2bperf` PASS `fanout_ms=4697`; `models/check.sh` PASS; `./check.sh` PASS 695.48s.
 
 ## Known limits
 
