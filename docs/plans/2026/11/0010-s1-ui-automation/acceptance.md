@@ -1,7 +1,7 @@
 # S1 acceptance receipt
 
 Date: 2026-11-23 (baseline); status update 2026-11-26
-Base: `fe9e126`; current source at the status update: `f8ccb36` (UI acceptance fixes)
+Base: `fe9e126`; current source at the status update: `8da4c2a` (UI acceptance fixes)
 
 | Gate | Evidence | Verdict |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ Base: `fe9e126`; current source at the status update: `f8ccb36` (UI acceptance f
 
 ## Status update 2026-11-26
 
-Current source `f8ccb36` (UI acceptance fixes); full `./check.sh` PASS (693.16s): E2E 18/18,
+Full `./check.sh` PASS at `f8ccb36` (693.16s); the final copy-only commit `8da4c2a` reran the UI smoke: E2E 18/18,
 E2E#8 3,718ms, 10k 41,318ms, local ACK throughput 289.3 msg/s (observational), cold start
 p50 1,263ms / p95 1,272ms, idle 757.5MB, contrast gate PASS (16 ratios + 2 selectors), web UI
 100/100 with the new failure/keyboard checks, Electron UI 100/100 with B/A restart. The earlier
