@@ -4,7 +4,7 @@ import scodec.bits.ByteVector
 
 import munit.FunSuite
 
-import yochat.core.{TestKeys, X25519Public}
+import yochat.core.{TestKeys, X25519KeyPair, X25519Private, X25519Public}
 
 final class S2CoreSpec extends FunSuite:
 
@@ -63,6 +63,32 @@ final class S2CoreSpec extends FunSuite:
       .fold(error => fail(error.toString), identity)
     assert(request.verify)
     assert(!request.copy(encryptedName = ByteVector.fill(32)(0x62)).verify)
+  }
+
+  test("fanout envelope authenticates sender and opens only for recipient") {
+    val recipient = X25519KeyPair.fromSeed(X25519Private.from(ByteVector.fill(32)(0x31)).fold(error => fail(error.toString), identity)).fold(error => fail(error.toString), identity)
+    val ephemeral = X25519KeyPair.fromSeed(X25519Private.from(ByteVector.fill(32)(0x32)).fold(error => fail(error.toString), identity)).fold(error => fail(error.toString), identity)
+    val nonce     = TestKeys.nonce(0x41)
+    val envelope  = FanoutEnvelope
+      .create(
+        primary.privateKey,
+        user.publicKey,
+        primary.publicKey,
+        companion.publicKey,
+        recipient.publicKey,
+        ByteVector.fill(32)(0x21),
+        7L,
+        ByteVector.view("fanout".getBytes("UTF-8")),
+        ephemeral.privateKey,
+        ephemeral.publicKey,
+        nonce
+      )
+      .fold(error => fail(error.toString), identity)
+    assert(envelope.verify)
+    assertEquals(FanoutEnvelope.fromBytes(envelope.bytes), Right(envelope))
+    assertEquals(FanoutEnvelope.open(recipient.privateKey, companion.publicKey, envelope), Right(ByteVector.view("fanout".getBytes("UTF-8"))))
+    assert(FanoutEnvelope.open(recipient.privateKey, primary.publicKey, envelope).isLeft)
+    assert(!envelope.copy(authorSeq = 8L).verify)
   }
 
   test("peer device list round-trips and rejects revocation/version tamper") {
