@@ -156,12 +156,13 @@ private[store] object MessageRepository:
                             body
                           )
                         )
+          syncSeq    <- Sql.messageSyncSeq
           changed    <-
-            sql"""INSERT INTO messages(conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts)
+            sql"""INSERT INTO messages(conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts, sync_seq)
                              |VALUES (${conversationId.toArray}, ${state.sessionId.bytes.toArray}, ${authorPub.bytes.toArray},
                              |        ${devicePub.bytes.toArray}, $seq, ${sealedBody}, ${wire.toArray}, ${MessageState.code(
                   messageState
-                )}, $now, $attempts)""".stripMargin.update.run
+                )}, $now, $attempts, $syncSeq)""".stripMargin.update.run
           _          <- Sql.changed(changed)
           messageId  <- sql"SELECT last_insert_rowid()".query[Long].unique
           _          <- SessionRepository.writeHighWater(prepared)
@@ -352,9 +353,10 @@ private[store] object MessageRepository:
                                                 body
                                               )
                                             )
+                              syncSeq    <- Sql.messageSyncSeq
                               changed    <- sql"""UPDATE messages
                                                |SET session_id = ${state.sessionId.bytes.toArray}, seq = $seq, body = ${sealedBody.toArray}, wire = ${wire.toArray},
-                                               |    state = ${MessageState.code(MessageState.Pending)}, attempts = 0
+                                               |    state = ${MessageState.code(MessageState.Pending)}, attempts = 0, sync_seq = $syncSeq
                                                |WHERE conversation_id = ${conversationId.toArray} AND session_id = ${oldSessionId.bytes.toArray}
                                                |  AND author_pub = ${authorPub.bytes.toArray} AND device_pub = ${devicePub.bytes.toArray}
                                                |  AND seq = $oldSeq""".stripMargin.update.run
@@ -374,8 +376,9 @@ private[store] object MessageRepository:
     runtime.run {
       for
         _       <- Sql.checkLock(expectedLockGeneration)
+        syncSeq <- Sql.messageSyncSeq
         changed <-
-          sql"UPDATE messages SET state = ${MessageState.code(next)} WHERE id = $messageId AND state = ${MessageState.code(expected)}".update.run
+          sql"UPDATE messages SET state = ${MessageState.code(next)}, sync_seq = $syncSeq WHERE id = $messageId AND state = ${MessageState.code(expected)}".update.run
         _       <- Sql.changed(changed)
       yield ()
     }
@@ -394,7 +397,8 @@ private[store] object MessageRepository:
     runtime.run {
       for
         _       <- Sql.checkLock(expectedLockGeneration)
-        changed <- sql"""UPDATE messages SET state = ${MessageState.code(next)}
+        syncSeq <- Sql.messageSyncSeq
+        changed <- sql"""UPDATE messages SET state = ${MessageState.code(next)}, sync_seq = $syncSeq
                         |WHERE conversation_id = ${conversationId.toArray} AND session_id = ${sessionId.bytes.toArray}
                         |  AND author_pub = ${authorPub.bytes.toArray} AND device_pub = ${devicePub.bytes.toArray}
                         |  AND seq = $seq AND state = ${MessageState.code(expected)}""".stripMargin.update.run

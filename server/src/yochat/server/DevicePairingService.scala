@@ -86,7 +86,7 @@ final class DevicePairingService(
                 case Some(value) if nowMs >= value.expiresAt => IO.pure(Left("pairing-expired"))
                 case Some(value)                             =>
                   for
-                    cursor <- store.maxMessageId
+                    cursor <- store.maxMessageSyncSeq
                     result <- cursor match
                                 case Left(error)  => IO.pure(Left(error.code))
                                 case Right(maxId) =>
@@ -197,7 +197,7 @@ final class DevicePairingService(
                      val sync = DeviceSyncRecord(
                        peerDevicePub = request.companionDevicePub,
                        syncRoot = root.bytes,
-                       lastAckedSyncSeq = 0L,
+                       lastAckedSyncSeq = auth.joinCursorSyncSeq,
                        lastBatchSeq = 0L,
                        lastBatchHash = ByteVector.fill(32)(0),
                        version = 0L,

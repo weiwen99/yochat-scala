@@ -342,7 +342,9 @@ final class AppService private (
                                   device,
                                   Crypto.sha256(record.authorization).bytes,
                                   root,
-                                  record.joinCursorSyncSeq
+                                  sync.lastAckedSyncSeq,
+                                  sync.lastBatchSeq,
+                                  sync.lastBatchHash
                                 )
                                 .flatMap(_.sendSnapshot)
                                 .map(_.left.map(ServiceError.BadRequest.apply))

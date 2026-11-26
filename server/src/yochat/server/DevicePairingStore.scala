@@ -41,7 +41,7 @@ private[server] object DevicePairingStore:
     val sync   = DeviceSyncRecord(
       peerDevicePub = auth.primaryDevicePub,
       syncRoot = root.bytes,
-      lastAckedSyncSeq = 0L,
+      lastAckedSyncSeq = auth.joinCursorSyncSeq,
       lastBatchSeq = 0L,
       lastBatchHash = ByteVector.fill(32)(0),
       version = 0L,

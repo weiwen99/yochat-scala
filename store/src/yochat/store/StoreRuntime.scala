@@ -81,6 +81,21 @@ private[store] object Sql:
   def nextVersion(value: Long): ConnectionIO[Long] =
     if value == Long.MaxValue then abort(StorageError.InvalidStateVersion) else FC.pure(value + 1L)
 
+  def messageSyncSeq: ConnectionIO[Long] =
+    meta(DeviceSyncEnabledKey).flatMap {
+      case Some(value) if value == 1L => nextMessageSyncSeq
+      case _                          => FC.pure(0L)
+    }
+
+  def nextMessageSyncSeq: ConnectionIO[Long] =
+    meta(MessageSyncSeqKey).flatMap {
+      case Some(value) if value == Long.MaxValue => abort(StorageError.InvalidStateVersion)
+      case Some(value)                           =>
+        val next = value + 1L
+        writeMeta(MessageSyncSeqKey, next).flatMap(_ => FC.pure(next))
+      case None                                  => writeMeta(MessageSyncSeqKey, 1L).flatMap(_ => FC.pure(1L))
+    }
+
   def changed(changed: Int): ConnectionIO[Unit] =
     if changed == 1 then FC.unit else abort(StorageError.WriteConflict)
 
@@ -109,3 +124,6 @@ private[store] object Sql:
 
   def deviceSyncVersionKey(peerDevicePub: ByteVector): String =
     s"device-sync-version/${peerDevicePub.toHex}"
+
+  val MessageSyncSeqKey: String    = "message-sync-seq"
+  val DeviceSyncEnabledKey: String = "device-sync-enabled"

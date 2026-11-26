@@ -39,6 +39,7 @@ private[store] object DeviceSyncRepository:
                  |)""".stripMargin.update.run
           _          <- Sql.changed(changed)
           _          <- Sql.writeMeta(Sql.deviceSyncVersionKey(record.peerDevicePub.bytes), 1L)
+          _          <- Sql.writeMeta(Sql.DeviceSyncEnabledKey, 1L)
         yield record.copy(version = 1L, updatedAt = now)
       }
     }

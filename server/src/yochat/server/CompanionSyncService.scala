@@ -36,8 +36,38 @@ final class CompanionSyncService(
 
   def receive(bytes: ByteVector): IO[Either[String, Unit]] =
     DeviceSyncProtocol.open(syncRoot, primaryDevicePub, authHash, bytes) match
-      case Left(error)  => IO.pure(Left(error))
-      case Right(value) => applyRecords(value)
+      case Left(error)   => IO.pure(Left(error))
+      case Right(opened) =>
+        applyRecords(opened.records).flatMap {
+          case Left(error) => IO.pure(Left(error))
+          case Right(_)    => recordCheckpoint(opened, bytes) *> acknowledge(opened, bytes).as(Right(()))
+        }
+
+  private def recordCheckpoint(opened: DeviceSyncProtocol.Opened, bytes: ByteVector): IO[Either[String, Unit]] =
+    store.loadDeviceSync(primaryDevicePub).flatMap {
+      case Left(error) => IO.pure(Left(error.code))
+      case Right(sync) =>
+        val updated = sync.copy(
+          lastAckedSyncSeq = opened.lastSyncSeq,
+          lastBatchSeq = opened.batchSeq,
+          lastBatchHash = DeviceSyncProtocol.batchHash(bytes)
+        )
+        store.lockGeneration.flatMap {
+          case Left(error) => IO.pure(Left(error.code))
+          case Right(lock) => store.updateDeviceSync(updated, sync.version, lock).map(_.map(_ => ()).left.map(_.code))
+        }
+    }
+
+  private def acknowledge(opened: DeviceSyncProtocol.Opened, bytes: ByteVector): IO[Unit] =
+    DeviceSyncProtocol.ack(
+      authHash,
+      opened.batchSeq,
+      DeviceSyncProtocol.batchHash(bytes),
+      opened.lastSyncSeq,
+      store.identity.devicePrivate
+    ) match
+      case Left(_)    => IO.unit
+      case Right(ack) => relay.send(primaryDevicePub, RelayPayload.DeviceSync(ack)).attempt.void
 
   private def applyRecords(value: Value): IO[Either[String, Unit]] =
     for

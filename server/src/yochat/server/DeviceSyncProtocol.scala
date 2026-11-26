@@ -8,22 +8,31 @@ import ujson.Value
 
 import yochat.core.{Crypto, Ed25519Private, Ed25519Public, Key32, Nonce, Signature}
 
-/** Snapshot-only S2-A transport used before the full checkpoint worker. A1 sends a sealed, signed JSON snapshot; A2 upserts it. */
+/** S2-A device-sync transport: sealed, signed incremental batches plus a signed ACK carrying the A2 checkpoint. */
 object DeviceSyncProtocol:
 
-  final case class Batch(
+  final case class Opened(
     authHash: ByteVector,
     batchSeq: Long,
     prevBatchHash: ByteVector,
-    nonce: Nonce,
-    ciphertext: ByteVector,
-    signature: ByteVector
+    firstSyncSeq: Long,
+    lastSyncSeq: Long,
+    records: Value
   )
 
-  private val Domain = Crypto.ascii("yochat-s2-device-sync")
-  private val Random = new SecureRandom()
+  final case class Ack(
+    authHash: ByteVector,
+    batchSeq: Long,
+    batchHash: ByteVector,
+    lastAckedSyncSeq: Long,
+    signature: Signature
+  )
 
-  /** A2 asks A1 for a fresh sealed snapshot after it comes online or restarts. */
+  private val Domain    = Crypto.ascii("yochat-s2-device-sync")
+  private val AckDomain = Crypto.ascii("yochat-s2-sync-ack")
+  private val Random    = new SecureRandom()
+
+  /** A2 asks A1 for a fresh batch after it comes online or restarts. */
   def syncRequest(authHash: ByteVector): Either[String, ByteVector] =
     if authHash.size == 32L then
       Right(
@@ -51,24 +60,30 @@ object DeviceSyncProtocol:
     authHash: ByteVector,
     batchSeq: Long,
     prevBatchHash: ByteVector,
+    firstSyncSeq: Long,
+    lastSyncSeq: Long,
     records: Value
   ): Either[String, ByteVector] =
     for
       _      <- if authHash.size == 32L then Right(()) else Left("auth-hash")
       _      <- if prevBatchHash.size == 32L then Right(()) else Left("prev-hash")
+      _      <- if firstSyncSeq >= 0L && lastSyncSeq >= firstSyncSeq then Right(()) else Left("sync-range")
       nonce  <- Nonce.from(ByteVector.view(randomBytes(12))).left.map(_ => "nonce")
       key    <- Crypto.hkdf32(syncRoot.bytes, u64(batchSeq), Domain).left.map(_ => "batch-key")
       plain   = ByteVector.view(ujson.write(records).getBytes("UTF-8"))
-      cipher <- Crypto.aeadSeal(key, nonce, aad(authHash, batchSeq, prevBatchHash, nonce), plain).left.map(_ => "seal")
-      header  = headerBytes(authHash, batchSeq, prevBatchHash, nonce)
+      cipher <-
+        Crypto.aeadSeal(key, nonce, aad(authHash, batchSeq, prevBatchHash, firstSyncSeq, lastSyncSeq, nonce), plain).left.map(_ => "seal")
+      header  = headerBytes(authHash, batchSeq, prevBatchHash, firstSyncSeq, lastSyncSeq, nonce)
       sig    <- Crypto.sign(primaryDevicePrivate, header ++ cipher).left.map(_ => "sign")
     yield ByteVector.view(
       ujson
         .Obj(
           "version"       -> 1,
           "authHash"      -> authHash.toHex,
-          "batchSeq"      -> batchSeq,
+          "batchSeq"      -> ujson.Num(batchSeq.toDouble),
           "prevBatchHash" -> prevBatchHash.toHex,
+          "firstSyncSeq"  -> ujson.Num(firstSyncSeq.toDouble),
+          "lastSyncSeq"   -> ujson.Num(lastSyncSeq.toDouble),
           "nonce"         -> nonce.bytes.toHex,
           "ciphertext"    -> cipher.toHex,
           "signature"     -> sig.bytes.toHex
@@ -82,7 +97,7 @@ object DeviceSyncProtocol:
     primaryDevicePub: Ed25519Public,
     expectedAuthHash: ByteVector,
     bytes: ByteVector
-  ): Either[String, Value] =
+  ): Either[String, Opened] =
     for
       json      <- parseJson(bytes)
       version   <- fieldLong(json, "version")
@@ -92,34 +107,99 @@ object DeviceSyncProtocol:
       batchSeq  <- fieldLong(json, "batchSeq")
       _         <- if batchSeq >= 0L then Right(()) else Left("batch-seq")
       prev      <- fieldHex(json, "prevBatchHash", 32)
+      firstSync <- fieldLong(json, "firstSyncSeq")
+      lastSync  <- fieldLong(json, "lastSyncSeq")
+      _         <- if firstSync >= 0L && lastSync >= firstSync then Right(()) else Left("sync-range")
       nonce     <- fieldHex(json, "nonce", 12).flatMap(Nonce.from(_).left.map(_ => "nonce"))
       cipher    <- fieldHexAny(json, "ciphertext")
       rawSig    <- fieldHex(json, "signature", 64)
       signature <- Signature.from(rawSig).left.map(_ => "signature")
-      header     = headerBytes(authHash, batchSeq, prev, nonce)
+      header     = headerBytes(authHash, batchSeq, prev, firstSync, lastSync, nonce)
       _         <- if Crypto.verify(primaryDevicePub, header ++ cipher, signature) then Right(()) else Left("signature")
       key       <- Crypto.hkdf32(syncRoot.bytes, u64(batchSeq), Domain).left.map(_ => "batch-key")
-      plain     <- Crypto.aeadOpen(key, nonce, aad(authHash, batchSeq, prev, nonce), cipher).left.map(_ => "decrypt")
-      value     <- parseJson(plain)
-    yield value
+      plain     <- Crypto.aeadOpen(key, nonce, aad(authHash, batchSeq, prev, firstSync, lastSync, nonce), cipher).left.map(_ => "decrypt")
+      records   <- parseJson(plain)
+    yield Opened(authHash, batchSeq, prev, firstSync, lastSync, records)
+
+  def ack(
+    authHash: ByteVector,
+    batchSeq: Long,
+    batchHash: ByteVector,
+    lastAckedSyncSeq: Long,
+    companionDevicePrivate: Ed25519Private
+  ): Either[String, ByteVector] =
+    if authHash.size != 32L || batchHash.size != 32L || lastAckedSyncSeq < 0L then Left("ack-fields")
+    else
+      for signature <- Crypto
+                         .sign(companionDevicePrivate, AckDomain ++ ackInput(authHash, batchSeq, batchHash, lastAckedSyncSeq))
+                         .left
+                         .map(_ => "sign")
+      yield ByteVector.view(
+        ujson
+          .Obj(
+            "kind"             -> "s2-sync-ack",
+            "version"          -> 1,
+            "authHash"         -> authHash.toHex,
+            "batchSeq"         -> ujson.Num(batchSeq.toDouble),
+            "batchHash"        -> batchHash.toHex,
+            "lastAckedSyncSeq" -> ujson.Num(lastAckedSyncSeq.toDouble),
+            "signature"        -> signature.bytes.toHex
+          )
+          .render()
+          .getBytes("UTF-8")
+      )
+
+  def decodeAck(
+    companionDevicePub: Ed25519Public,
+    expectedAuthHash: ByteVector,
+    bytes: ByteVector
+  ): Either[String, Ack] =
+    for
+      json      <- parseJson(bytes)
+      kind      <- fieldString(json, "kind")
+      _         <- if kind == "s2-sync-ack" then Right(()) else Left("kind")
+      version   <- fieldLong(json, "version")
+      _         <- if version == 1L then Right(()) else Left("version")
+      authHash  <- fieldHex(json, "authHash", 32)
+      _         <- if authHash == expectedAuthHash then Right(()) else Left("auth-hash")
+      batchSeq  <- fieldLong(json, "batchSeq")
+      batchHash <- fieldHex(json, "batchHash", 32)
+      lastAcked <- fieldLong(json, "lastAckedSyncSeq")
+      rawSig    <- fieldHex(json, "signature", 64)
+      signature <- Signature.from(rawSig).left.map(_ => "signature")
+      _         <- if Crypto.verify(companionDevicePub, AckDomain ++ ackInput(authHash, batchSeq, batchHash, lastAcked), signature) then Right(())
+                   else Left("signature")
+    yield Ack(authHash, batchSeq, batchHash, lastAcked, signature)
 
   def batchHash(bytes: ByteVector): ByteVector = Crypto.sha256(bytes).bytes
+
+  private def ackInput(
+    authHash: ByteVector,
+    batchSeq: Long,
+    batchHash: ByteVector,
+    lastAckedSyncSeq: Long
+  ): ByteVector =
+    authHash ++ u64(batchSeq) ++ batchHash ++ u64(lastAckedSyncSeq)
 
   private def aad(
     authHash: ByteVector,
     batchSeq: Long,
     prev: ByteVector,
+    firstSyncSeq: Long,
+    lastSyncSeq: Long,
     nonce: Nonce
   ): ByteVector =
-    Domain ++ headerBytes(authHash, batchSeq, prev, nonce)
+    Domain ++ headerBytes(authHash, batchSeq, prev, firstSyncSeq, lastSyncSeq, nonce)
 
   private def headerBytes(
     authHash: ByteVector,
     batchSeq: Long,
     prev: ByteVector,
+    firstSyncSeq: Long,
+    lastSyncSeq: Long,
     nonce: Nonce
   ): ByteVector =
-    authHash ++ u64(batchSeq) ++ prev ++ nonce.bytes
+    authHash ++ u64(batchSeq) ++ prev ++ u64(firstSyncSeq) ++ u64(lastSyncSeq) ++ nonce.bytes
 
   private def u64(value: Long): ByteVector =
     ByteVector.view(ByteBuffer.allocate(8).putLong(value).array())
@@ -138,6 +218,11 @@ object DeviceSyncProtocol:
       case Some(ujson.Num(number)) => Right(number.toLong)
       case Some(ujson.Str(text))   => text.toLongOption.toRight(name)
       case _                       => Left(name)
+
+  private def fieldString(value: Value, name: String): Either[String, String] =
+    value.obj.get(name) match
+      case Some(ujson.Str(text)) => Right(text)
+      case _                     => Left(name)
 
   private def fieldHex(value: Value, name: String, length: Int): Either[String, ByteVector] =
     fieldHexAny(value, name).flatMap(bytes => if bytes.size == length.toLong then Right(bytes) else Left(name))

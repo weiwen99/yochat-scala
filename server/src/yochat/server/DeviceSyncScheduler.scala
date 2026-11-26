@@ -46,7 +46,7 @@ object DeviceSyncScheduler:
       incoming.payload match
         case RelayPayload.DeviceSync(bytes) =>
           DeviceSyncProtocol.decodeSyncRequest(bytes) match
-            case Left(_)         => IO.unit
+            case Left(_)         => acceptAck(store, incoming.from, bytes).attempt.void
             case Right(authHash) =>
               answer(store, relay, incoming.from, authHash).attempt *>
                 active.set(true)
@@ -85,10 +85,40 @@ object DeviceSyncScheduler:
             case Left(_)     => IO.unit
             case Right(root) =>
               DeviceSyncService
-                .create(store, relay, record.devicePub, authHash, root, record.joinCursorSyncSeq)
+                .create(store, relay, record.devicePub, authHash, root, sync.lastAckedSyncSeq, sync.lastBatchSeq, sync.lastBatchHash)
                 .flatMap(_.sendSnapshot)
                 .void
       }
+
+  private def acceptAck(store: Store, device: Ed25519Public, bytes: ByteVector): IO[Unit] =
+    store.loadDevice(device).flatMap {
+      case Left(_)                                              => IO.unit
+      case Right(record) if record.role != DeviceRole.Companion => IO.unit
+      case Right(record) if record.revokedAt.isDefined          => IO.unit
+      case Right(record)                                        =>
+        val authHash = Crypto.sha256(record.authorization).bytes
+        DeviceSyncProtocol.decodeAck(device, authHash, bytes) match
+          case Left(_)    => IO.unit
+          case Right(ack) =>
+            store.loadDeviceSync(device).flatMap {
+              case Left(_)     => IO.unit
+              case Right(sync)
+                  if ack.lastAckedSyncSeq < sync.lastAckedSyncSeq ||
+                    ack.batchSeq < sync.lastBatchSeq ||
+                    (ack.batchSeq == sync.lastBatchSeq && ack.batchHash != sync.lastBatchHash) =>
+                IO.unit
+              case Right(sync) =>
+                val updated = sync.copy(
+                  lastAckedSyncSeq = ack.lastAckedSyncSeq,
+                  lastBatchSeq = ack.batchSeq,
+                  lastBatchHash = ack.batchHash
+                )
+                store.lockGeneration.flatMap {
+                  case Left(_)     => IO.unit
+                  case Right(lock) => store.updateDeviceSync(updated, sync.version, lock).void
+                }
+            }
+    }
 
   private def answer(
     store: Store,

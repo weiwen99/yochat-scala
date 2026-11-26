@@ -398,6 +398,18 @@ final class Store private[store] (
   def maxMessageId: IO[Either[StorageError, Long]] =
     runtime.run(sql"SELECT COALESCE(MAX(id), 0) FROM messages".query[Long].unique)
 
+  def maxMessageSyncSeq: IO[Either[StorageError, Long]] =
+    runtime.run(sql"SELECT COALESCE(MAX(sync_seq), 0) FROM messages".query[Long].unique)
+
+  def messageSyncSeqs(after: Long): IO[Either[StorageError, Map[Long, Long]]] =
+    runtime
+      .run(
+        sql"SELECT id, sync_seq FROM messages WHERE sync_seq > $after ORDER BY sync_seq"
+          .query[(Long, Long)]
+          .to[List]
+      )
+      .map(_.map(_.toMap))
+
   def snapshot: IO[Either[StorageError, StoreSnapshot]] =
     runtime.transact(SnapshotRepository.load(runtime))
 

@@ -36,7 +36,17 @@ final class DeviceSyncServiceSpec extends FunSuite:
               .use {
                 case Left(error) => IO.raiseError(new AssertionError(error.code))
                 case Right(a2)   =>
+                  val a1Sync = DeviceSyncRecord(
+                    peerDevicePub = a2.identity.devicePublic,
+                    syncRoot = syncRoot.bytes,
+                    lastAckedSyncSeq = 0L,
+                    lastBatchSeq = 0L,
+                    lastBatchHash = ByteVector.fill(32)(0),
+                    version = 0L,
+                    updatedAt = 0L
+                  )
                   for
+                    _        <- a1.insertDeviceSync(a1Sync, 0L)
                     _        <- a1.insertContact(fixture.peerUser, ExecutorTestSupport.contactData(), 0L)
                     _        <- a1.insertSession(fixture.state, 0L)
                     _        <- a1.createConversation(fixture.conversationId, fixture.peerUser, 0L)
@@ -72,7 +82,9 @@ final class DeviceSyncServiceSpec extends FunSuite:
                                                   a2.identity.devicePublic,
                                                   authHash,
                                                   syncRoot,
-                                                  0L
+                                                  0L,
+                                                  0L,
+                                                  ByteVector.fill(32)(0)
                                                 )
                                       receiver = new CompanionSyncService(
                                                    a2,
@@ -157,6 +169,7 @@ final class DeviceSyncServiceSpec extends FunSuite:
                     updatedAt = 0L
                   )
                   for
+                    _        <- a1.insertDeviceSync(sync, 0L)
                     _        <- a1.insertContact(fixture.peerUser, ExecutorTestSupport.contactData(), 0L)
                     _        <- a1.createConversation(fixture.conversationId, fixture.peerUser, 0L)
                     session  <- a1.insertSession(fixture.state, 0L)
@@ -180,7 +193,6 @@ final class DeviceSyncServiceSpec extends FunSuite:
                                   MessageState.Pending
                                 )
                     _        <- a1.insertDevice(record, 0L)
-                    _        <- a1.insertDeviceSync(sync, 0L)
                     server   <- RelayServer.start(0).allocated
                     (relayServer, releaseServer) = server
                     result   <- RelayClient.connect("127.0.0.1", relayServer.port, a1.identity.devicePublic).use { relayA =>
@@ -200,15 +212,38 @@ final class DeviceSyncServiceSpec extends FunSuite:
                                       _         <- a1.insertContact(secondPeer, ExecutorTestSupport.contactData(), 0L)
                                       _         <- scheduler.notifyChange
                                       contacts  <- awaitContacts(a2, 2L)
+                                      checkpoint <- awaitCheckpoint(a1, companionPub, count)
+                                      version2  <- a1.loadSession(fixture.sessionId).flatMap {
+                                                     case Left(error)  => IO.raiseError(new AssertionError(error.code))
+                                                     case Right(value) => IO.pure(value.version)
+                                                   }
+                                      _         <- a1.appendOutbound(
+                                                     fixture.state,
+                                                     version2,
+                                                     0L,
+                                                     fixture.conversationId,
+                                                     fixture.identity.user.publicKey,
+                                                     fixture.identity.device.publicKey,
+                                                     2L,
+                                                     ExecutorTestSupport.body("增量正文"),
+                                                     ExecutorTestSupport.wire(fixture, 2L, fixture.identity.device.publicKey),
+                                                     MessageState.Pending
+                                                   )
+                                      _         <- scheduler.notifyChange
+                                      count2    <- awaitCount(a2, fixture.conversationId, 2L)
+                                      checkpoint2 <- awaitCheckpoint(a1, companionPub, 2L)
                                       _         <- scheduler.close
                                       _         <- fiber.cancel
-                                    yield (count, contacts)
+                                    yield (count, contacts, checkpoint, count2, checkpoint2)
                                   }
                                 }
                     _        <- releaseServer
                   yield
                     assertEquals(result._1, 1L)
                     assertEquals(result._2, 2L)
+                    assert(result._3 >= 1L)
+                    assertEquals(result._4, 2L)
+                    assert(result._5 >= 2L)
               }
         }
         .unsafeRunSync()
@@ -216,6 +251,16 @@ final class DeviceSyncServiceSpec extends FunSuite:
       ExecutorTestSupport.deleteTree(a1Directory)
       ExecutorTestSupport.deleteTree(a2Directory)
   }
+
+  private def awaitCheckpoint(store: Store, device: yochat.core.Ed25519Public, expected: Long): IO[Long] =
+    def loop(remaining: Long): IO[Long] =
+      store.loadDeviceSync(device).flatMap {
+        case Right(value) if value.lastAckedSyncSeq >= expected => IO.pure(value.lastAckedSyncSeq)
+        case Right(_) if remaining <= 0L                        => IO.raiseError(new AssertionError("checkpoint timeout"))
+        case Right(_)                                           => IO.sleep(20.millis) *> loop(remaining - 20L)
+        case Left(error)                                        => IO.raiseError(new AssertionError(error.code))
+      }
+    loop(5_000L)
 
   private def awaitContacts(store: Store, expected: Long): IO[Long] =
     def loop(remaining: Long): IO[Long] =
