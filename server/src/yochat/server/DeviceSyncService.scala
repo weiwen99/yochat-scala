@@ -4,6 +4,7 @@ import cats.effect.{IO, Ref}
 import scodec.bits.ByteVector
 
 import yochat.core.{Ed25519Public, Key32}
+import yochat.core.s2.{JoinManifest, ManifestKey}
 import yochat.store.{ContactRecord, ConversationRecord, MessageRecord, MessageState, Store}
 import yochat.transport.{RelayClient, RelayPayload}
 
@@ -15,8 +16,12 @@ final class DeviceSyncService(
   authHash: ByteVector,
   syncRoot: Key32,
   lastAckedSyncSeq: Long,
+  joinManifest: JoinManifest,
   state: Ref[IO, (Long, ByteVector)]
 ):
+
+  private val MaxBatchMessages: Int = 256
+  private val MaxBatchBytes: Int    = yochat.transport.RelayPayload.MaxPayload - 4_096
 
   private def readState: IO[(Long, ByteVector)] =
     state.get // scalafix:ok DisableSyntax.no-unsafe-get
@@ -29,41 +34,61 @@ final class DeviceSyncService(
                     case (Left(error), _)            => IO.pure(Left(error.code))
                     case (_, Left(error))            => IO.pure(Left(error.code))
                     case (Right(seqs), Right(value)) =>
-                      val messages = value.messages.values.flatten
+                      val candidates = value.messages.values.flatten
                         .flatMap(message => seqs.get(message.id).map(seq => message -> seq))
                         .toVector
                         .sortBy { case (message, seq) => (seq, message.id) }
-                      val first    = messages.headOption.map(_._2).getOrElse(lastAckedSyncSeq)
-                      val last     = messages.lastOption.map(_._2).getOrElse(lastAckedSyncSeq)
-                      val records  = ujson.Obj(
+                      val messages   = candidates
+                        .filter { case (message, _) =>
+                          !joinManifest.covers(ManifestKey(message.conversationId, message.authorPub, message.devicePub), message.seq)
+                        }
+                        .take(MaxBatchMessages)
+                      val base       = ujson.Obj(
                         "contacts"      -> ujson.Arr(value.contacts.map(contactJson)*),
                         "conversations" -> ujson.Arr(value.conversations.map(conversationJson)*),
-                        "messages"      -> ujson.Arr(messages.map { case (message, seq) => messageJson(message, seq) }*)
+                        "messages"      -> ujson.Arr()
                       )
-                      for
-                        (batchSeq, previous) <- readState
-                        encoded              <- IO.fromEither(
-                                                  DeviceSyncProtocol
-                                                    .seal(
-                                                      syncRoot,
-                                                      store.identity.devicePrivate,
-                                                      authHash,
-                                                      batchSeq,
-                                                      previous,
-                                                      first,
-                                                      last,
-                                                      records
-                                                    )
-                                                    .left
-                                                    .map(message => new IllegalArgumentException(message))
-                                                ).attempt
-                      yield encoded.left.map(_ => "seal")
+                      val baseSize   = ujson.write(base).getBytes("UTF-8").length
+                      val packed     = messages.foldLeft((Vector.empty[(MessageRecord, Long)], baseSize)) { case ((acc, size), (message, seq)) =>
+                        val encoded = ujson.write(messageJson(message, seq)).getBytes("UTF-8").length
+                        if size + encoded + 1 <= MaxBatchBytes then (acc :+ (message, seq), size + encoded + 1)
+                        else (acc, size)
+                      }
+                      val selected   = packed._1
+                      val first      = selected.headOption.map(_._2).getOrElse(lastAckedSyncSeq)
+                      val last       = selected.lastOption.map(_._2).orElse(candidates.lastOption.map(_._2)).getOrElse(lastAckedSyncSeq)
+                      val records    = ujson.Obj(
+                        "contacts"      -> base("contacts"),
+                        "conversations" -> base("conversations"),
+                        "messages"      -> ujson.Arr(selected.map { case (message, seq) => messageJson(message, seq) }*)
+                      )
+                      if baseSize > MaxBatchBytes || (messages.nonEmpty && selected.isEmpty) then IO.pure(Left("batch-too-large"))
+                      else
+                        for
+                          (batchSeq, previous) <- readState
+                          encoded              <- IO.fromEither(
+                                                    DeviceSyncProtocol
+                                                      .seal(
+                                                        syncRoot,
+                                                        store.identity.devicePrivate,
+                                                        authHash,
+                                                        batchSeq,
+                                                        previous,
+                                                        first,
+                                                        last,
+                                                        records
+                                                      )
+                                                      .left
+                                                      .map(message => new IllegalArgumentException(message))
+                                                  ).attempt
+                        yield encoded.left.map(_ => "seal")
     yield result
 
   def sendSnapshot: IO[Either[String, Unit]] =
     buildSnapshot.flatMap {
-      case Left(error)  => IO.pure(Left(error))
-      case Right(bytes) =>
+      case Left(error)                                          => IO.pure(Left(error))
+      case Right(bytes) if bytes.size > RelayPayload.MaxPayload => IO.pure(Left("batch-too-large"))
+      case Right(bytes)                                         =>
         for
           (batchSeq, _) <- readState
           _             <- relay.send(peerDevicePub, RelayPayload.DeviceSync(bytes)).attempt
@@ -121,8 +146,9 @@ object DeviceSyncService:
     syncRoot: Key32,
     lastAckedSyncSeq: Long,
     lastBatchSeq: Long,
-    lastBatchHash: ByteVector
+    lastBatchHash: ByteVector,
+    joinManifest: JoinManifest
   ): IO[DeviceSyncService] =
     Ref.of[IO, (Long, ByteVector)]((lastBatchSeq + 1L, lastBatchHash)).map { state =>
-      new DeviceSyncService(store, relay, peerDevicePub, authHash, syncRoot, lastAckedSyncSeq, state)
+      new DeviceSyncService(store, relay, peerDevicePub, authHash, syncRoot, lastAckedSyncSeq, joinManifest, state)
     }

@@ -86,34 +86,37 @@ final class DevicePairingService(
                 case Some(value) if nowMs >= value.expiresAt => IO.pure(Left("pairing-expired"))
                 case Some(value)                             =>
                   for
-                    cursor <- store.maxMessageSyncSeq
-                    result <- cursor match
-                                case Left(error)  => IO.pure(Left(error.code))
-                                case Right(maxId) =>
-                                  DevicePairing
-                                    .authorize(
-                                      value.invite,
-                                      value.ephemeralPrivate,
-                                      request,
-                                      userKey,
-                                      store.identity.userPublic,
-                                      store.identity.devicePublic,
-                                      maxId,
-                                      nowMs
-                                    ) match
-                                    case Left(error)                   => IO.pure(Left(error))
-                                    case Right((authCode, auth, root)) =>
-                                      for
-                                        lock  <- store.lockGeneration
-                                        saved <- lock match
-                                                   case Left(error)      => IO.pure(Left(error.code))
-                                                   case Right(lockValue) =>
-                                                     persist(request, authCode, auth, root, lockValue)
-                                        _     <- saved match
-                                                   case Left(_)  => IO.unit
-                                                   case Right(_) =>
-                                                     pending.update(values => values - request.pairingNonce.toHex)
-                                      yield saved
+                    cursor   <- store.maxMessageSyncSeq
+                    manifest <- store.joinManifest
+                    result   <- (cursor, manifest) match
+                                  case (Left(error), _)             => IO.pure(Left(error.code))
+                                  case (_, Left(error))             => IO.pure(Left(error.code))
+                                  case (Right(maxId), Right(entry)) =>
+                                    DevicePairing
+                                      .authorize(
+                                        value.invite,
+                                        value.ephemeralPrivate,
+                                        request,
+                                        userKey,
+                                        store.identity.userPublic,
+                                        store.identity.devicePublic,
+                                        maxId,
+                                        entry,
+                                        nowMs
+                                      ) match
+                                      case Left(error)                   => IO.pure(Left(error))
+                                      case Right((authCode, auth, root)) =>
+                                        for
+                                          lock  <- store.lockGeneration
+                                          saved <- lock match
+                                                     case Left(error)      => IO.pure(Left(error.code))
+                                                     case Right(lockValue) =>
+                                                       persist(request, authCode, auth, root, lockValue)
+                                          _     <- saved match
+                                                     case Left(_)  => IO.unit
+                                                     case Right(_) =>
+                                                       pending.update(values => values - request.pairingNonce.toHex)
+                                        yield saved
                   yield result
             }
 
@@ -332,6 +335,7 @@ private object DevicePairing:
     userPub: Ed25519Public,
     primaryDevicePub: Ed25519Public,
     cursor: Long,
+    joinManifest: JoinManifest,
     nowMs: Long
   ): Either[String, (String, DeviceAuthorization, Key32)] =
     for
@@ -344,7 +348,7 @@ private object DevicePairing:
                     primaryDevicePub,
                     request.companionDevicePub,
                     1L,
-                    JoinManifest.empty,
+                    joinManifest,
                     cursor,
                     Crypto.sha256(root.bytes).bytes,
                     nowMs

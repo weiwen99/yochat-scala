@@ -13,6 +13,7 @@ import org.typelevel.doobie.ConnectionIO
 import scodec.bits.ByteVector
 
 import yochat.core.{Ed25519Public, RatchetState, SessionId}
+import yochat.core.s2.{JoinManifest, ManifestKey}
 
 enum RebindOutcome:
   case Migrated, Skipped
@@ -400,6 +401,33 @@ final class Store private[store] (
 
   def maxMessageSyncSeq: IO[Either[StorageError, Long]] =
     runtime.run(sql"SELECT COALESCE(MAX(sync_seq), 0) FROM messages".query[Long].unique)
+
+  def joinManifest: IO[Either[StorageError, JoinManifest]] =
+    runtime
+      .run(
+        sql"""SELECT conversation_id, author_pub, device_pub, MAX(seq)
+             |FROM messages GROUP BY conversation_id, author_pub, device_pub""".stripMargin
+          .query[(Array[Byte], Array[Byte], Array[Byte], Long)]
+          .to[List]
+      )
+      .map {
+        case Left(error) => Left(error)
+        case Right(rows) =>
+          rows
+            .foldLeft[Either[StorageError, Map[ManifestKey, Long]]](Right(Map.empty)) {
+              case (Left(error), _)                                  => Left(error)
+              case (Right(acc), (conversation, author, device, seq)) =>
+                (
+                  ByteVector.view(conversation),
+                  Ed25519Public.from(ByteVector.view(author)),
+                  Ed25519Public.from(ByteVector.view(device))
+                ) match
+                  case (conv, Right(authorPub), Right(devicePub)) if conv.size == 32L =>
+                    Right(acc.updated(ManifestKey(conv, authorPub, devicePub), seq))
+                  case _                                                              => Left(StorageError.InvalidEnvelope)
+            }
+            .flatMap(entries => JoinManifest.create(entries).left.map(_ => StorageError.InvalidEnvelope))
+      }
 
   def messageSyncSeqs(after: Long): IO[Either[StorageError, Map[Long, Long]]] =
     runtime

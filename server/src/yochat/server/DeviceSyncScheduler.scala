@@ -7,6 +7,7 @@ import cats.effect.std.Queue
 import scodec.bits.ByteVector
 
 import yochat.core.{Crypto, Ed25519Public, Key32}
+import yochat.core.s2.JoinManifest
 import yochat.store.{DeviceRecord, DeviceRole, Store}
 import yochat.transport.{RelayClient, RelayPayload}
 
@@ -46,7 +47,7 @@ object DeviceSyncScheduler:
       incoming.payload match
         case RelayPayload.DeviceSync(bytes) =>
           DeviceSyncProtocol.decodeSyncRequest(bytes) match
-            case Left(_)         => acceptAck(store, incoming.from, bytes).attempt.void
+            case Left(_)         => acceptAck(store, relay, incoming.from, bytes).attempt.void
             case Right(authHash) =>
               answer(store, relay, incoming.from, authHash).attempt *>
                 active.set(true)
@@ -81,16 +82,17 @@ object DeviceSyncScheduler:
         case Left(_)     => IO.unit
         case Right(sync) =>
           val authHash = Crypto.sha256(record.authorization).bytes
-          Key32.from(sync.syncRoot) match
-            case Left(_)     => IO.unit
-            case Right(root) =>
+          (Key32.from(sync.syncRoot), JoinManifest.fromCanonical(record.joinManifest)) match
+            case (Left(_), _)                   => IO.unit
+            case (_, Left(_))                   => IO.unit
+            case (Right(root), Right(manifest)) =>
               DeviceSyncService
-                .create(store, relay, record.devicePub, authHash, root, sync.lastAckedSyncSeq, sync.lastBatchSeq, sync.lastBatchHash)
+                .create(store, relay, record.devicePub, authHash, root, sync.lastAckedSyncSeq, sync.lastBatchSeq, sync.lastBatchHash, manifest)
                 .flatMap(_.sendSnapshot)
                 .void
       }
 
-  private def acceptAck(store: Store, device: Ed25519Public, bytes: ByteVector): IO[Unit] =
+  private def acceptAck(store: Store, relay: RelayClient, device: Ed25519Public, bytes: ByteVector): IO[Unit] =
     store.loadDevice(device).flatMap {
       case Left(_)                                              => IO.unit
       case Right(record) if record.role != DeviceRole.Companion => IO.unit
@@ -115,7 +117,19 @@ object DeviceSyncScheduler:
                 )
                 store.lockGeneration.flatMap {
                   case Left(_)     => IO.unit
-                  case Right(lock) => store.updateDeviceSync(updated, sync.version, lock).void
+                  case Right(lock) =>
+                    store.updateDeviceSync(updated, sync.version, lock).flatMap {
+                      case Left(_)  => IO.unit
+                      case Right(_) =>
+                        store.messageSyncSeqs(ack.lastAckedSyncSeq).flatMap {
+                          case Right(values) if values.nonEmpty =>
+                            store.loadDevice(device).flatMap {
+                              case Right(record) => syncDevice(store, relay, record)
+                              case Left(_)       => IO.unit
+                            }
+                          case _                                => IO.unit
+                        }
+                    }
                 }
             }
     }

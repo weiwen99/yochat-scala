@@ -141,6 +141,17 @@ object server extends CommonModule with ScalafmtModule with ScalafixModule:
     ()
   }
 
+  /** Fixed S2-A companion behavior contract; requires a built server and test classpath. */
+  def s2e2e(): Command[Unit] = Task.Command {
+    val classpath = test.runClasspath().map(_.path).mkString(java.io.File.pathSeparator)
+    os.proc("java", "-cp", classpath, "yochat.server.e2e.S2E2E").call(
+      cwd = moduleDir,
+      stdout = os.Inherit,
+      stderr = os.Inherit
+    )
+    ()
+  }
+
   def resources = Task {
     val resourceRoot = Task.dest
     val publicDir    = resourceRoot / "public"

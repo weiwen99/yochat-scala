@@ -5,6 +5,7 @@ import scodec.bits.ByteVector
 import ujson.Value
 
 import yochat.core.{Ed25519Public, Key32}
+import yochat.core.s2.{JoinManifest, ManifestKey}
 import yochat.store.{CompanionMessageRecord, ContactConfirmation, ContactData, MessageState, StorageError, Store}
 import yochat.transport.{RelayClient, RelayPayload}
 
@@ -38,9 +39,13 @@ final class CompanionSyncService(
     DeviceSyncProtocol.open(syncRoot, primaryDevicePub, authHash, bytes) match
       case Left(error)   => IO.pure(Left(error))
       case Right(opened) =>
-        applyRecords(opened.records).flatMap {
-          case Left(error) => IO.pure(Left(error))
-          case Right(_)    => recordCheckpoint(opened, bytes) *> acknowledge(opened, bytes).as(Right(()))
+        loadManifest.flatMap {
+          case Left(error)     => IO.pure(Left(error))
+          case Right(manifest) =>
+            applyRecords(opened.records, manifest).flatMap {
+              case Left(error) => IO.pure(Left(error))
+              case Right(_)    => recordCheckpoint(opened, bytes) *> acknowledge(opened, bytes).as(Right(()))
+            }
         }
 
   private def recordCheckpoint(opened: DeviceSyncProtocol.Opened, bytes: ByteVector): IO[Either[String, Unit]] =
@@ -69,7 +74,15 @@ final class CompanionSyncService(
       case Left(_)    => IO.unit
       case Right(ack) => relay.send(primaryDevicePub, RelayPayload.DeviceSync(ack)).attempt.void
 
-  private def applyRecords(value: Value): IO[Either[String, Unit]] =
+  private def loadManifest: IO[Either[String, JoinManifest]] =
+    store.loadDevice(store.identity.devicePublic).map {
+      case Left(StorageError.NotFound(_)) => Right(JoinManifest.empty)
+      case Left(error)                    => Left(error.code)
+      case Right(record)                  =>
+        JoinManifest.fromCanonical(record.joinManifest).left.map(_ => "join-manifest")
+    }
+
+  private def applyRecords(value: Value, manifest: JoinManifest): IO[Either[String, Unit]] =
     for
       contacts      <- IO.pure(value.obj.get("contacts").map(asArray).getOrElse(Vector.empty))
       conversations <- IO.pure(value.obj.get("conversations").map(asArray).getOrElse(Vector.empty))
@@ -95,7 +108,7 @@ final class CompanionSyncService(
                            messages.foldLeft(IO.pure[Either[String, Unit]](Right(()))) { (acc, json) =>
                              acc.flatMap {
                                case Left(error) => IO.pure(Left(error))
-                               case Right(_)    => applyMessage(json)
+                               case Right(_)    => applyMessage(json, manifest)
                              }
                            }
     yield result
@@ -133,7 +146,7 @@ final class CompanionSyncService(
             }
       case _                           => IO.pure(Left("conversation"))
 
-  private def applyMessage(json: Value): IO[Either[String, Unit]] =
+  private def applyMessage(json: Value, manifest: JoinManifest): IO[Either[String, Unit]] =
     for
       sourceId     <- IO.pure(long(json, "sourceId"))
       conversation <- IO.pure(parseHex(json, "conversationId"))
@@ -143,21 +156,24 @@ final class CompanionSyncService(
                         case (Some(id), Right(conv), Right(author), Right(device)) =>
                           (Ed25519Public.from(author), Ed25519Public.from(device)) match
                             case (Right(authorPub), Right(devicePub)) =>
-                              store
-                                .upsertCompanionMessage(
-                                  CompanionMessageRecord(
-                                    sourceId = id,
-                                    conversationId = conv,
-                                    authorPub = authorPub,
-                                    devicePub = devicePub,
-                                    seq = long(json, "seq").getOrElse(0L),
-                                    body = ByteVector.view(string(json, "body").getOrElse("").getBytes("UTF-8")),
-                                    state = state(json),
-                                    createdAt = long(json, "createdAt").getOrElse(0L),
-                                    syncSeq = long(json, "syncSeq").getOrElse(0L)
+                              val seq = long(json, "seq").getOrElse(0L)
+                              if manifest.covers(ManifestKey(conv, authorPub, devicePub), seq) then IO.pure(Right(()))
+                              else
+                                store
+                                  .upsertCompanionMessage(
+                                    CompanionMessageRecord(
+                                      sourceId = id,
+                                      conversationId = conv,
+                                      authorPub = authorPub,
+                                      devicePub = devicePub,
+                                      seq = seq,
+                                      body = ByteVector.view(string(json, "body").getOrElse("").getBytes("UTF-8")),
+                                      state = state(json),
+                                      createdAt = long(json, "createdAt").getOrElse(0L),
+                                      syncSeq = long(json, "syncSeq").getOrElse(0L)
+                                    )
                                   )
-                                )
-                                .map(mapStore)
+                                  .map(mapStore)
                             case _                                    => IO.pure(Left("message-key"))
                         case (None, _, _, _)                                       => IO.pure(Left("sourceId"))
                         case (_, Left(error), _, _)                                => IO.pure(Left(s"conversation:$error"))

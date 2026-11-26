@@ -84,7 +84,8 @@ final class DeviceSyncServiceSpec extends FunSuite:
                                                   syncRoot,
                                                   0L,
                                                   0L,
-                                                  ByteVector.fill(32)(0)
+                                                  ByteVector.fill(32)(0),
+                                                  yochat.core.s2.JoinManifest.empty
                                                 )
                                       receiver = new CompanionSyncService(
                                                    a2,
@@ -153,8 +154,8 @@ final class DeviceSyncServiceSpec extends FunSuite:
                     createdAt = 0L,
                     revokedAt = None,
                     joinEpoch = 1L,
-                    joinManifest = ByteVector.fill(32)(0x76),
-                    joinManifestHash = ByteVector.fill(32)(0x75),
+                    joinManifest = yochat.core.s2.JoinManifest.empty.canonical,
+                    joinManifestHash = yochat.core.s2.JoinManifest.empty.hash.bytes,
                     joinCursorSyncSeq = 0L,
                     pairingNonce = None,
                     requestHash = None

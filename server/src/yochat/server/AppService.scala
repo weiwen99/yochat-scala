@@ -13,6 +13,7 @@ import ujson.Value
 
 import yochat.core.{Crypto, Ed25519Public, Key32, SessionId}
 import yochat.core.app.{AppEvent, AppLimits, AppState}
+import yochat.core.s2.JoinManifest
 import yochat.store.{KeySource, MessageRecord, Store, StoreConfig, StorePaths}
 import yochat.transport.RelayClient
 
@@ -332,9 +333,10 @@ final class AppService private (
                         case (Left(error), _)             => IO.pure(Left(ServiceError.BadRequest(error.code)))
                         case (_, Left(error))             => IO.pure(Left(ServiceError.BadRequest(error.code)))
                         case (Right(record), Right(sync)) =>
-                          Key32.from(sync.syncRoot) match
-                            case Left(_)     => IO.pure(Left(ServiceError.BadRequest("sync-root")))
-                            case Right(root) =>
+                          (Key32.from(sync.syncRoot), JoinManifest.fromCanonical(record.joinManifest)) match
+                            case (Left(_), _)                   => IO.pure(Left(ServiceError.BadRequest("sync-root")))
+                            case (_, Left(_))                   => IO.pure(Left(ServiceError.BadRequest("join-manifest")))
+                            case (Right(root), Right(manifest)) =>
                               DeviceSyncService
                                 .create(
                                   running.store,
@@ -344,7 +346,8 @@ final class AppService private (
                                   root,
                                   sync.lastAckedSyncSeq,
                                   sync.lastBatchSeq,
-                                  sync.lastBatchHash
+                                  sync.lastBatchHash,
+                                  manifest
                                 )
                                 .flatMap(_.sendSnapshot)
                                 .map(_.left.map(ServiceError.BadRequest.apply))
