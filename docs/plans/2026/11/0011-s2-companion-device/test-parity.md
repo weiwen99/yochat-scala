@@ -1,6 +1,6 @@
 # Plan 0011 test parity
 
-Status: draft; no owner sign-off yet. This file maps the old multi-device tests that Plan 0001 marked `OMIT_CANDIDATE` because S1 had no multi-device surface. It does not modify S1's T1 sign-off.
+Status: owner-confirmed 2026-11-26. This file maps the old multi-device tests that Plan 0001 marked `OMIT_CANDIDATE` because S1 had no multi-device surface. It does not modify S1's T1 sign-off. S2-B closes the deferred fan-out, revocation and GBNV rows.
 
 | Old test | Old behavior | S2 test / location | Disposition | Reason / gap |
 | --- | --- | --- | --- | --- |
@@ -14,9 +14,9 @@ Status: draft; no owner sign-off yet. This file maps the old multi-device tests 
 
 | Old behavior | Disposition | Reason | Sign-off |
 | --- | --- | --- | --- |
-| B directly addresses A2; multi-device fan-out | OMIT (S2-A) | S2-A keeps B on the S1 path; A2 is reachable only through A1. Deferred to S2-B. | pending |
-| Full history sync (10k/10s, 1000/s) | OMIT (S2-A) | ADR-0003 S2 says post-join only; D's figure is a candidate, not an accepted S3 gate. | pending |
-| Contact-visible signed revocation | OMIT (S2-A) | A2 does not speak to B; local removal is the S2-A boundary. Deferred to S2-B. | pending |
-| Cross-device GBNV | OMIT (S2-A) | A2 mirrors A1's order; ADR-0003's GBNV commitment remains open. | pending |
+| B directly addresses A2; multi-device fan-out | OMIT (S2-A) | S2-A keeps B on the S1 path; A2 is reachable only through A1. Deferred to S2-B. | owner 2026-11-26 |
+| Full history sync (10k/10s, 1000/s) | OMIT (S2-A) | ADR-0003 S2 says post-join only; D's figure is a candidate, not an accepted S3 gate. | owner 2026-11-26 |
+| Contact-visible signed revocation | OMIT (S2-A) | A2 does not speak to B; local removal is the S2-A boundary. Deferred to S2-B. | owner 2026-11-26 |
+| Cross-device GBNV | OMIT (S2-A) | A2 mirrors A1's order; ADR-0003's GBNV commitment remains open. | owner 2026-11-26 |
 
-No old test is silently dropped: each row states whether S2-A rewrites, retains the behavior, or explicitly omits it. Owner sign-off is required before this plan can claim S2 delivery.
+No old test is silently dropped: each row states whether S2-A rewrites, retains the behavior, or explicitly omits it. Owner sign-off: 2026-11-26. The omitted fan-out/revocation/GBNV rows are the S2-B scope.

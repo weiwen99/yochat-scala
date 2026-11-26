@@ -2,15 +2,15 @@
 
 - Plan: 0011
 - Date: 2026-11-26
-- Status: S2-A implementation complete; owner acceptance/T1 sign-off pending. GBNV and contact-visible signed revocation remain S2-B/后续.
+- Status: S2-A implementation complete; owner T1 sign-off 2026-11-26. S2-B is now in progress for fan-out, contact-visible signed revocation and GBNV.
 - Domain: product/protocol/storage/UI
 - Summary: 在 S1 对端协议不变的前提下，增加主设备 A1 与只读伴随设备 A2。A1 持有用户私钥并继续作为联系人 B 的唯一对端；A2 用设备密钥加入，接收加入后的联系人/会话/消息展示副本，按 A1 的可见顺序展示；A1 可本地移除 A2。A2 不持有用户私钥、不发送、不直接与 B 通信、不接收历史。S2-A 是部分里程碑，GBNV 与联系人可见签名吊销仍未关闭。
 - Predecessor: `53bf009` (S1 acceptance and cross-host receipts), ADR-0003 S2 boundary
 - Related evidence: 2026-11-25 `AI体验营` messages; `docs/evaluations/2026-11-25-d-sync-throughput-requirements.md`
 - Review budget: 3 design rounds used/planned; round 1 found 8 P1 + 8 P2; round 2 found 6 open + 5 new (N1–N5). All findings revised in design; round 3 is closure-only and pending.
-- Open decisions: S2-A vs S2-B; whether S2-A counts as S2 delivery; local removal vs contact-visible revocation; long-lived sync root; identity file v2 ADR; 1k sync 5s threshold. See design §16.
-- Test parity: `test-parity.md`; T1 rows pending owner sign-off.
+- Resolved/remaining decisions: S2-A is the delivered partial S2; contact-visible revocation, fan-out and GBNV move to Plan 0012. Long-lived sync root, identity v2 ADR and 1k sync 5s were accepted in implementation; see design §16.
+- Test parity: `test-parity.md`; T1 owner-confirmed 2026-11-26.
 - Implementation checkpoint (2026-11-26): A1 `设备` panel generates an invite, inspects the A2 request, displays the same confirmation code/fingerprint shown by A2, requires the inspected code before issuing auth, lists companion devices, and revokes locally. A2 has `pair-request`/`pair-accept` CLI and a `--pair-only` browser page that shows the code/request, accepts the auth, and exits. A1 assigns `messages.sync_seq` after device sync is enabled, sends incremental batches above the A2 checkpoint, and advances `device_sync` on a signed A2 ACK; A2 persists its checkpoint and ACKs after applying a batch. A1 also pushes coalesced batches after visible-state changes; A2 re-requests after reconnect.
 - Implementation checkpoint (2026-11-26, `SyncStatus`): A2 sends a signed `SyncStatus` after reconnect/restart; A1 accepts a strictly newer checkpoint, rejects conflicting batch hashes, updates `device_sync`, and resumes from it. A1 sends a signed `SyncStatusRequest` on startup/reconnect; A2 verifies the A1 signature/auth hash and replies with its signed checkpoint. This closes the A1-restart / lost-ACK path; the scheduler still falls back to periodic retry.
 - Verification: `./mill server.s2e2e` passes (`old=0 postJoin=200 offline=220 restart=221 revoked=221`, 20.7s) against real A1/B/A2 processes and relay, and compares A2 post-join `(seq, body)` against A1 with no duplicate author seq. `./mill server.s2perf` passes S2#2 at `sync_ms=2552 count=1000 firstSeq=1 lastSeq=1000` (5s threshold). `DeviceSyncServiceSpec`, `DevicePairingServiceSpec`, `CompanionPairingServiceSpec`, `PairingToolSpec`, `server.test`, and `store.test` pass. Full `./check.sh` PASS (668.4s; `/tmp/check-s2a-finish.log`): S1 E2E 18/18, E2E#8 3737ms, `PERF#10K` 34,522ms, `PERF#RATE` 308.2 msg/s, cold start p50/p95 1283/1341ms, idle 750.4MB; S2 receipts `tmp/checks/s2e2e.log` and `tmp/checks/s2perf.log`. Earlier pre-status full gate receipts remain in `impl.md` history. Receipts: `impl.md`.
-- Still open: owner acceptance of S2-A as a partial S2 and `test-parity.md` T1 sign-off. GBNV and contact-visible signed revocation are S2-B and not claimed here. A2 browser pairing exits after auth and requires a separate read-only service start.
+- Closed: T1 sign-off (2026-11-26). S2-B is a separate plan for fan-out, contact-visible signed revocation and GBNV. A2 browser pairing exits after auth and requires a separate read-only service start.
