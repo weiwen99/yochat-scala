@@ -27,4 +27,4 @@ Status: B2 direct companion fanout implemented on the B2 branch; B3 order metada
 
 - Direct fanout 1k has its own `server.s2bperf` gate; it is close to the 5s limit and should stay monitored.
 - Cross-author missing dependencies are hidden until present and are repaired by the existing per-author gap path; there is no separate cross-author dependency resend protocol.
-- S2-B owner sign-off for `test-parity.md` remains pending.
+- S2-B owner authorization recorded 2026-11-27; independent audit not claimed.

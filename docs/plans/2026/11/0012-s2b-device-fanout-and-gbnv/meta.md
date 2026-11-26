@@ -2,13 +2,13 @@
 
 - Plan: 0012
 - Date: 2026-11-26
-- Status: B1/B2/B3 implemented and green; full gate PASS 695.48s. Q8 extended to fanout/dedupe/receipts/order. S2-B owner parity sign-off pending.
+- Status: B1/B2/B3 implemented and green; full gate PASS 695.48s. Q8 extended to fanout/dedupe/receipts/order. S2-B owner authorized closure 2026-11-27; independent audit not claimed.
 - Domain: product/protocol/storage/UI
 - Summary: 关闭 ADR-0010 留下的联系人可见设备列表、签名吊销与跨作者最终全序；A2/B2 作为只读伴随设备直接接收对方主设备的消息，不再只经 A1 转发。
 - Predecessor: `9413244` (S2-A T1 sign-off and P2P evaluation); ADR-0010, ADR-0003
 - Related evidence: `docs/spec/product/users-and-devices.md`; `docs/spec/engineering/keys-and-devices.md`; `docs/spec/engineering/messaging.md`; Plan 0011 `test-parity.md`
 - Design: `design.md`; ADR-0011 `docs/adr/0011-s2b-device-list-fanout-and-gbnv.md`; review findings `design-review-findings.md`
 - Open decisions: B1/B2/B3 split; read-only companion only; Lamport GBNV vs certificates; mixed-version policy; 1k direct fanout gate. See design §11.
-- Test parity: `test-parity.md`; S2-B owner sign-off pending. B1 receipts: `impl.md`.
+- Test parity: `test-parity.md`; S2-B owner authorization recorded 2026-11-27. B1 receipts: `impl.md`.
 - Verification: `./mill server.s2e2e` PASS 21.1s with B seeing two A devices and revoked A2; `./mill server.s2perf` PASS `sync_ms=2694`; `./mill core.test`, `store.test`, `server.test`, `transport.test` PASS; `./models/check.sh` PASS including Q8; full `./check.sh` PASS 696.06s (S1 E2E 18/18, `PERF#RATE` 294.4 msg/s, cold 1297/1328ms, idle 757.6MB).
-- Next step: owner parity sign-off and merge decision. See `impl.md`/`b2-impl.md`.
+- Next step: S3 scope decision. See `impl.md`/`b2-impl.md`.

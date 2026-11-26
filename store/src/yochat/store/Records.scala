@@ -3,7 +3,7 @@ package yochat.store
 import scodec.bits.ByteVector
 
 import yochat.core.{Ed25519Public, RatchetState, SessionId, X25519Public}
-import yochat.core.s2.LogicalKey
+import yochat.core.s2.{LogicalKey, OrderStamp}
 
 enum MessageState:
   case Pending, Sent, Received, Failed, Delivered
@@ -47,7 +47,8 @@ final case class MessageRecord(
   wire: ByteVector,
   state: MessageState,
   createdAt: Long,
-  attempts: Int
+  attempts: Int,
+  order: Option[OrderStamp] = None
 ):
 
   override def toString: String = s"MessageRecord(id=$id, seq=$seq, state=$state)"

@@ -161,6 +161,18 @@ final class S2StoreSpec extends FunSuite:
     finally StoreTestSupport.deleteTree(directory)
   }
 
+  test("S2-B capability marker is durable and starts disabled") {
+    val directory = StoreTestSupport.temporaryDirectory("yochat-s2b-capability-")
+    try
+      StoreTestSupport.withStore(directory) { store =>
+        assertEquals(ok(store.s2bSeen), false)
+        ok(store.markS2bSeen)
+        assertEquals(ok(store.s2bSeen), true)
+        IO.unit
+      }
+    finally StoreTestSupport.deleteTree(directory)
+  }
+
   test("device sync root round-trips and advances its checkpoint") {
     val directory = StoreTestSupport.temporaryDirectory("yochat-s2-sync-")
     try

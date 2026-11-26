@@ -75,7 +75,7 @@ final class AppRuntime private (
       case None        => IO.unit
     }
 
-  def sendMessage(conversationId: ByteVector, body: String): IO[Long] =
+  def sendMessage(conversationId: ByteVector, body: String, s2bEnabled: Boolean = false): IO[Long] =
     for
       _        <- ensureReady
       current  <- AppRuntime.readRef(stateRef)
@@ -85,7 +85,7 @@ final class AppRuntime private (
                   else IO.raiseError(new RuntimeError("send-rejected"))
       id       <- messageIds.updateAndGet(AppRuntime.nextId)
       nonce    <- random.nonce
-      event     = AppEvent.UserSend(id, conversationId, Crypto.text(body), nonce, clock.millis())
+      event     = AppEvent.UserSend(id, conversationId, Crypto.text(body), nonce, clock.millis(), s2bEnabled)
       reply    <- Deferred[IO, Either[String, Long]]
       accepted <- queue.tryOffer(RuntimeCommand.Send(id, event, reply))
       _        <- if accepted then IO.unit else IO.raiseError(new RuntimeError("event-queue-full"))

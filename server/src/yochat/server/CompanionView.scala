@@ -109,18 +109,9 @@ object CompanionView:
         manifest.entries.exists { case (key, maxSeq) => key.devicePub == dep.device && dep.seq <= maxSeq }
     values
       .filter(message => message.logicalKey.forall(key => orders.get(key).forall(_.deps.forall(satisfied))))
-      .sortWith { (left, right) =>
-        (for
-          leftKey   <- left.logicalKey
-          rightKey  <- right.logicalKey
-          leftOrder  = orders.get(leftKey)
-          rightOrder = orders.get(rightKey)
-          a         <- leftOrder
-          b         <- rightOrder
-        yield OrderStamp.compare(a, b, left.devicePub, left.seq, right.devicePub, right.seq) < 0).getOrElse {
-          val bySeq = java.lang.Long.compare(left.seq, right.seq)
-          if bySeq != 0 then bySeq < 0 else left.sourceId < right.sourceId
-        }
+      .sortBy { message =>
+        val lamport = message.logicalKey.flatMap(key => orders.get(key)).map(_.lamport).getOrElse(message.seq)
+        (lamport, message.devicePub.bytes.toHex, message.seq, message.sourceId)
       }
 
   private def loadConversations(

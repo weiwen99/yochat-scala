@@ -21,7 +21,7 @@ enum AppEvent:
   case Unlock(identity: LocalIdentity, nowMs: Long, idleTimeoutMs: Long)
   case Lock
   case IdleTimeout(nowMs: Long)
-  case UserSend(messageId: Long, conversationId: ByteVector, body: ByteVector, nonce: Nonce, nowMs: Long)
+  case UserSend(messageId: Long, conversationId: ByteVector, body: ByteVector, nonce: Nonce, nowMs: Long, s2bEnabled: Boolean = false)
   case PersistOutboundSucceeded(messageId: Long, generation: Long, nowMs: Long)
   case PersistOutboundFailed(messageId: Long, generation: Long, nowMs: Long)
   case RebindOutgoing(messageId: Long, newSessionId: SessionId, nonce: Nonce)

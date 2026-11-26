@@ -186,7 +186,7 @@ private[store] object MessageRepository:
                         }
         yield AppendResult(
           SessionRecord(state, prepared.nextVersion, lock, now),
-          MessageRecord(messageId, conversationId, state.sessionId, authorPub, devicePub, seq, body, wire, messageState, now, attempts)
+          MessageRecord(messageId, conversationId, state.sessionId, authorPub, devicePub, seq, body, wire, messageState, now, attempts, order)
         )
       }
     }

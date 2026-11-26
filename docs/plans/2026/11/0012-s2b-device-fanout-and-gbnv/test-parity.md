@@ -1,6 +1,6 @@
 # Plan 0012 test parity
 
-Status: implementation evidence present for the S2-B mapping; owner sign-off still pending. The S2-A T1 sign-off (2026-11-26) is not broadened automatically. This table maps the S2-A omitted rows and the old S2-B-relevant tests; it does not re-open S1.
+Status: implementation evidence present and revalidated after the Plan 0013 capability gate. Owner instructed autonomous closure on 2026-11-27; this is recorded as owner authorization, not an independent row-by-row audit or external cryptographic review. The S2-A T1 sign-off (2026-11-26) is not broadened automatically. This table maps the S2-A omitted rows and the old S2-B-relevant tests; it does not re-open S1.
 
 | Old test / requirement | Old behavior | S2-B test | Disposition | Reason / gap |
 | --- | --- | --- | --- | --- |
@@ -16,4 +16,4 @@ Status: implementation evidence present for the S2-B mapping; owner sign-off sti
 | Contact-visible signed revocation | B rejects revoked device | `S2B#4` | RETAIN BEHAVIOR | Implemented as signed original |
 | Cross-device GBNV | Same final order everywhere | `S2B#3` | RETAIN BEHAVIOR | Implemented for two authors; E2E concurrent A/B order |
 
-Explicit omissions: history sync, user-private sync, recovery phrase, group/file, third writable device, mobile. Owner sign-off for S2-B mapping: pending.
+Explicit omissions: history sync, user-private sync, recovery phrase, group/file, third writable device, mobile. Owner authorization for S2-B mapping: 2026-11-27 instruction; independent audit not claimed.

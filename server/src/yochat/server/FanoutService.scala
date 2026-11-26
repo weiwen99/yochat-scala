@@ -18,6 +18,7 @@ object FanoutService:
 
   private val Random           = new SecureRandom()
   private val TargetCache      = new ConcurrentHashMap[String, (Long, Vector[PeerDeviceEntry])]()
+  private val CapabilityCache  = new ConcurrentHashMap[String, (Long, Boolean)]()
   val PendingState: Int        = 1
   val AckedState: Int          = 2
   private val MaxAttempts: Int = 32
@@ -80,7 +81,28 @@ object FanoutService:
         }
 
   def invalidateTargets(store: Store, peerUser: Ed25519Public): Unit =
-    TargetCache.remove(s"${store.identity.userPublic.bytes.toHex}:${peerUser.bytes.toHex}")
+    val key = s"${store.identity.userPublic.bytes.toHex}:${peerUser.bytes.toHex}"
+    TargetCache.remove(key)
+    CapabilityCache.remove(key)
+
+  def peerSupportsS2b(store: Store, peerUser: Ed25519Public): IO[Boolean] =
+    val key    = s"${store.identity.userPublic.bytes.toHex}:${peerUser.bytes.toHex}"
+    val cached = Option(CapabilityCache.get(key))
+    cached match
+      case Some((expires, value)) if expires > System.nanoTime() => IO.pure(value)
+      case _                                                     =>
+        store.s2bSeen.flatMap {
+          case Left(_)      => IO.pure(false)
+          case Right(false) => IO.pure(false)
+          case Right(true)  =>
+            store.loadPeerDeviceList(peerUser).map {
+              case Right(list) =>
+                val value = (list.features & PeerDeviceList.FeatureS2b) != 0L
+                CapabilityCache.put(key, (System.nanoTime() + 10_000_000_000L, value))
+                value
+              case Left(_)     => false
+            }
+        }
 
   private def authorizedCompanion(store: Store, device: Ed25519Public): IO[Option[PeerDeviceEntry]] =
     store.listContacts.flatMap {
@@ -117,8 +139,10 @@ object FanoutService:
               attempts   = existing.toOption.map(_.attempts + 1).getOrElse(1)
               ephemeral <- randomX25519
               nonce     <- randomNonce
-              orderRows <- store.listMessageOrders(message.conversationId)
-              order      = orderRows.toOption.flatMap(_.find(_._1 == key).map(_._2))
+              order     <- message.order match
+                             case Some(value) => IO.pure(Some(value))
+                             case None        =>
+                               store.listMessageOrders(message.conversationId).map(_.toOption.flatMap(_.find(_._1 == key).map(_._2)))
               envelope  <- IO.fromEither(
                              FanoutEnvelope
                                .create(

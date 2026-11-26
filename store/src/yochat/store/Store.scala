@@ -141,6 +141,12 @@ final class Store private[store] (
   def loadMessageByLogicalKey(key: yochat.core.s2.LogicalKey): IO[Either[StorageError, MessageRecord]] =
     MessageRepository.loadByLogicalKey(runtime, key)
 
+  def s2bSeen: IO[Either[StorageError, Boolean]] =
+    runtime.run(Sql.meta(Store.S2bSeenKey)).map(_.map(_.exists(_ == 1L)))
+
+  def markS2bSeen: IO[Either[StorageError, Unit]] =
+    runtime.run(Sql.writeMeta(Store.S2bSeenKey, 1L))
+
   def listMessageOrders(
     conversationId: ByteVector
   ): IO[Either[StorageError, List[(yochat.core.s2.LogicalKey, yochat.core.s2.OrderStamp)]]] =
@@ -523,6 +529,7 @@ final class Store private[store] (
 
 object Store:
   private[store] val PeerDeviceListVersionKey: String = "peer-device-list-version"
+  private[store] val S2bSeenKey: String               = "s2b-peer-seen"
 
   import ArtifactState.*
 

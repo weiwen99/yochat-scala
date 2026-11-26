@@ -74,16 +74,12 @@ object ApiJson:
     }
 
   def ordered(records: List[MessageRecord], orders: Map[yochat.core.s2.LogicalKey, yochat.core.s2.OrderStamp]): List[MessageRecord] =
-    records.sortWith { (left, right) =>
-      val leftOrder  = orders.get(yochat.core.s2.LogicalKey(left.conversationId, left.devicePub, left.seq))
-      val rightOrder = orders.get(yochat.core.s2.LogicalKey(right.conversationId, right.devicePub, right.seq))
-      (leftOrder, rightOrder) match
-        case (Some(a), Some(b)) =>
-          val compared = yochat.core.s2.OrderStamp.compare(a, b, left.devicePub, left.seq, right.devicePub, right.seq)
-          if compared != 0 then compared < 0 else left.id < right.id
-        case _                  =>
-          val bySeq = java.lang.Long.compare(left.seq, right.seq)
-          if bySeq != 0 then bySeq < 0 else left.id < right.id
+    records.sortBy { record =>
+      val lamport = orders
+        .get(yochat.core.s2.LogicalKey(record.conversationId, record.devicePub, record.seq))
+        .map(_.lamport)
+        .getOrElse(record.seq)
+      (lamport, record.devicePub.bytes.toHex, record.seq, record.id)
     }
 
   def messages(records: List[MessageRecord], localUser: ByteVector): Value =

@@ -57,7 +57,7 @@ object Application:
         state.idleDeadline match
           case Some(deadline) if nowMs >= deadline => lock(state)
           case _                                   => (state, Vector.empty)
-      case AppEvent.UserSend(messageId, conversationId, body, nonce, nowMs)                             =>
+      case AppEvent.UserSend(messageId, conversationId, body, nonce, nowMs, s2bEnabled)                 =>
         if state.outgoing.size >= AppLimits.MaxOutgoing then (state, Vector(AppEffect.Notify(Notification.QueueFull)))
         else
           (for
@@ -67,13 +67,19 @@ object Application:
             contact    <- state.contacts.get(session.state.peerUserPub)
             if relationshipUsable(contact)
             clock       = state.order.getOrElse(conversationId, OrderClock())
-            stamp      <- OrderStamp
-                            .create(
-                              if clock.lamport == Long.MaxValue then Long.MaxValue else clock.lamport + 1L,
-                              clock.seen.toVector.map { case (device, seq) => yochat.core.s2.OrderDependency(device, seq) }
-                            )
-                            .toOption
-            envelope   <- outboundPayload(identity, contact, body, session.nextSeq, Some(stamp))
+            stamp       =
+              if s2bEnabled then
+                OrderStamp
+                  .create(
+                    {
+                      val next = if clock.lamport == Long.MaxValue then Long.MaxValue else math.max(clock.lamport + 1L, session.nextSeq)
+                      next
+                    },
+                    clock.seen.toVector.map { case (device, seq) => yochat.core.s2.OrderDependency(device, seq) }
+                  )
+                  .toOption
+              else None
+            envelope   <- outboundPayload(identity, contact, body, session.nextSeq, stamp)
             encrypted  <-
               Ratchet
                 .encryptUser(session.state, identity.device.publicKey, identity.device.privateKey, session.nextSeq, nonce, envelope)
@@ -93,10 +99,10 @@ object Application:
               generation = generation,
               state = OutgoingState.Persisting,
               attempts = 0,
-              order = Some(stamp)
+              order = stamp
             )
             val nextSession         = session.copy(state = nextRatchet, nextSeq = session.nextSeq + 1L)
-            val nextClock           = clock.observe(stamp, identity.device.publicKey, session.nextSeq)
+            val nextClock           = stamp.fold(clock)(value => clock.observe(value, identity.device.publicKey, session.nextSeq))
             val nextState           = state.copy(
               sessions = state.sessions.updated(nextSession.state.sessionId, nextSession),
               outgoing = state.outgoing.updated(messageId, outgoing),

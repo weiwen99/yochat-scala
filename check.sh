@@ -32,6 +32,9 @@ node --check shell/contrast-smoke.js
 node --check shell/electron-smoke.js
 node --check shell/cross-host-smoke.js
 ./mill server.e2e
+./mill server.s2e2e
+./mill server.s2perf
+./mill server.s2bperf
 ./mill server.assembly
 ./mill transport.assembly
 if [ ! -x shell/node_modules/.bin/electron ]; then

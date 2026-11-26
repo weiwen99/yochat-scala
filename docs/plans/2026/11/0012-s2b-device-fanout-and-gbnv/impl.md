@@ -1,6 +1,6 @@
 # Plan 0012 implementation
 
-Status: B1, B2 and the B3 order-metadata slice are implemented and green. Q8 is extended to B2/B3 and frozen by the model check; S2-B owner parity sign-off remains pending.
+Status: B1, B2 and the B3 order-metadata slice are implemented and green. Q8 is extended to B2/B3 and frozen by the model check; S2-B owner authorized closure 2026-11-27; independent audit not claimed.
 
 ## Delivered
 
@@ -35,6 +35,6 @@ Status: B1, B2 and the B3 order-metadata slice are implemented and green. Q8 is 
 
 - B1 has one user-private-key signer. Multi-signer device-list merge and user-private sync are out of scope and need another ADR.
 - B2 direct fanout, per-device receipts and B3 order metadata are implemented; see `b2-impl.md`.
-- `test-parity.md` S2-B owner sign-off is pending.
+- `test-parity.md` S2-B owner authorization recorded 2026-11-27; no independent row-by-row audit claimed.
 - The contact-side list is a signed snapshot; old S2-A peers that do not send the new kind simply retain the primary-only projection.
 - A v3→v4 migration regression was added after the full gate and passes in `store.test.testOnly yochat.store.S2StoreSpec`.

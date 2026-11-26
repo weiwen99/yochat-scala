@@ -17,6 +17,7 @@ object PeerDeviceListService:
       case Some(priv) =>
         for
           version <- store.nextPeerDeviceListVersion
+          seen    <- store.s2bSeen
           result  <- version match
                        case Left(error)  => IO.pure(Left(error.code))
                        case Right(value) =>
@@ -24,7 +25,12 @@ object PeerDeviceListService:
                            case Left(error)    => Left(error.code)
                            case Right(devices) =>
                              val entries  = (devices.map(toEntry) ++ primaryFallback(devices, store)).toVector
-                             val features = PeerDeviceList.FeatureS2b
+                             val features =
+                               if seen.getOrElse(false) || devices.exists(record =>
+                                   record.role == DeviceRole.Companion && record.revokedAt.isEmpty && record.fanoutPub.isDefined
+                                 )
+                               then PeerDeviceList.FeatureS2b
+                               else 0L
                              PeerDeviceList
                                .create(priv, store.identity.userPublic, value, issuedAt, entries, features)
                                .left
@@ -74,9 +80,13 @@ object PeerDeviceListService:
             sessions.find(session => session.state.peerDevicePub == from && session.state.peerUserPub == list.userPub) match
               case None    => IO.pure(Left("not-a-contact"))
               case Some(_) =>
-                store.upsertPeerDeviceList(list, receivedAt).map { result =>
-                  if result.isRight then FanoutService.invalidateTargets(store, list.userPub)
-                  result.map(_ => ()).left.map(_.code)
+                store.upsertPeerDeviceList(list, receivedAt).flatMap { result =>
+                  val mark =
+                    if result.isRight then
+                      FanoutService.invalidateTargets(store, list.userPub)
+                      if (list.features & PeerDeviceList.FeatureS2b) != 0L then store.markS2bSeen.void else IO.unit
+                    else IO.unit
+                  mark.as(result.map(_ => ()).left.map(_.code))
                 }
         }
 
@@ -95,7 +105,14 @@ object PeerDeviceListService:
           case Right(_) if sender.forall(entry => entry.role != PeerDeviceRole.Primary || entry.revokedAt.isDefined) =>
             IO.pure(Left("not-primary"))
           case Right(_)                                                                                              =>
-            store.upsertPeerDeviceList(list, receivedAt).map(_.map(_ => ()).left.map(_.code))
+            store.upsertPeerDeviceList(list, receivedAt).flatMap { result =>
+              val mark =
+                if result.isRight then
+                  FanoutService.invalidateTargets(store, list.userPub)
+                  if (list.features & PeerDeviceList.FeatureS2b) != 0L then store.markS2bSeen.void else IO.unit
+                else IO.unit
+              mark.as(result.map(_ => ()).left.map(_.code))
+            }
         }
 
   def devicesFor(store: Store, userPub: Ed25519Public): IO[Either[String, Vector[PeerDeviceEntry]]] =

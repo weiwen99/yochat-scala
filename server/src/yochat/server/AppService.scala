@@ -263,9 +263,12 @@ final class AppService private (
 
   def sendMessage(conversationId: ByteVector, body: String): IO[Either[ServiceError, Long]] =
     withUnlockedEither { running =>
-      running.runtime
-        .sendMessage(conversationId, body)
-        .map(id => Right(id))
+      s2bForConversation(running.store, conversationId)
+        .flatMap { s2b =>
+          running.runtime
+            .sendMessage(conversationId, body, s2b)
+            .map(id => Right(id))
+        }
         .handleErrorWith {
           case error: RuntimeError =>
             error.getMessage match
@@ -386,6 +389,21 @@ final class AppService private (
         case Left(error) => IO.pure(Left(ServiceError.BadRequest(error)))
         case Right(_)    => running.scheduler.publishDeviceList.start.as(Right(()))
       }
+    }
+
+  private def s2bForConversation(store: Store, conversationId: ByteVector): IO[Boolean] =
+    store.s2bSeen.flatMap {
+      case Left(_)      => IO.pure(false)
+      case Right(false) => IO.pure(false)
+      case Right(true)  =>
+        store.loadConversation(conversationId).flatMap {
+          case Left(_)             => IO.pure(false)
+          case Right(conversation) =>
+            store.loadPeerDeviceList(conversation.peerUserPub).map {
+              case Right(list) => (list.features & yochat.core.s2.PeerDeviceList.FeatureS2b) != 0L
+              case Left(_)     => false
+            }
+        }
     }
 
   def close: IO[Unit] = lock
