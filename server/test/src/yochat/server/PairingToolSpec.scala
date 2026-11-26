@@ -43,7 +43,8 @@ final class PairingToolSpec extends FunSuite:
                          )
               pending <- IO.blocking(ujson.read(Files.readString(a2Directory.resolve("pairing.json"), StandardCharsets.UTF_8)))
               requestCode = pending("requestCode").str
-              auth    <- service.confirm(requestCode, 2_000L)
+              confirmation = pending("confirmation").str
+              auth    <- service.confirm(requestCode, confirmation, 2_000L)
               authCode <- auth match
                             case Left(error) => IO.raiseError(new AssertionError(error))
                             case Right(text) => IO.pure(text)

@@ -190,7 +190,7 @@ final class HttpApi private ():
               }
             }
           } ~
-          path("devices" / "pairing" / "confirm") {
+          path("devices" / "pairing" / "inspect") {
             post {
               entity(as[String]) { body =>
                 withObject(body) { json =>
@@ -198,7 +198,21 @@ final class HttpApi private ():
                     case Left(error)                         => IO.pure(Left(error))
                     case Right(code) if code.trim.isEmpty    => IO.pure(Left(ServiceError.BadRequest("request-code")))
                     case Right(code) if code.length > 32_768 => IO.pure(Left(ServiceError.BadRequest("request-code")))
-                    case Right(code)                         => service.confirmPairing(code)
+                    case Right(code)                         => service.inspectPairing(code)
+                }
+              }
+            }
+          } ~
+          path("devices" / "pairing" / "confirm") {
+            post {
+              entity(as[String]) { body =>
+                withObject(body) { json =>
+                  (string(json, "requestCode"), string(json, "confirmation")) match
+                    case (Left(error), _)                                              => IO.pure(Left(error))
+                    case (_, Left(error))                                              => IO.pure(Left(error))
+                    case (Right(code), _) if code.trim.isEmpty || code.length > 32_768 => IO.pure(Left(ServiceError.BadRequest("request-code")))
+                    case (_, Right(confirmation)) if confirmation.trim.isEmpty         => IO.pure(Left(ServiceError.BadRequest("confirmation")))
+                    case (Right(code), Right(confirmation))                            => service.confirmPairing(code, confirmation)
                 }
               }
             }

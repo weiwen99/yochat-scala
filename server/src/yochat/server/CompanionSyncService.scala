@@ -14,14 +14,22 @@ final class CompanionSyncService(
   relay: RelayClient,
   primaryDevicePub: Ed25519Public,
   authHash: ByteVector,
-  syncRoot: Key32
+  syncRoot: Key32,
+  onApplied: IO[Unit] = IO.unit
 ):
 
   def run: IO[Unit] =
     relay.deviceIncoming
       .flatMap(incoming =>
         incoming.payload match
-          case RelayPayload.DeviceSync(bytes) => receive(bytes).attempt.void
+          case RelayPayload.DeviceSync(bytes) =>
+            receive(bytes)
+              .flatMap {
+                case Right(_) => onApplied
+                case Left(_)  => IO.unit
+              }
+              .attempt
+              .void
           case _                              => IO.unit
       )
       .foreverM

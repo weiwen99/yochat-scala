@@ -54,10 +54,11 @@ final private[server] case class Running(
   runtime: AppRuntime,
   relay: RelayClient,
   pairing: DevicePairingService,
+  scheduler: DeviceSyncScheduler,
   release: IO[Unit]
 ):
 
-  def close: IO[Unit] = runtime.close *> relay.close *> release
+  def close: IO[Unit] = scheduler.close *> runtime.close *> relay.close *> release
 
 final class AppService private (
   val config: ServiceConfig,
@@ -294,10 +295,17 @@ final class AppService private (
         }
     }
 
-  def confirmPairing(requestCode: String): IO[Either[ServiceError, Value]] =
+  def inspectPairing(requestCode: String): IO[Either[ServiceError, Value]] =
     withUnlockedEither { running =>
       running.pairing
-        .confirm(requestCode, clock.millis())
+        .inspect(requestCode, clock.millis())
+        .map(_.left.map(ServiceError.BadRequest.apply))
+    }
+
+  def confirmPairing(requestCode: String, confirmation: String): IO[Either[ServiceError, Value]] =
+    withUnlockedEither { running =>
+      running.pairing
+        .confirm(requestCode, confirmation, clock.millis())
         .map {
           case Left(error) => Left(ServiceError.BadRequest(error))
           case Right(code) => Right(ujson.Obj("authCode" -> code))
@@ -356,23 +364,24 @@ final class AppService private (
       case (Left(error), releaseStore)                                  => releaseStore.as(Left(ServiceError.StoreFailed(error.code)))
       case (Right(store), releaseStore)                                 =>
         RelayClient.connect(config.relayHost, config.relayPort, store.identity.devicePublic).allocated.flatMap { case (relay, releaseRelay) =>
-          AppRuntime
-            .start(
-              store,
-              relay,
-              idleTimeoutMs = config.idleTimeoutMs,
-              onState = _ => IO.delay(hub.publish("state"))
-            )
-            .allocated
-            .flatMap { case (runtime, releaseRuntime) =>
-              DevicePairingService.create(store).flatMap { pairing =>
-                val running = Running(store, runtime, relay, pairing, releaseRuntime *> releaseRelay *> releaseStore)
-                running.runtime.state.attempt.flatMap {
-                  case Right(_)    => IO.pure(Right(running))
-                  case Left(error) => running.close.as(Left(ServiceError.RuntimeFailed(error.getClass.getSimpleName)))
-                }
-              }
-            }
+          (for
+            pairing                       <- DevicePairingService.create(store)
+            scheduler                     <- DeviceSyncScheduler.create(store, relay)
+            runtime                       <- AppRuntime
+                                               .start(
+                                                 store,
+                                                 relay,
+                                                 idleTimeoutMs = config.idleTimeoutMs,
+                                                 onState = _ => IO.delay(hub.publish("state")) *> scheduler.notifyChange
+                                               )
+                                               .allocated
+            (runtimeValue, releaseRuntime) = runtime
+            running                        = Running(store, runtimeValue, relay, pairing, scheduler, releaseRuntime *> releaseRelay *> releaseStore)
+            result                        <- running.runtime.state.attempt.flatMap {
+                                               case Right(_)    => IO.pure(Right(running))
+                                               case Left(error) => running.close.as(Left(ServiceError.RuntimeFailed(error.getClass.getSimpleName)))
+                                             }
+          yield result)
             .handleErrorWith(error => releaseRelay *> releaseStore *> IO.pure(Left(ServiceError.RuntimeFailed(error.getClass.getSimpleName))))
         }
     }

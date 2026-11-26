@@ -185,8 +185,13 @@ final class ApiClient:
   def createPairingInvite(): Future[String] =
     post("/api/devices/pairing", ujson.Obj()).map(value => Json.string(value, "code").getOrElse(""))
 
-  def confirmPairing(requestCode: String): Future[String] =
-    post("/api/devices/pairing/confirm", ujson.Obj("requestCode" -> requestCode))
+  def inspectPairing(requestCode: String): Future[PairingInspection] =
+    post("/api/devices/pairing/inspect", ujson.Obj("requestCode" -> requestCode)).map { value =>
+      Json.parsePairingInspection(value).getOrElse(throw new IllegalStateException("pairing-inspection"))
+    }
+
+  def confirmPairing(requestCode: String, confirmation: String): Future[String] =
+    post("/api/devices/pairing/confirm", ujson.Obj("requestCode" -> requestCode, "confirmation" -> confirmation))
       .map { value =>
         loadDevices()
         Json.string(value, "authCode").getOrElse("")

@@ -81,8 +81,13 @@ class HttpApiSpec extends FunSuite:
                        "phone"
                      )
           requestCode = request.fold(error => throw new AssertionError(error), value => value._1)
-          confirm <- postJson(s"$base/api/devices/pairing/confirm", ujson.Obj("requestCode" -> requestCode))
-          _       = assert(confirm("authCode").str.nonEmpty)
+          inspected <- postJson(s"$base/api/devices/pairing/inspect", ujson.Obj("requestCode" -> requestCode))
+          _          = assert(inspected("confirmation").str.nonEmpty)
+          confirm   <- postJson(
+                         s"$base/api/devices/pairing/confirm",
+                         ujson.Obj("requestCode" -> requestCode, "confirmation" -> inspected("confirmation").str)
+                       )
+          _          = assert(confirm("authCode").str.nonEmpty)
           devices <- getJson(s"$base/api/devices")
           _       = assertEquals(devices("devices").arr.size, 1)
           _       = assertEquals(devices("devices").arr.head("role").str, "companion")

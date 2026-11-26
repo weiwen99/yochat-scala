@@ -22,6 +22,9 @@ object DevicesPanel:
             ui.deviceInvite.set("")
             ui.deviceRequest.set("")
             ui.deviceAuth.set("")
+            ui.deviceConfirmation.set("")
+            ui.deviceFingerprint.set("")
+            ui.deviceName.set("")
             api.createPairingInvite().onComplete {
               case Success(code) => ui.deviceInvite.set(code)
               case Failure(fail) => ui.failure(api.describeError(fail))
@@ -123,33 +126,67 @@ object DevicesPanel:
         placeholder := "点击“添加只读设备”生成邀请码",
         value <-- ui.deviceInvite
       ),
-      p("2. 把只读设备生成的请求码粘贴到这里，确认后生成授权码。"),
+      p("2. 粘贴只读设备生成的请求码，先检查设备指纹与确认码。"),
       textArea(
         cls         := "pairing-input",
         rows        := 3,
         placeholder := "粘贴请求码",
         value <-- ui.deviceRequest,
-        onInput.mapToValue --> ui.deviceRequest
+        onInput.mapToValue --> (value => {
+          ui.deviceRequest.set(value)
+          ui.deviceConfirmation.set("")
+          ui.deviceFingerprint.set("")
+          ui.deviceName.set("")
+        })
       ),
       button(
-        cls         := "primary-button",
+        cls         := "secondary-button",
         disabled <-- ui.deviceRequest.signal.map(_.trim.isEmpty),
         onClick --> (_ =>
-          api.confirmPairing(ui.deviceRequest.now()).onComplete {
+          api.inspectPairing(ui.deviceRequest.now()).onComplete {
+            case Success(inspection) =>
+              ui.deviceName.set(inspection.name)
+              ui.deviceFingerprint.set(inspection.fingerprint)
+              ui.deviceConfirmation.set(inspection.confirmation)
+              ui.notify("请与只读设备屏幕核对确认码")
+            case Failure(fail)       => ui.failure(api.describeError(fail))
+          }
+        ),
+        "检查请求"
+      ),
+      child.maybe <-- ui.deviceConfirmation.signal.map {
+        case ""           => None
+        case confirmation =>
+          Some(
+            div(
+              cls := "pairing-inspect",
+              div(span(cls := "code-label", "确认码"), span(cls := "code-value", confirmation)),
+              div(span(cls := "code-label", "设备指纹"), span(cls := "code-value plain", ui.deviceFingerprint.now())),
+              div(span(cls := "code-label", "设备名"), span(cls := "code-value plain", ui.deviceName.now())),
+              p("两边屏幕显示同一个确认码后，才能授权。")
+            )
+          )
+      },
+      button(
+        cls         := "primary-button",
+        disabled <-- ui.deviceConfirmation.signal.map(_.isEmpty),
+        onClick --> (_ =>
+          api.confirmPairing(ui.deviceRequest.now(), ui.deviceConfirmation.now()).onComplete {
             case Success(code) =>
               ui.deviceAuth.set(code)
+              ui.deviceConfirmation.set("")
               ui.notify("授权码已生成")
             case Failure(fail) => ui.failure(api.describeError(fail))
           }
         ),
-        "确认并生成授权码"
+        "已核对，生成授权码"
       ),
       p("3. 把授权码交回只读设备完成配对。"),
       textArea(
         cls         := "pairing-output",
         readOnly    := true,
         rows        := 4,
-        placeholder := "确认请求后显示授权码",
+        placeholder := "核对确认码后显示授权码",
         value <-- ui.deviceAuth
       )
     )

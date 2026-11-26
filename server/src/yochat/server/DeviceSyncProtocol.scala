@@ -23,6 +23,28 @@ object DeviceSyncProtocol:
   private val Domain = Crypto.ascii("yochat-s2-device-sync")
   private val Random = new SecureRandom()
 
+  /** A2 asks A1 for a fresh sealed snapshot after it comes online or restarts. */
+  def syncRequest(authHash: ByteVector): Either[String, ByteVector] =
+    if authHash.size == 32L then
+      Right(
+        ByteVector.view(
+          ujson.Obj("kind" -> "s2-sync-request", "version" -> 1, "authHash" -> authHash.toHex).render().getBytes("UTF-8")
+        )
+      )
+    else Left("auth-hash")
+
+  def decodeSyncRequest(bytes: ByteVector): Either[String, ByteVector] =
+    try
+      val json = ujson.read(new String(bytes.toArray, "UTF-8"))
+      for
+        kind     <- json.obj.get("kind").collect { case ujson.Str(value) => value }.toRight("kind")
+        _        <- if kind == "s2-sync-request" then Right(()) else Left("kind")
+        version  <- fieldLong(json, "version")
+        _        <- if version == 1L then Right(()) else Left("version")
+        authHash <- fieldHex(json, "authHash", 32)
+      yield authHash
+    catch case _: Exception => Left("json")
+
   def seal(
     syncRoot: Key32,
     primaryDevicePrivate: Ed25519Private,

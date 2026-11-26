@@ -1,12 +1,14 @@
 package yochat.server
 
-import cats.effect.{Fiber, IO, Resource}
+import scala.concurrent.duration.*
+
+import cats.effect.{Fiber, IO, Ref, Resource}
 import scodec.bits.ByteVector
 import ujson.Value
 
 import yochat.core.{Crypto, Ed25519Public, Key32}
 import yochat.store.{KeySource, Store, StoreConfig}
-import yochat.transport.RelayClient
+import yochat.transport.{RelayClient, RelayPayload}
 
 /** Read-only A2 runtime: loads its own device authorization and sync root, keeps the relay connected, and applies sealed snapshots from A1. It
   * never opens the S1 session runtime and never accepts a user private key.
@@ -14,6 +16,7 @@ import yochat.transport.RelayClient
 final class CompanionService private (
   store: Store,
   fiber: Fiber[IO, Throwable, Unit],
+  requestFiber: Fiber[IO, Throwable, Unit],
   releaseRelay: IO[Unit],
   relayHost: String,
   relayPort: Int
@@ -30,7 +33,7 @@ final class CompanionService private (
   def messagesJson(conversationId: ByteVector, limit: Int): IO[Either[ServiceError, Value]] =
     CompanionView.messagesJson(store, conversationId, limit).map(_.left.map(error => ServiceError.StoreFailed(error.code)))
 
-  def close: IO[Unit] = fiber.cancel *> releaseRelay
+  def close: IO[Unit] = fiber.cancel *> requestFiber.cancel *> releaseRelay
 
 object CompanionService:
 
@@ -50,9 +53,12 @@ object CompanionService:
               sync                  <- loadSync(store, auth)
               relay                 <- RelayClient.connect(config.relayHost, config.relayPort, store.identity.devicePublic).allocated
               (client, releaseRelay) = relay
-              receiver               = CompanionSyncService(store, client, auth.primaryDevicePub, authHash(record = sync._2), sync._1)
+              received              <- Ref.of[IO, Boolean](false)
+              hash                   = authHash(sync._2)
+              receiver               = CompanionSyncService(store, client, auth.primaryDevicePub, hash, sync._1, received.set(true))
               fiber                 <- receiver.run.start
-            yield new CompanionService(store, fiber, releaseRelay, config.relayHost, config.relayPort)
+              requestFiber          <- requestLoop(client, auth.primaryDevicePub, hash, received).start
+            yield new CompanionService(store, fiber, requestFiber, releaseRelay, config.relayHost, config.relayPort)
           }(_.close)
       }
 
@@ -86,5 +92,34 @@ object CompanionService:
                                        case Right(value) => IO.pure(value.authorization)
                         yield (root, authRaw)
     yield result
+
+  private def requestLoop(
+    relay: RelayClient,
+    primaryDevicePub: Ed25519Public,
+    authHash: ByteVector,
+    received: Ref[IO, Boolean]
+  ): IO[Unit] =
+    def waitForSnapshot(attempt: Int): IO[Unit] =
+      if attempt >= 60 then IO.unit
+      else
+        relay.awaitOnline(30.seconds).flatMap {
+          case false => IO.sleep(2.seconds) *> waitForSnapshot(attempt + 1)
+          case true  =>
+            DeviceSyncProtocol.syncRequest(authHash) match
+              case Left(_)      => IO.unit
+              case Right(bytes) =>
+                relay.send(primaryDevicePub, RelayPayload.DeviceSync(bytes)).attempt *>
+                  IO.sleep(5.seconds) *>
+                  received.get
+                    .flatMap(done => if done then IO.unit else waitForSnapshot(attempt + 1)) // scalafix:ok DisableSyntax.no-unsafe-get
+        }
+
+    def afterReconnect: IO[Unit] =
+      relay.updates.flatMap {
+        case true  => received.set(false) *> waitForSnapshot(0) *> afterReconnect
+        case false => afterReconnect
+      }
+
+    waitForSnapshot(0) *> afterReconnect
 
   private def authHash(record: ByteVector): ByteVector = Crypto.sha256(record).bytes

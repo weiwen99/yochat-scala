@@ -25,7 +25,11 @@ final class DevicePairingServiceSpec extends FunSuite:
               companion  = ExecutorTestSupport.edPair()
               request   <- DevicePairing.request(inviteCode, companion.privateKey, companion.publicKey, "phone")
               requestCode = request.fold(error => throw new AssertionError(error), value => value._1)
-              auth      <- service.confirm(requestCode, 2_000L)
+              inspected <- service.inspect(requestCode, 2_000L)
+              confirmation = inspected.fold(error => throw new AssertionError(error), value => value("confirmation").str)
+              rejected  <- service.confirm(requestCode, "0000-0000", 2_000L)
+              _          = assertEquals(rejected, Left("confirmation"))
+              auth      <- service.confirm(requestCode, confirmation, 2_000L)
               _          = assert(auth.isRight)
               devices   <- service.listDevicesJson
               _          = assert(devices.exists(value => value.arr.exists(_.obj.get("role").contains(ujson.Str("companion")))))

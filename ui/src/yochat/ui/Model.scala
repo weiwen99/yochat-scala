@@ -60,6 +60,14 @@ final case class Device(
   lastSyncSeq: Long
 )
 
+final case class PairingInspection(
+  devicePub: String,
+  name: String,
+  fingerprint: String,
+  confirmation: String,
+  expiresAt: Long
+)
+
 final case class Lock(locked: Boolean, generation: Long)
 
 final case class AppState(
@@ -146,6 +154,14 @@ object Json:
         long(item, "lastSyncSeq").getOrElse(0L)
       )
     }
+
+  def parsePairingInspection(value: Value): Option[PairingInspection] =
+    for
+      device       <- string(value, "devicePub")
+      name         <- string(value, "name")
+      fingerprint  <- string(value, "fingerprint")
+      confirmation <- string(value, "confirmation")
+    yield PairingInspection(device, name, fingerprint, confirmation, long(value, "expiresAt").getOrElse(0L))
 
   def parseMessages(value: Value): Vector[ChatMessage] =
     array(value, "messages") match

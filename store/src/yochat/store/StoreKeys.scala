@@ -13,9 +13,9 @@ final class StoreKeys private (master: MasterKey):
   private val identity: Key32 = derive(master.bytes, ByteVector.empty, IdentityInfo)
   private val database: Key32 = derive(master.bytes, ByteVector.empty, DatabaseInfo)
 
-  val contactKey: Key32          = derive(database.bytes, ByteVector.empty, Crypto.ascii("yochat-store/contact/v1"))
-  val invitationKey: Key32       = derive(database.bytes, ByteVector.empty, Crypto.ascii("yochat-store/invitation/v1"))
-  val deviceKey: Key32           = derive(database.bytes, ByteVector.empty, Crypto.ascii("yochat-store/device/v1"))
+  val contactKey: Key32    = derive(database.bytes, ByteVector.empty, Crypto.ascii("yochat-store/contact/v1"))
+  val invitationKey: Key32 = derive(database.bytes, ByteVector.empty, Crypto.ascii("yochat-store/invitation/v1"))
+  val deviceKey: Key32     = derive(database.bytes, ByteVector.empty, Crypto.ascii("yochat-store/device/v1"))
 
   val companionMessageKey: Key32 =
     derive(database.bytes, ByteVector.empty, Crypto.ascii("yochat-store/companion-message/v1"))

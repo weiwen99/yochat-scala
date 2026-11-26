@@ -2043,3 +2043,17 @@ textarea.text-input.code-text {
 .secondary-button.danger {
   color: var(--danger, #a33);
 }
+
+.pairing-inspect {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.pairing-inspect .code-value {
+  font-size: 16px;
+  letter-spacing: 0.08em;
+}

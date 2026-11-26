@@ -70,16 +70,23 @@ object PairingTool:
                     DevicePairing
                       .request(invite.trim, store.identity.devicePrivate, store.identity.devicePublic, value.name)
                       .flatMap {
-                        case Left(error)                => IO.println(s"yochat: $error").as(ExitCode.Error)
-                        case Right((requestCode, root)) =>
+                        case Left(error)                              => IO.println(s"yochat: $error").as(ExitCode.Error)
+                        case Right((requestCode, root, confirmation)) =>
                           val pending = ujson.Obj(
-                            "userPub"     -> userPub.bytes.toHex,
-                            "devicePub"   -> store.identity.devicePublic.bytes.toHex,
-                            "root"        -> root.bytes.toHex,
-                            "requestCode" -> requestCode,
-                            "name"        -> value.name
+                            "userPub"      -> userPub.bytes.toHex,
+                            "devicePub"    -> store.identity.devicePublic.bytes.toHex,
+                            "root"         -> root.bytes.toHex,
+                            "requestCode"  -> requestCode,
+                            "name"         -> value.name,
+                            "confirmation" -> confirmation.code,
+                            "fingerprint"  -> confirmation.fingerprint
                           )
                           writePending(value.dataDir, pending) *>
+                            IO.blocking(
+                              Console.err.println(
+                                s"A2 confirmation: ${confirmation.code}\nA2 fingerprint:  ${confirmation.fingerprint}\nPaste the JSON request code into A1."
+                              )
+                            ) *>
                             IO.println(requestCode).as(ExitCode.Success)
                       }
                 }

@@ -48,13 +48,38 @@ final class DevicePairingService(
                        )
         yield Right(DevicePairing.encodeInvite(invite))
 
-  def confirm(requestCode: String, nowMs: Long): IO[Either[String, String]] =
+  def inspect(requestCode: String, nowMs: Long): IO[Either[String, Value]] =
+    DevicePairing.decodeRequest(requestCode) match
+      case Left(error)    => IO.pure(Left(error))
+      case Right(request) =>
+        pending.get.flatMap { values => // scalafix:ok DisableSyntax.no-unsafe-get
+          values.get(request.pairingNonce.toHex) match
+            case None                                    => IO.pure(Left("pairing-expired"))
+            case Some(value) if nowMs >= value.expiresAt => IO.pure(Left("pairing-expired"))
+            case Some(value)                             =>
+              val confirmation = DevicePairing.confirmation(request)
+              IO.pure(
+                Right(
+                  ujson.Obj(
+                    "devicePub"    -> request.companionDevicePub.bytes.toHex,
+                    "name"         -> new String(request.encryptedName.toArray, StandardCharsets.UTF_8),
+                    "fingerprint"  -> confirmation.fingerprint,
+                    "confirmation" -> confirmation.code,
+                    "expiresAt"    -> ujson.Num(value.expiresAt.toDouble)
+                  )
+                )
+              )
+        }
+
+  def confirm(requestCode: String, expectedConfirmation: String, nowMs: Long): IO[Either[String, String]] =
     store.identity.userPrivate match
       case None          => IO.pure(Left("primary-user-key"))
       case Some(userKey) =>
         DevicePairing.decodeRequest(requestCode) match
-          case Left(error)    => IO.pure(Left(error))
-          case Right(request) =>
+          case Left(error)                                                                        => IO.pure(Left(error))
+          case Right(request) if DevicePairing.confirmation(request).code != expectedConfirmation =>
+            IO.pure(Left("confirmation"))
+          case Right(request)                                                                     =>
             pending.get.flatMap { values => // scalafix:ok DisableSyntax.no-unsafe-get
               values.get(request.pairingNonce.toHex) match
                 case None                                    => IO.pure(Left("pairing-expired"))
@@ -194,7 +219,19 @@ object DevicePairingService:
 
 private object DevicePairing:
 
-  private val Random = new SecureRandom()
+  final case class Confirmation(code: String, fingerprint: String)
+
+  private val Random             = new SecureRandom()
+  private val ConfirmationDomain = Crypto.ascii("yochat-s2-confirmation")
+
+  def confirmation(request: PairingRequest): Confirmation =
+    val codeBytes = Crypto.sha256(ConfirmationDomain ++ request.pairingNonce ++ request.companionDevicePub.bytes).bytes.take(4)
+    Confirmation(grouped(codeBytes), fingerprint(request.companionDevicePub))
+
+  def fingerprint(device: Ed25519Public): String =
+    grouped(Crypto.sha256(device.bytes).bytes.take(8))
+
+  private def grouped(value: ByteVector): String = value.toHex.toUpperCase.grouped(4).mkString("-")
 
   def encodeInvite(invite: PairingInvite): String =
     ujson
@@ -331,7 +368,7 @@ private object DevicePairing:
     companionDevicePrivate: Ed25519Private,
     companionDevicePub: Ed25519Public,
     name: String
-  ): IO[Either[String, (String, Key32)]] =
+  ): IO[Either[String, (String, Key32, Confirmation)]] =
     randomX25519.flatMap { ephemeral =>
       val result =
         for
@@ -349,7 +386,7 @@ private object DevicePairing:
                        )
                        .left
                        .map(_ => "request")
-        yield (encodeRequest(request), root)
+        yield (encodeRequest(request), root, confirmation(request))
       result.fold(error => IO.pure(Left(error)), value => IO.pure(Right(value)))
     }
 
