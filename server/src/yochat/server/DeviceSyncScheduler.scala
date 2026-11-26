@@ -18,6 +18,7 @@ import yochat.transport.{RelayClient, RelayPayload}
 final class DeviceSyncScheduler private (
   requestFiber: Fiber[IO, Throwable, Unit],
   changeFiber: Fiber[IO, Throwable, Unit],
+  statusFiber: Fiber[IO, Throwable, Unit],
   changes: Queue[IO, Unit],
   active: Ref[IO, Boolean]
 ):
@@ -25,7 +26,7 @@ final class DeviceSyncScheduler private (
   def notifyChange: IO[Unit] =
     active.get.flatMap(value => if value then changes.tryOffer(()).void else IO.unit) // scalafix:ok DisableSyntax.no-unsafe-get
 
-  def close: IO[Unit] = requestFiber.cancel *> changeFiber.cancel
+  def close: IO[Unit] = requestFiber.cancel *> changeFiber.cancel *> statusFiber.cancel
 
 object DeviceSyncScheduler:
 
@@ -35,19 +36,46 @@ object DeviceSyncScheduler:
       active       <- Ref.of[IO, Boolean](false)
       requestFiber <- listenRequests(store, relay, active).start
       changeFiber  <- listenChanges(store, relay, changes).start
+      statusFiber  <- watchRelay(store, relay).start
       initial      <- store.listDevices.map {
                         case Right(values) => values.exists(isActiveCompanion)
                         case Left(_)       => false
                       }
       _            <- active.set(initial)
-    yield new DeviceSyncScheduler(requestFiber, changeFiber, changes, active)
+    yield new DeviceSyncScheduler(requestFiber, changeFiber, statusFiber, changes, active)
+
+  private def watchRelay(store: Store, relay: RelayClient): IO[Unit] =
+    def loop: IO[Unit] =
+      relay.awaitOnline(30.seconds).flatMap {
+        case true  => sendStatusRequests(store, relay) *> relay.updates.flatMap(_ => loop)
+        case false => IO.sleep(2.seconds) *> loop
+      }
+    loop
+
+  private def sendStatusRequests(store: Store, relay: RelayClient): IO[Unit] =
+    store.listDevices.flatMap {
+      case Left(_)        => IO.unit
+      case Right(devices) =>
+        devices.foldLeft(IO.unit) { (acc, record) =>
+          acc *> {
+            if isActiveCompanion(record) then
+              val authHash = Crypto.sha256(record.authorization).bytes
+              DeviceSyncProtocol.syncStatusRequest(authHash, store.identity.devicePrivate) match
+                case Left(_)      => IO.unit
+                case Right(bytes) => relay.send(record.devicePub, RelayPayload.DeviceSync(bytes)).attempt.void
+            else IO.unit
+          }
+        }
+    }
 
   private def listenRequests(store: Store, relay: RelayClient, active: Ref[IO, Boolean]): IO[Unit] =
     relay.deviceIncoming.flatMap { incoming =>
       incoming.payload match
         case RelayPayload.DeviceSync(bytes) =>
           DeviceSyncProtocol.decodeSyncRequest(bytes) match
-            case Left(_)         => acceptAck(store, relay, incoming.from, bytes).attempt.void
+            case Left(_)         =>
+              acceptStatus(store, relay, incoming.from, bytes).attempt *>
+                acceptAck(store, relay, incoming.from, bytes).attempt.void
             case Right(authHash) =>
               answer(store, relay, incoming.from, authHash).attempt *>
                 active.set(true)
@@ -91,6 +119,40 @@ object DeviceSyncScheduler:
                 .flatMap(_.sendSnapshot)
                 .void
       }
+
+  private def acceptStatus(store: Store, relay: RelayClient, device: Ed25519Public, bytes: ByteVector): IO[Unit] =
+    store.loadDevice(device).flatMap {
+      case Left(_)                                              => IO.unit
+      case Right(record) if record.role != DeviceRole.Companion => IO.unit
+      case Right(record) if record.revokedAt.isDefined          => IO.unit
+      case Right(record)                                        =>
+        val authHash = Crypto.sha256(record.authorization).bytes
+        DeviceSyncProtocol.decodeSyncStatus(device, authHash, bytes) match
+          case Left(_)       => IO.unit
+          case Right(status) =>
+            store.loadDeviceSync(device).flatMap {
+              case Left(_)     => IO.unit
+              case Right(sync)
+                  if status.lastAckedSyncSeq < sync.lastAckedSyncSeq ||
+                    status.lastBatchSeq < sync.lastBatchSeq ||
+                    (status.lastBatchSeq == sync.lastBatchSeq && status.lastBatchHash != sync.lastBatchHash) =>
+                IO.unit
+              case Right(sync) =>
+                val updated = sync.copy(
+                  lastAckedSyncSeq = status.lastAckedSyncSeq,
+                  lastBatchSeq = status.lastBatchSeq,
+                  lastBatchHash = status.lastBatchHash
+                )
+                store.lockGeneration.flatMap {
+                  case Left(_)     => IO.unit
+                  case Right(lock) =>
+                    store.updateDeviceSync(updated, sync.version, lock).flatMap {
+                      case Left(_)  => IO.unit
+                      case Right(_) => syncDevice(store, relay, record)
+                    }
+                }
+            }
+    }
 
   private def acceptAck(store: Store, relay: RelayClient, device: Ed25519Public, bytes: ByteVector): IO[Unit] =
     store.loadDevice(device).flatMap {

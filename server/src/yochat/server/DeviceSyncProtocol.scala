@@ -7,6 +7,7 @@ import scodec.bits.ByteVector
 import ujson.Value
 
 import yochat.core.{Crypto, Ed25519Private, Ed25519Public, Key32, Nonce, Signature}
+import yochat.core.s2.{SyncStatus, SyncStatusRequest}
 
 /** S2-A device-sync transport: sealed, signed incremental batches plus a signed ACK carrying the A2 checkpoint. */
 object DeviceSyncProtocol:
@@ -170,6 +171,84 @@ object DeviceSyncProtocol:
       _         <- if Crypto.verify(companionDevicePub, AckDomain ++ ackInput(authHash, batchSeq, batchHash, lastAcked), signature) then Right(())
                    else Left("signature")
     yield Ack(authHash, batchSeq, batchHash, lastAcked, signature)
+
+  def syncStatus(status: SyncStatus): ByteVector =
+    ByteVector.view(
+      ujson
+        .Obj(
+          "kind"             -> "s2-sync-status",
+          "version"          -> 1,
+          "authHash"         -> status.authHash.toHex,
+          "lastBatchSeq"     -> ujson.Num(status.lastBatchSeq.toDouble),
+          "lastBatchHash"    -> status.lastBatchHash.toHex,
+          "lastAckedSyncSeq" -> ujson.Num(status.lastAckedSyncSeq.toDouble),
+          "signature"        -> status.signature.bytes.toHex
+        )
+        .render()
+        .getBytes("UTF-8")
+    )
+
+  def decodeSyncStatus(
+    companionDevicePub: Ed25519Public,
+    expectedAuthHash: ByteVector,
+    bytes: ByteVector
+  ): Either[String, SyncStatus] =
+    for
+      json      <- parseJson(bytes)
+      kind      <- fieldString(json, "kind")
+      _         <- if kind == "s2-sync-status" then Right(()) else Left("kind")
+      version   <- fieldLong(json, "version")
+      _         <- if version == 1L then Right(()) else Left("version")
+      authHash  <- fieldHex(json, "authHash", 32)
+      _         <- if authHash == expectedAuthHash then Right(()) else Left("auth-hash")
+      batchSeq  <- fieldLong(json, "lastBatchSeq")
+      batchHash <- fieldHex(json, "lastBatchHash", 32)
+      lastAck   <- fieldLong(json, "lastAckedSyncSeq")
+      rawSig    <- fieldHex(json, "signature", 64)
+      signature <- Signature.from(rawSig).left.map(_ => "signature")
+      status     = SyncStatus(authHash, batchSeq, batchHash, lastAck, signature)
+      _         <- if status.verify(companionDevicePub) then Right(()) else Left("signature")
+    yield status
+
+  def syncStatusRequest(
+    authHash: ByteVector,
+    primaryDevicePrivate: Ed25519Private
+  ): Either[String, ByteVector] =
+    for
+      nonce   <- Nonce.from(ByteVector.view(randomBytes(16))).left.map(_ => "nonce")
+      request <- SyncStatusRequest.create(primaryDevicePrivate, authHash, nonce.bytes).left.map(_ => "request")
+    yield ByteVector.view(
+      ujson
+        .Obj(
+          "kind"      -> "s2-sync-status-request",
+          "version"   -> 1,
+          "authHash"  -> request.authHash.toHex,
+          "nonce"     -> request.nonce.toHex,
+          "signature" -> request.signature.bytes.toHex
+        )
+        .render()
+        .getBytes("UTF-8")
+    )
+
+  def decodeSyncStatusRequest(
+    primaryDevicePub: Ed25519Public,
+    expectedAuthHash: ByteVector,
+    bytes: ByteVector
+  ): Either[String, SyncStatusRequest] =
+    for
+      json      <- parseJson(bytes)
+      kind      <- fieldString(json, "kind")
+      _         <- if kind == "s2-sync-status-request" then Right(()) else Left("kind")
+      version   <- fieldLong(json, "version")
+      _         <- if version == 1L then Right(()) else Left("version")
+      authHash  <- fieldHex(json, "authHash", 32)
+      _         <- if authHash == expectedAuthHash then Right(()) else Left("auth-hash")
+      nonce     <- fieldHex(json, "nonce", 16)
+      rawSig    <- fieldHex(json, "signature", 64)
+      signature <- Signature.from(rawSig).left.map(_ => "signature")
+      request    = SyncStatusRequest(authHash, nonce, signature)
+      _         <- if request.verify(primaryDevicePub) then Right(()) else Left("signature")
+    yield request
 
   def batchHash(bytes: ByteVector): ByteVector = Crypto.sha256(bytes).bytes
 

@@ -5,7 +5,7 @@ import scodec.bits.ByteVector
 import ujson.Value
 
 import yochat.core.{Ed25519Public, Key32}
-import yochat.core.s2.{JoinManifest, ManifestKey}
+import yochat.core.s2.{JoinManifest, ManifestKey, SyncStatus}
 import yochat.store.{CompanionMessageRecord, ContactConfirmation, ContactData, MessageState, StorageError, Store}
 import yochat.transport.{RelayClient, RelayPayload}
 
@@ -24,16 +24,38 @@ final class CompanionSyncService(
       .flatMap(incoming =>
         incoming.payload match
           case RelayPayload.DeviceSync(bytes) =>
-            receive(bytes)
-              .flatMap {
-                case Right(_) => onApplied
-                case Left(_)  => IO.unit
-              }
-              .attempt
-              .void
+            DeviceSyncProtocol.decodeSyncStatusRequest(primaryDevicePub, authHash, bytes) match
+              case Right(_) =>
+                statusBytes.flatMap {
+                  case Left(_)      => IO.unit
+                  case Right(value) => relay.send(primaryDevicePub, RelayPayload.DeviceSync(value)).attempt.void
+                }
+              case Left(_)  =>
+                receive(bytes)
+                  .flatMap {
+                    case Right(_) => onApplied
+                    case Left(_)  => IO.unit
+                  }
+                  .attempt
+                  .void
           case _                              => IO.unit
       )
       .foreverM
+
+  def statusBytes: IO[Either[String, ByteVector]] =
+    store.loadDeviceSync(primaryDevicePub).flatMap {
+      case Left(error) => IO.pure(Left(error.code))
+      case Right(sync) =>
+        SyncStatus.create(
+          store.identity.devicePrivate,
+          authHash,
+          sync.lastBatchSeq,
+          sync.lastBatchHash,
+          sync.lastAckedSyncSeq
+        ) match
+          case Left(_)      => IO.pure(Left("sync-status"))
+          case Right(value) => IO.pure(Right(DeviceSyncProtocol.syncStatus(value)))
+    }
 
   def receive(bytes: ByteVector): IO[Either[String, Unit]] =
     DeviceSyncProtocol.open(syncRoot, primaryDevicePub, authHash, bytes) match

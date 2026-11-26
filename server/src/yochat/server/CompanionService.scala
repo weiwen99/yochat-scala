@@ -57,7 +57,8 @@ object CompanionService:
               hash                   = authHash(sync._2)
               receiver               = CompanionSyncService(store, client, auth.primaryDevicePub, hash, sync._1, received.set(true))
               fiber                 <- receiver.run.start
-              requestFiber          <- requestLoop(client, auth.primaryDevicePub, hash, received).start
+              status                 = receiver.statusBytes
+              requestFiber          <- requestLoop(client, auth.primaryDevicePub, status, received).start
             yield new CompanionService(store, fiber, requestFiber, releaseRelay, config.relayHost, config.relayPort)
           }(_.close)
       }
@@ -96,7 +97,7 @@ object CompanionService:
   private def requestLoop(
     relay: RelayClient,
     primaryDevicePub: Ed25519Public,
-    authHash: ByteVector,
+    status: IO[Either[String, ByteVector]],
     received: Ref[IO, Boolean]
   ): IO[Unit] =
     def waitForSnapshot(attempt: Int): IO[Unit] =
@@ -105,13 +106,14 @@ object CompanionService:
         relay.awaitOnline(30.seconds).flatMap {
           case false => IO.sleep(2.seconds) *> waitForSnapshot(attempt + 1)
           case true  =>
-            DeviceSyncProtocol.syncRequest(authHash) match
+            status.flatMap {
               case Left(_)      => IO.unit
               case Right(bytes) =>
                 relay.send(primaryDevicePub, RelayPayload.DeviceSync(bytes)).attempt *>
                   IO.sleep(5.seconds) *>
                   received.get
                     .flatMap(done => if done then IO.unit else waitForSnapshot(attempt + 1)) // scalafix:ok DisableSyntax.no-unsafe-get
+            }
         }
 
     def afterReconnect: IO[Unit] =
