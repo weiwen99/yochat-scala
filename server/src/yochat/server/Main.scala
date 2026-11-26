@@ -13,10 +13,14 @@ object Main extends IOApp:
     PairingTool.run(args).flatMap {
       case Some(code) => IO.pure(code)
       case None       =>
-        CompanionMain.parse(args) match
-          case None                => serve(args)
+        CompanionPairingMain.parse(args) match
           case Some(Left(message)) => IO.println(s"yochat: $message").as(ExitCode.Error)
-          case Some(Right(config)) => CompanionMain.serve(config)
+          case Some(Right(config)) => CompanionPairingMain.serve(config)
+          case None                =>
+            CompanionMain.parse(args) match
+              case None                => serve(args)
+              case Some(Left(message)) => IO.println(s"yochat: $message").as(ExitCode.Error)
+              case Some(Right(config)) => CompanionMain.serve(config)
     }
 
   private def serve(args: List[String]): IO[ExitCode] =

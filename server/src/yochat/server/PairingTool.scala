@@ -9,7 +9,7 @@ import scodec.bits.ByteVector
 import ujson.Value
 
 import yochat.core.{Crypto, Ed25519Public, Key32}
-import yochat.store.{DeviceRecord, DeviceRole, DeviceSyncRecord, KeySource, Store, StoreConfig}
+import yochat.store.{KeySource, Store, StoreConfig}
 
 /** A2-side manual pairing. Request and accept are separate processes so the two codes can travel through any existing channel. The pending root
   * is kept in a 0600 file until the auth code is accepted; it never leaves A2.
@@ -143,47 +143,13 @@ object PairingTool:
     val requestHash = pending.obj.get("requestCode").collect { case ujson.Str(value) =>
       Crypto.sha256(ByteVector.view(value.getBytes(StandardCharsets.UTF_8))).bytes
     }
-    val record      = DeviceRecord(
-      devicePub = store.identity.devicePublic,
-      userPub = auth.userPub,
-      role = DeviceRole.Companion,
-      name = pending.obj.get("name").collect { case ujson.Str(value) => value }.getOrElse("companion"),
-      authorization = ByteVector.view(authCode.getBytes(StandardCharsets.UTF_8)),
-      version = 0L,
-      createdAt = 0L,
-      revokedAt = None,
-      joinEpoch = auth.joinEpoch,
-      joinManifest = auth.joinManifest.canonical,
-      joinManifestHash = auth.joinManifestHash,
-      joinCursorSyncSeq = auth.joinCursorSyncSeq,
-      pairingNonce = None,
-      requestHash = requestHash
-    )
-    val sync        = DeviceSyncRecord(
-      peerDevicePub = auth.primaryDevicePub,
-      syncRoot = root.bytes,
-      lastAckedSyncSeq = 0L,
-      lastBatchSeq = 0L,
-      lastBatchHash = ByteVector.fill(32)(0),
-      version = 0L,
-      updatedAt = 0L
-    )
-    for
-      lock <- store.lockGeneration
-      _    <- lock match
-                case Left(error)  => IO.println(s"yochat: ${error.code}")
-                case Right(value) =>
-                  store.insertDevice(record, value).flatMap {
-                    case Left(error) => IO.println(s"yochat: ${error.code}")
-                    case Right(_)    =>
-                      store.insertDeviceSync(sync, value).flatMap {
-                        case Left(error) => IO.println(s"yochat: ${error.code}")
-                        case Right(_)    =>
-                          IO.blocking(Files.deleteIfExists(dataDir.resolve(PendingFile))).void *>
-                            IO.println("paired")
-                      }
-                  }
-    yield ()
+    val name        = pending.obj.get("name").collect { case ujson.Str(value) => value }.getOrElse("companion")
+    DevicePairingStore.persist(store, authCode, auth, root, name, requestHash).flatMap {
+      case Left(error) => IO.println(s"yochat: $error")
+      case Right(_)    =>
+        IO.blocking(Files.deleteIfExists(dataDir.resolve(PendingFile))).void *>
+          IO.println("paired")
+    }
 
   private def storeFromPending(
     dataDir: Path,

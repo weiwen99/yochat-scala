@@ -1,0 +1,91 @@
+body.pairing-body {
+  min-height: 100vh;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.pairing-card {
+  width: min(620px, 100%);
+  padding: 28px;
+  border: 1px solid var(--line);
+  background: var(--sheet);
+}
+
+.pairing-card h1 {
+  margin: 22px 0 6px;
+  font-size: 28px;
+  letter-spacing: -0.05em;
+}
+
+.pairing-lede {
+  margin: 0 0 22px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.pairing-field {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.pairing-code {
+  font-size: 24px;
+  letter-spacing: 0.12em;
+}
+
+.pairing-fingerprint {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.pairing-label {
+  display: block;
+  margin: 14px 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pairing-input {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.pairing-card .primary-button,
+.pairing-card .secondary-button {
+  margin-top: 4px;
+}
+
+.pairing-error {
+  margin: 14px 0 0;
+  color: var(--danger, #a33);
+  font-size: 12px;
+}
+
+.pairing-success h2 {
+  margin: 0 0 6px;
+}
+
+.pairing-success p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}

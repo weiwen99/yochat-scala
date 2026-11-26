@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>YoChat · 配对只读设备</title>
+    <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="/pair.css" />
+  </head>
+  <body class="pairing-body">
+    <main class="pairing-card">
+      <div class="wordmark">有聊 <span>YOCHAT / READ-ONLY</span></div>
+      <h1>配对只读设备</h1>
+      <p class="pairing-lede">在 A1 的「设备」页粘贴请求码，并核对两边屏幕上的确认码。授权码只在本机保存。</p>
+
+      <section id="pairing-content">
+        <div class="pairing-field">
+          <span class="code-label">确认码</span>
+          <strong id="confirmation" class="pairing-code">—</strong>
+          <span id="fingerprint" class="pairing-fingerprint"></span>
+        </div>
+        <label class="pairing-label" for="request-code">请求码（复制到 A1）</label>
+        <textarea id="request-code" class="pairing-input" readonly rows="4"></textarea>
+        <button id="copy-request" class="secondary-button" type="button">复制请求码</button>
+
+        <label class="pairing-label" for="auth-code">授权码（从 A1 粘贴）</label>
+        <textarea id="auth-code" class="pairing-input" rows="4" placeholder="粘贴 A1 生成的授权码"></textarea>
+        <button id="accept" class="primary-button" type="button">完成配对</button>
+        <p id="pairing-error" class="pairing-error" hidden></p>
+      </section>
+
+      <section id="paired" class="pairing-success" hidden>
+        <h2>配对完成</h2>
+        <p>配对进程已结束。现在启动只读设备服务。</p>
+      </section>
+    </main>
+    <script src="/pair.js"></script>
+  </body>
+</html>
