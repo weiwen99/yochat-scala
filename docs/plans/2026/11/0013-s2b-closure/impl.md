@@ -17,7 +17,7 @@ Status: implementation complete; owner authorized autonomous closure on 2026-11-
 - `server.s2e2e`: PASS `old=0 postJoin=200 direct=201 offline=221 restart=222 concurrent=242 revoked=242`.
 - `server.s2perf`: PASS `sync_ms=2900 count=1000`.
 - `server.s2bperf`: PASS `fanout_ms=4180 count=1000` after capability/order caches.
-- Full `./check.sh`: pending this closure branch; previous S2-B full gate was PASS 695.48s.
+- Full `./check.sh`: PASS 739.17s; S1 E2E 18/18, E2E#8 3740ms, `PERF#10K` 34,757ms, `PERF#RATE` 301.1 msg/s, cold start 1216/1233ms, idle 729.2MB, Q8 PASS. S2 gates are now inside the full gate.
 
 ## Security review (self-review, not external audit)
 
