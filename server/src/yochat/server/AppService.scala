@@ -262,11 +262,12 @@ final class AppService private (
         .sendMessage(conversationId, body)
         .map(id => Right(id))
         .handleErrorWith {
-          case error: RuntimeError if error.getMessage.startsWith("runtime-fatal:") =>
-            IO.pure(Left(ServiceError.RuntimeFailed(error.getMessage)))
-          case error: RuntimeError                                                  =>
-            IO.pure(Left(ServiceError.SendRefused(error.getMessage)))
-          case error                                                                =>
+          case error: RuntimeError =>
+            error.getMessage match
+              case "queue-full" | "send-timeout" => IO.pure(Left(ServiceError.SendRefused(error.getMessage)))
+              case "send-rejected"               => IO.pure(Left(ServiceError.BadRequest("send-rejected")))
+              case reason                        => IO.pure(Left(ServiceError.RuntimeFailed(reason)))
+          case error               =>
             IO.pure(Left(ServiceError.RuntimeFailed(error.getClass.getSimpleName)))
         }
     }

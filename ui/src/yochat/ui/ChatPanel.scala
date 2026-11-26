@@ -17,15 +17,17 @@ object ChatPanel:
     )
 
   private def conversation(api: ApiClient, ui: UiState, conversationId: String): HtmlElement =
-    val draft   = Var("")
-    val contact = api.selectedContact.signal
-    val state   = api.state.signal
+    val draft         = Var("")
+    val draftRevision = Var(0L)
+    val contact       = api.selectedContact.signal
+    val state         = api.state.signal
 
     def send(): Unit =
-      val text = draft.now().trim
+      val text     = draft.now().trim
+      val revision = draftRevision.now()
       if text.nonEmpty && api.canSend.now() then
         api.sendMessage(conversationId, text).onComplete {
-          case Success(_)    => if draft.now().trim == text then draft.set("")
+          case Success(_)    => if draftRevision.now() == revision then draft.set("")
           case Failure(fail) => ui.failure(api.describeError(fail))
         }
 
@@ -62,7 +64,7 @@ object ChatPanel:
         child.maybe <-- state.map { value =>
           value.conversations.find(_.id == conversationId).filter(_.waiting).map(_ => waitingLine())
         },
-        composer(api, draft, state, send)
+        composer(api, draft, draftRevision, state, send)
       ),
       ChatLedger(api, ui, conversationId)
     )
@@ -138,6 +140,7 @@ object ChatPanel:
   private def composer(
     api: ApiClient,
     draft: Var[String],
+    draftRevision: Var[Long],
     state: Signal[AppState],
     send: () => Unit
   ): HtmlElement =
@@ -150,7 +153,10 @@ object ChatPanel:
           aria.label  := "消息正文",
           placeholder := "写点什么…",
           value <-- draft,
-          onInput.mapToValue --> draft,
+          onInput.mapToValue --> { value =>
+            draft.set(value)
+            draftRevision.update(_ + 1L)
+          },
           onKeyDown --> { event =>
             if event.key == "Enter" && !event.shiftKey then
               event.preventDefault()

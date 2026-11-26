@@ -213,17 +213,42 @@ async function checkStatusBanners(browser, url) {
 
     const pushPage = await context.newPage();
     let sessionCalls = 0;
+    await pushPage.addInitScript(() => {
+      class FakeWebSocket {
+        constructor() {
+          window.__fakeSocket = this;
+          setTimeout(() => {
+            if (this.onopen) this.onopen();
+          }, 0);
+        }
+        send() {}
+        close() {
+          if (this.onclose) this.onclose();
+        }
+      }
+      Object.defineProperty(window, "WebSocket", { value: FakeWebSocket, configurable: true });
+    });
     await pushPage.route("**/api/session", (route) => {
       sessionCalls += 1;
       const body =
         sessionCalls === 1
           ? { unlocked: true, instanceExists: true, fatal: null, notification: null }
-          : { unlocked: true, instanceExists: true, fatal: "test-fatal", notification: null };
+          : sessionCalls === 2
+            ? { unlocked: true, instanceExists: true, fatal: null, notification: null }
+            : { unlocked: true, instanceExists: true, fatal: "test-fatal", notification: null };
+      if (sessionCalls === 1) {
+        return new Promise((resolve) => {
+          setTimeout(() => resolve(route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) })), 300);
+        });
+      }
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     });
     await pushPage.goto(url);
+    await pushPage.locator(".shell").waitFor({ timeout: 10_000 });
+    await pushPage.evaluate(() => window.__fakeSocket.onmessage({ data: JSON.stringify({ type: "state" }) }));
     const pushedFatal = pushPage.locator(".status-banner.fatal").first();
     await pushedFatal.waitFor({ timeout: 10_000 });
+    await pushPage.waitForTimeout(500);
     const pushedText = await pushedFatal.innerText();
     if (!pushedText.includes("无法恢复")) throw new Error(`pushed fatal banner mismatch: ${pushedText}`);
     await pushPage.close();
@@ -313,9 +338,10 @@ async function checkQueueFullFeedback(page) {
     await toast.waitFor({ timeout: 10_000 });
     const toastText = await toast.innerText();
     if (!toastText.includes("待发消息已满")) throw new Error(`queue-full toast mismatch: ${toastText}`);
-    await page.waitForTimeout(700);
+    await composer.fill("queue-full-a");
+    await page.waitForTimeout(1_200);
     const value = await composer.inputValue();
-    if (value !== "queue-full-b") throw new Error(`delayed success cleared the newer draft: ${value}`);
+    if (value !== "queue-full-a") throw new Error(`delayed success cleared the newer revision: ${value}`);
     await composer.fill("");
   } finally {
     await page.unroute(pattern, handler);
@@ -345,18 +371,39 @@ async function checkElectronExitReason(browser, url, server) {
         return Promise.resolve(true);
       }
     };
+    class FakeWebSocket {
+      constructor() {
+        window.__fakeSocket = this;
+        setTimeout(() => {
+          if (this.onopen) this.onopen();
+        }, 0);
+      }
+      send() {}
+      close() {
+        if (this.onclose) this.onclose();
+      }
+    }
+    Object.defineProperty(window, "WebSocket", { value: FakeWebSocket, configurable: true });
   });
   const page = await context.newPage();
   try {
     await page.goto(url);
+    stage = "electron-exit-shell";
     await page.locator(".shell").waitFor({ timeout: 10_000 });
+    stage = "electron-exit-callback";
     await page.evaluate(() => window.__serverExited());
+    stage = "electron-exit-banner";
     const banner = page.locator(".status-banner.error").first();
     await banner.waitFor({ timeout: 10_000 });
     const first = await banner.innerText();
     if (!first.includes("已退出")) throw new Error(`electron exit banner mismatch: ${first}`);
     await stopChild(server);
+    stage = "electron-exit-lock";
+    const lockButton = page.locator('button[aria-label="锁定本机"]').first();
+    if ((await lockButton.count()) === 0) throw new Error("lock button missing after server exit");
+    await lockButton.click({ force: true, timeout: 5_000 });
     await page.waitForTimeout(1_200);
+    stage = "electron-exit-after";
     const after = await banner.innerText();
     if (!after.includes("已退出")) throw new Error(`electron exit reason overwritten: ${after}`);
   } finally {

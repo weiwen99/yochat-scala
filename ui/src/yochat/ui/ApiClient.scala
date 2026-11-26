@@ -26,6 +26,7 @@ final class ApiClient:
   private val socket: Var[Option[dom.WebSocket]]   = Var(None)
   private val dismissedNotice: Var[Option[String]] = Var(None)
   private val serverExited: Var[Boolean]           = Var(false)
+  private val sessionRequestId: Var[Long]          = Var(0L)
 
   def start(): Unit =
     listenForServerExit()
@@ -42,8 +43,10 @@ final class ApiClient:
     id.foreach(loadMessages)
 
   def loadSession(): Unit =
+    val requestId = sessionRequestId.now() + 1L
+    sessionRequestId.set(requestId)
     request("GET", "/api/session", None).onComplete {
-      case Success(value)   =>
+      case Success(value) if sessionRequestId.now() == requestId   =>
         val next = Json.parseState(value)
         state.set(next)
         updateNotice(next.notification)
@@ -61,9 +64,10 @@ final class ApiClient:
           selectedConversation.set(None)
           selectedContact.set(None)
           canSend.set(false)
-      case Failure(failure) =>
+      case Failure(failure) if sessionRequestId.now() == requestId =>
         loading.set(false)
         if !serverExited.now() then error.set(Some(message(failure)))
+      case _                                                       => ()
     }
 
   def unlock(passphrase: String): Future[Unit] =
@@ -81,11 +85,11 @@ final class ApiClient:
         selectedConversation.set(None)
         selectedContact.set(None)
         canSend.set(false)
-        error.set(None)
+        if !serverExited.now() then error.set(None)
         notice.set(None)
         dismissedNotice.set(None)
         loadSession()
-      case Failure(fail) => error.set(Some(message(fail)))
+      case Failure(fail) => if !serverExited.now() then error.set(Some(message(fail)))
     }
 
   def createInvitation(
@@ -280,7 +284,7 @@ final class ApiClient:
       case "bad-request:send-rejected" | "send-refused:send-rejected"                         =>
         "现在不能发送：安全码或关系状态不允许。"
       case "send-refused:send-timeout"                                                        =>
-        "本机服务没有确认这次发送，请重试。"
+        "发送状态未确认，请先查看聊天记录后再决定是否重发。"
       case "bad-request:event-queue-full"                                                     => "本机处理队列已满，请稍后重试。"
       case "locked"                                                                           => "本机已锁定，请重新解锁。"
       case "unlock-failed"                                                                    => "口令不正确，或这台设备的密钥无法打开。"

@@ -89,7 +89,7 @@ final class AppRuntime private (
       reply    <- Deferred[IO, Either[String, Long]]
       accepted <- queue.tryOffer(RuntimeCommand.Send(id, event, reply))
       _        <- if accepted then IO.unit else IO.raiseError(new RuntimeError("event-queue-full"))
-      outcome  <- reply.get.timeoutTo(10.seconds, IO.pure(Left("send-timeout"))) // scalafix:ok DisableSyntax.no-unsafe-get
+      outcome  <- reply.get.timeoutTo(30.seconds, IO.pure(Left("send-timeout"))) // scalafix:ok DisableSyntax.no-unsafe-get
       _        <- outcome match
                     case Right(_)     => IO.unit
                     case Left(reason) => IO.raiseError(new RuntimeError(reason))
@@ -598,56 +598,63 @@ object AppRuntime:
     pumpOnSkip: Boolean
   ): IO[Unit] =
     for
-      current        <- AppRuntime.readRef(stateRef)
-      (next, effects) = Application.step(current, event)
-      durable         = effects.filter(AppRuntime.isDurable)
-      external        = effects.filterNot(AppRuntime.isDurable)
-      result         <- executor.executeAll(durable)
-      _              <- result match
-                          case Left(error)    => AppRuntime.publishFatal(fatal, stateRef, onState, error)
-                          case Right(skipped) =>
-                            val skippedTimers = current.timers.keys
-                              .filter(timer => skipped.contains(timer.messageId))
-                              .toVector
-                            val reconciled    =
-                              if skipped.isEmpty then next
-                              else
-                                skipped.foldLeft(current) { (state, messageId) =>
-                                  state.copy(
-                                    outgoing = state.outgoing - messageId,
-                                    timers = state.timers -- skippedTimers,
-                                    timerInstallations = state.timerInstallations -- skippedTimers
-                                  )
-                                }
-                            stateRef.set(reconciled) *> onState(reconciled) *>
-                              skippedTimers.foldLeft(IO.unit)((acc, timer) => acc *> transport.cancelTimer(timer)) *>
-                              feedPersisted(durable, transport, queue, stateRef, random, executor, fatal, clock, onState) *>
-                              (if skipped.isEmpty then executeExternal(external, transport, queue, stateRef, random, executor, fatal, clock, onState)
-                               else
-                                 applyEvent(
-                                   transport,
-                                   AppEvent.RecoverRetirements,
-                                   queue,
-                                   stateRef,
-                                   random,
-                                   executor,
-                                   fatal,
-                                   clock,
-                                   onState
-                                 ) *>
-                                   (if pumpOnSkip then
-                                      applyEvent(
-                                        transport,
-                                        AppEvent.Pump(clock.millis()),
-                                        queue,
-                                        stateRef,
-                                        random,
-                                        executor,
-                                        fatal,
-                                        clock,
-                                        onState
-                                      )
-                                    else IO.unit))
+      current                                            <- AppRuntime.readRef(stateRef)
+      (next, effects)                                     = Application.step(current, event)
+      durable                                             = effects.filter(AppRuntime.isDurable)
+      external                                            = effects.filterNot(AppRuntime.isDurable)
+      (notificationEffects, externalWithoutNotifications) = external.partition {
+                                                              case AppEffect.Notify(_) => true
+                                                              case _                   => false
+                                                            }
+      notifications                                       = notificationEffects.collect { case AppEffect.Notify(value) => value }
+      result                                             <- executor.executeAll(durable)
+      _                                                  <- result match
+                                                              case Left(error)    => AppRuntime.publishFatal(fatal, stateRef, onState, error)
+                                                              case Right(skipped) =>
+                                                                val skippedTimers = current.timers.keys
+                                                                  .filter(timer => skipped.contains(timer.messageId))
+                                                                  .toVector
+                                                                val reconciled    =
+                                                                  if skipped.isEmpty then next
+                                                                  else
+                                                                    skipped.foldLeft(current) { (state, messageId) =>
+                                                                      state.copy(
+                                                                        outgoing = state.outgoing - messageId,
+                                                                        timers = state.timers -- skippedTimers,
+                                                                        timerInstallations = state.timerInstallations -- skippedTimers
+                                                                      )
+                                                                    }
+                                                                notifications.foldLeft(IO.unit)((acc, value) => acc *> transport.notify(value)) *>
+                                                                  stateRef.set(reconciled) *> onState(reconciled) *>
+                                                                  skippedTimers.foldLeft(IO.unit)((acc, timer) => acc *> transport.cancelTimer(timer)) *>
+                                                                  feedPersisted(durable, transport, queue, stateRef, random, executor, fatal, clock, onState) *>
+                                                                  (if skipped.isEmpty then
+                                                                     executeExternal(externalWithoutNotifications, transport, queue, stateRef, random, executor, fatal, clock, onState)
+                                                                   else
+                                                                     applyEvent(
+                                                                       transport,
+                                                                       AppEvent.RecoverRetirements,
+                                                                       queue,
+                                                                       stateRef,
+                                                                       random,
+                                                                       executor,
+                                                                       fatal,
+                                                                       clock,
+                                                                       onState
+                                                                     ) *>
+                                                                       (if pumpOnSkip then
+                                                                          applyEvent(
+                                                                            transport,
+                                                                            AppEvent.Pump(clock.millis()),
+                                                                            queue,
+                                                                            stateRef,
+                                                                            random,
+                                                                            executor,
+                                                                            fatal,
+                                                                            clock,
+                                                                            onState
+                                                                          )
+                                                                        else IO.unit))
     yield ()
 
   private def feedPersisted(
@@ -765,7 +772,7 @@ object AppRuntime:
                   )
                 )
               case AppEffect.Notify(notification)                            =>
-                transport.notify(notification) *> AppRuntime.readRef(stateRef).flatMap(onState)
+                transport.notify(notification)
               case _                                                         =>
                 executor.execute(effect).flatMap {
                   case Right(_)                                => IO.unit
