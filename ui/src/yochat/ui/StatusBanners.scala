@@ -40,7 +40,7 @@ object StatusBanners:
       case "queue-full"       => "待发消息已满。中继恢复前，新消息不会继续发送。"
       case "inbound-overflow" => "收到的消息暂时超出本机缓冲，正在请求补发。"
       case "message-failed"   => "有消息重试失败，正文仍保留在本机。"
-      case "rekey-failed"     => "加密通道重建失败，可在聊天中重试。"
+      case "rekey-failed"     => "加密通道重建失败，服务会在重新连接后再次尝试。"
       case "rekey-required"   => "对方要求重建加密通道。"
       case other              => s"本机状态需要处理（$other）。"
 
