@@ -164,6 +164,103 @@ async function closeModal(page) {
   }
 }
 
+async function checkStatusBanners(browser, url) {
+  stage = "status-banners";
+  const context = await browser.newContext();
+  try {
+    const loadError = await context.newPage();
+    await loadError.route("**/api/session", (route) => route.abort());
+    await loadError.goto(url);
+    const errorBanner = loadError.locator(".status-banner.error").first();
+    await errorBanner.waitFor({ timeout: 10_000 });
+    const errorText = await errorBanner.innerText();
+    if (!errorText.includes("本机服务暂时不可用")) throw new Error(`load error banner mismatch: ${errorText}`);
+    await loadError.close();
+
+    const statePage = await context.newPage();
+    await statePage.route("**/api/session", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ unlocked: false, instanceExists: true, fatal: "test-fatal", notification: "queue-full" })
+      })
+    );
+    await statePage.goto(url);
+    const fatal = statePage.locator(".status-banner.fatal").first();
+    const notice = statePage.locator(".status-banner.notice").first();
+    await fatal.waitFor({ timeout: 10_000 });
+    await notice.waitFor({ timeout: 10_000 });
+    const fatalText = await fatal.innerText();
+    const noticeText = await notice.innerText();
+    if (!fatalText.includes("无法恢复")) throw new Error(`fatal banner mismatch: ${fatalText}`);
+    if (!noticeText.includes("待发消息已满")) throw new Error(`notice banner mismatch: ${noticeText}`);
+    await statePage.close();
+  } finally {
+    await context.close();
+  }
+}
+
+async function checkModalKeyboard(page) {
+  stage = "modal-keyboard";
+  const trigger = page.locator('button[aria-label="添加联系人"]').first();
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.locator('.modal[role="dialog"][aria-modal="true"]');
+  await dialog.waitFor({ timeout: 5_000 });
+  const focusInside = await page.evaluate(() => !!document.activeElement?.closest?.(".modal"));
+  if (!focusInside) throw new Error("modal did not receive focus");
+  for (let index = 0; index < 20; index += 1) {
+    await page.keyboard.press("Tab");
+    const inside = await page.evaluate(() => !!document.activeElement?.closest?.(".modal"));
+    if (!inside) throw new Error("focus escaped the modal");
+  }
+  await page.keyboard.press("Escape");
+  await page.locator(".modal").waitFor({ state: "detached", timeout: 5_000 });
+  const restored = await page.evaluate(() => document.activeElement?.getAttribute("aria-label") === "添加联系人");
+  if (!restored) throw new Error("modal did not restore focus");
+}
+
+async function checkQueueFullFeedback(page) {
+  stage = "queue-full-feedback";
+  const pattern = "**/api/conversations/*/messages";
+  let intercepted = false;
+  const handler = (route) => {
+    if (!intercepted && route.request().method() === "POST") {
+      intercepted = true;
+      return route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "bad-request:queue-full" })
+      });
+    }
+    return route.continue();
+  };
+  await page.route(pattern, handler);
+  try {
+    const composer = page.locator(".composer-input");
+    await composer.fill("queue-full-probe");
+    await composer.press("Enter");
+    const toast = page.locator(".toast.error").first();
+    await toast.waitFor({ timeout: 10_000 });
+    const toastText = await toast.innerText();
+    if (!toastText.includes("待发消息已满")) throw new Error(`queue-full toast mismatch: ${toastText}`);
+    const value = await composer.inputValue();
+    if (value !== "queue-full-probe") throw new Error("queue-full cleared the draft");
+    await composer.fill("");
+  } finally {
+    await page.unroute(pattern, handler);
+  }
+}
+
+async function checkServiceDown(page, server) {
+  stage = "service-down";
+  await stopChild(server);
+  const banner = page.locator(".status-banner.error").first();
+  await banner.waitFor({ timeout: 15_000 });
+  const text = await banner.innerText();
+  if (!text.includes("连接已断开")) throw new Error(`service-down banner mismatch: ${text}`);
+}
+
 async function openChat(page) {
   stage = "open-chat";
   if (await page.locator(".composer-input").count() === 0) {
@@ -261,6 +358,7 @@ async function main() {
         await sleep(2_000);
       }
     }
+    await checkStatusBanners(browser, `http://127.0.0.1:${portA}/`);
     const contextA = await browser.newContext();
     const contextB = await browser.newContext();
     const a = await contextA.newPage();
@@ -270,6 +368,7 @@ async function main() {
     await Promise.all([a.goto(`http://127.0.0.1:${portA}/`), b.goto(`http://127.0.0.1:${portB}/`)]);
     await Promise.all([unlock(a), unlock(b)]);
     await Promise.all([waitRelayOnline(a), waitRelayOnline(b)]);
+    await checkModalKeyboard(a);
 
     const invitation = await issueInvitation(a, "@A", "@B");
     await acceptInvitation(b, invitation, "@A", "@B");
@@ -290,6 +389,7 @@ async function main() {
       if (enabled.some((value) => !value)) throw new Error("composer did not open after safety");
     });
 
+    await checkQueueFullFeedback(a);
     await sendBodies(a, "ui", 100);
     await Promise.all([
       waitCount(a, ".message.own.delivered", 100),
@@ -305,7 +405,16 @@ async function main() {
     assertSequence(await bubbleTexts(b, ".message.peer .bubble"), "ui", 100);
     assertSequence(await bubbleTexts(a, ".message.peer .bubble"), "ui-b", 100);
     assertSequence(await bubbleTexts(b, ".message.own .bubble"), "ui-b", 100);
-    result = { delivered: 100, received: 100, reciprocal: true };
+    await checkServiceDown(a, serverA);
+    result = {
+      delivered: 100,
+      received: 100,
+      reciprocal: true,
+      statusBanners: true,
+      modalKeyboard: true,
+      queueFullFeedback: true,
+      serviceDown: true
+    };
   } catch (error) {
     failure = { stage, error: error.name || "Error", detail: stage === "init" || stage === "launch-browser" ? String(error.message || "").slice(0, 240) : undefined };
     if (pageA) await pageA.screenshot({ path: "/tmp/yochat-ui-a.png" }).catch(() => {});

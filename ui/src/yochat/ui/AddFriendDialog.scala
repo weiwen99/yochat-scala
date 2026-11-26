@@ -4,16 +4,71 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
 
 import com.raquo.laminar.api.L.*
+import org.scalajs.dom
 
 object AddFriendDialog:
 
+  private val FocusableSelector = "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href]"
+
   def apply(api: ApiClient, ui: UiState): HtmlElement =
+    val previousFocus: Var[Option[dom.HTMLElement]] = Var(None)
+
+    def close(): Unit = ui.addFriend.set(false)
+
+    def focusFirst(container: dom.html.Element): Unit =
+      val target =
+        Option(container.querySelector(".dialog-body input"))
+          .orElse(Option(container.querySelector(".dialog-body textarea")))
+          .orElse(Option(container.querySelector(".dialog-body button")))
+          .orElse(Option(container.querySelector("button")))
+      target.foreach {
+        case element: dom.HTMLElement => element.focus()
+        case _                        => ()
+      }
+
+    def trapFocus(event: dom.KeyboardEvent): Unit =
+      if event.key == "Escape" then
+        event.preventDefault()
+        close()
+      else if event.key == "Tab" then
+        dom.document.querySelector(".modal") match
+          case modal: dom.html.Element =>
+            val nodes      = modal.querySelectorAll(FocusableSelector)
+            val focusables = (0 until nodes.length).flatMap { index =>
+              nodes.item(index) match
+                case element: dom.HTMLElement => Some(element)
+                case _                        => None
+            }.toVector
+            if focusables.nonEmpty then
+              val first  = focusables.head
+              val last   = focusables.last
+              val active = dom.document.activeElement
+              if event.shiftKey && active == first then
+                event.preventDefault()
+                last.focus()
+              else if !event.shiftKey && active == last then
+                event.preventDefault()
+                first.focus()
+          case _                       => ()
+
     div(
       cls := "scrim",
-      onClick --> (_ => ui.addFriend.set(false)),
+      onClick --> (_ => close()),
       div(
-        cls := "modal",
+        cls        := "modal",
+        role       := "dialog",
+        aria.label := "添加联系人",
+        tabIndex   := -1,
         onClick.stopPropagation --> (_ => ()),
+        onMountCallback { context =>
+          context.thisNode.ref.setAttribute("aria-modal", "true")
+          previousFocus.set(dom.document.activeElement match
+            case element: dom.HTMLElement => Some(element)
+            case _                        => None)
+          focusFirst(context.thisNode.ref)
+        },
+        onUnmountCallback(_ => previousFocus.now().foreach(_.focus())),
+        onKeyDown --> trapFocus,
         div(
           cls   := "modal-head",
           div(

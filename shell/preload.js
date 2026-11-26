@@ -7,6 +7,10 @@ contextBridge.exposeInMainWorld("yochat", {
   notify(title, body) {
     ipcRenderer.send("notify", { title, body });
   },
+  onServerExited(callback) {
+    if (typeof callback !== "function") return;
+    ipcRenderer.on("server-exited", () => callback());
+  },
   keychainAvailable() {
     return ipcRenderer.invoke("passphrase-available");
   },

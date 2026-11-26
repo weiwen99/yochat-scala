@@ -28,6 +28,7 @@ node --check shell/preload.js
 node --check shell/keychain-smoke.js
 node --check shell/perf-start.js
 node --check shell/ui-smoke.js
+node --check shell/contrast-smoke.js
 node --check shell/electron-smoke.js
 node --check shell/cross-host-smoke.js
 ./mill server.e2e
@@ -38,6 +39,7 @@ if [ ! -x shell/node_modules/.bin/electron ]; then
   exit 1
 fi
 node shell/perf-start.js
+node shell/contrast-smoke.js
 node shell/ui-smoke.js
 node shell/electron-smoke.js
 if [ "${YOCHAT_CROSS_HOST:-0}" = "1" ]; then

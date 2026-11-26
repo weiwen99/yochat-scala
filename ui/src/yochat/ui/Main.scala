@@ -12,6 +12,7 @@ import org.scalajs.dom
 
   val app = div(
     cls := "app-root",
+    StatusBanners(api),
     child <-- api.unlocked.signal.map { unlocked =>
       if unlocked then Shell(api, ui)
       else UnlockView(api)

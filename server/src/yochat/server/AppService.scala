@@ -259,7 +259,10 @@ final class AppService private (
       running.runtime
         .sendMessage(conversationId, body)
         .map(id => Right(id))
-        .handleErrorWith(error => IO.pure(Left(ServiceError.BadRequest(error.getClass.getSimpleName))))
+        .handleErrorWith {
+          case error: RuntimeError => IO.pure(Left(ServiceError.BadRequest(error.getMessage)))
+          case error               => IO.pure(Left(ServiceError.RuntimeFailed(error.getClass.getSimpleName)))
+        }
     }
 
   def startRekey(sessionId: ByteVector): IO[Either[ServiceError, Unit]] =

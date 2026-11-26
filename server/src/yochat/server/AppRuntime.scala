@@ -78,6 +78,8 @@ final class AppRuntime private (
     for
       _        <- ensureReady
       current  <- AppRuntime.readRef(stateRef)
+      _        <- if current.outgoing.size >= AppLimits.MaxOutgoing then IO.raiseError(new RuntimeError("queue-full"))
+                  else IO.unit
       _        <- if Application.canSend(current, conversationId) then IO.unit
                   else IO.raiseError(new RuntimeError("send-rejected"))
       id       <- messageIds.updateAndGet(AppRuntime.nextId)

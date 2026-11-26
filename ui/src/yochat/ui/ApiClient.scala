@@ -16,17 +16,24 @@ final class ApiClient:
   val unlocked: Var[Boolean]                          = Var(false)
   val loading: Var[Boolean]                           = Var(true)
   val error: Var[Option[String]]                      = Var(None)
+  val notice: Var[Option[String]]                     = Var(None)
   val messages: Var[Vector[ChatMessage]]              = Var(Vector.empty)
   val activeConversation: Var[Option[String]]         = Var(None)
   val selectedConversation: Var[Option[Conversation]] = Var(None)
   val selectedContact: Var[Option[Contact]]           = Var(None)
   val canSend: Var[Boolean]                           = Var(false)
 
-  private val socket: Var[Option[dom.WebSocket]] = Var(None)
+  private val socket: Var[Option[dom.WebSocket]]   = Var(None)
+  private val dismissedNotice: Var[Option[String]] = Var(None)
 
   def start(): Unit =
+    listenForServerExit()
     loadSession()
     connectSocket()
+
+  def dismissNotice(): Unit =
+    dismissedNotice.set(notice.now())
+    notice.set(None)
 
   def selectConversation(id: Option[String]): Unit =
     activeConversation.set(id)
@@ -38,6 +45,7 @@ final class ApiClient:
       case Success(value)   =>
         val next = Json.parseState(value)
         state.set(next)
+        updateNotice(next.notification)
         if unlocked.now() != next.unlocked then unlocked.set(next.unlocked)
         if loading.now() then loading.set(false)
         error.set(None)
@@ -73,6 +81,8 @@ final class ApiClient:
         selectedContact.set(None)
         canSend.set(false)
         error.set(None)
+        notice.set(None)
+        dismissedNotice.set(None)
         loadSession()
       case Failure(fail) => error.set(Some(message(fail)))
     }
@@ -200,6 +210,7 @@ final class ApiClient:
       }
     socketValue.onclose = _ =>
       socket.set(None)
+      error.set(Some("本机服务连接已断开，正在重连。"))
       scheduleReconnect()
     socketValue.onerror = _ => socketValue.close()
     socket.set(Some(socketValue))
@@ -208,6 +219,21 @@ final class ApiClient:
     js.timers.setTimeout(750) {
       if socket.now().isEmpty then connectSocket()
     }
+
+  private def updateNotice(value: Option[String]): Unit =
+    if value.isEmpty then
+      dismissedNotice.set(None)
+      notice.set(None)
+    else if value != dismissedNotice.now() then notice.set(value)
+
+  private def listenForServerExit(): Unit =
+    if js.typeOf(js.Dynamic.global.yochat) != "undefined" then
+      val bridge = js.Dynamic.global.yochat
+      if js.typeOf(bridge.onServerExited) == "function" then
+        bridge.applyDynamic("onServerExited")((() => {
+          loading.set(false)
+          error.set(Some("本机服务已退出。请重启 YoChat。"))
+        }): js.Function0[Unit])
 
   private def request(method: String, path: String, body: Option[String]): Future[Value] =
     val init = js.Dynamic.literal(method = method, headers = js.Dictionary("Content-Type" -> "application/json"))
@@ -234,7 +260,20 @@ final class ApiClient:
 
   private def message(failure: Throwable): String =
     failure match
-      case api: ApiException => api.code
-      case _                 => "本机服务暂时不可用"
+      case api: ApiException => codeMessage(api.code)
+      case _                 => "本机服务暂时不可用。请确认 YoChat 服务已经启动。"
+
+  private def codeMessage(code: String): String =
+    code match
+      case "queue-full" | "bad-request:queue-full"     => "待发消息已满，请等中继恢复后再发送。"
+      case "bad-request:send-rejected"                 => "现在不能发送：安全码或关系状态不允许。"
+      case "bad-request:event-queue-full"              => "本机处理队列已满，请稍后重试。"
+      case "locked"                                    => "本机已锁定，请重新解锁。"
+      case "unlock-failed"                             => "口令不正确，或这台设备的密钥无法打开。"
+      case "weak-passphrase"                           => "本机口令至少需要 8 个字符。"
+      case "session-unavailable"                       => "本机会话已不可用，请重新解锁。"
+      case value if value.startsWith("runtime-fatal:") => "本机服务遇到无法恢复的错误。请重启 YoChat。"
+      case value if value.startsWith("bad-request:")   => s"操作被拒绝：${value.stripPrefix("bad-request:")}"
+      case value                                       => s"操作失败（$value）"
 
 final private[ui] class ApiException(val code: String) extends RuntimeException(code)

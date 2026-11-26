@@ -6,9 +6,10 @@ colors:
   paper-2: "#e9e7df"
   sheet: "#faf9f5"
   ink: "#18191b"
-  muted: "#666a70"
+  muted: "#5f6368"
   line: "#d6d3c9"
   line-strong: "#b8b4a8"
+  control-line: "#888377"
   accent: "#b94732"
   green: "#2f6b55"
   rail: "#1b1c1e"
@@ -87,8 +88,9 @@ The palette is restrained paper/ink with a single warm signal, plus one cool gre
 - **Score Paper** (#f3f2ed): the app ground.
 - **Paper Shadow** (#e9e7df): the conversation rail and composer ground.
 - **Sheet** (#faf9f5): raised panels, peer messages, and the communication ledger.
-- **Graphite** (#666a70): secondary text, labels, timestamps, and metadata.
-- **Hairline** (#d6d3c9): all separators; **Hairline Strong** (#b8b4a8): field and route edges.
+- **Graphite** (#5f6368): secondary text, labels, timestamps, and metadata; ≥4.5:1 on paper and paper shadow.
+- **Hairline** (#d6d3c9): decorative separators. **Hairline Strong** (#b8b4a8): route edges and structural rules.
+- **Control Line** (#888377): input, composer, and secondary-button boundaries; ≥3:1 against paper and sheet.
 - **Rail Ink** (#1b1c1e): the left navigation rail.
 
 ### Named Rules
@@ -141,11 +143,11 @@ Corners are square-to-2px. The system uses 1px hairlines, 9px delivery marks, 7p
 ### Buttons
 - **Shape:** 2px radius; 34px minimum height; 12px semibold label.
 - **Primary:** ink ground, paper text; hover shifts to cinnabar.
-- **Secondary:** sheet ground, 1px hairline-strong border; hover raises the border to ink.
+- **Secondary:** sheet ground, 1px control-line border; hover raises the border to ink.
 - **Text:** no border or background; muted until hover, then cinnabar. Used for copy, edit, add, and channel rebuild.
 
 ### Fields
-- **Style:** 1px hairline-strong, 2px radius, paper ground inside sheet.
+- **Style:** 1px control-line, 2px radius, paper ground inside sheet.
 - **Focus:** cinnabar border plus 1px cinnabar ring; no glow.
 - **Error:** inline text in cinnabar on a 10% cinnabar tint, never a red bordered card.
 

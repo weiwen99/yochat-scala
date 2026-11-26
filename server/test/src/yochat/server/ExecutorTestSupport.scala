@@ -98,7 +98,11 @@ object ExecutorTestSupport:
 
   def wire(fixture: Fixture, seq: Long): ByteVector = wire(fixture, seq, fixture.peerDevice)
 
-  def wire(fixture: Fixture, seq: Long, devicePub: Ed25519Public): ByteVector =
+  def wire(fixture: Fixture, seq: Long, devicePub: Ed25519Public): ByteVector = frame(fixture, seq, devicePub).bytes
+
+  def frame(fixture: Fixture, seq: Long): WireFrame = frame(fixture, seq, fixture.peerDevice)
+
+  def frame(fixture: Fixture, seq: Long, devicePub: Ed25519Public): WireFrame =
     val header     = MessageHeader(
       version = MessageHeader.Version,
       kind = MessageKind.Data,
@@ -114,7 +118,7 @@ object ExecutorTestSupport:
     val ciphertext = ByteVector.view(Array.fill[Byte](32)(seq.toByte))
     val signature  =
       Signature.from(ByteVector.fill(Signature.Length)(seq.toByte)).fold(error => throw new IllegalStateException(error.toString), identity)
-    WireFrame.create(header, ciphertext, signature).fold(error => throw new IllegalStateException(error.toString), identity).bytes
+    WireFrame.create(header, ciphertext, signature).fold(error => throw new IllegalStateException(error.toString), identity)
 
   def body(text: String): ByteVector = ByteVector.view(text.getBytes(StandardCharsets.UTF_8))
 

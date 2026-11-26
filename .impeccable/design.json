@@ -8,6 +8,7 @@
       "paper-2": { "role": "neutral", "displayName": "Paper Shadow", "canonical": "#e9e7df" },
       "sheet": { "role": "neutral", "displayName": "Sheet", "canonical": "#faf9f5" },
       "ink": { "role": "primary", "displayName": "Ink", "canonical": "#18191b" },
+      "control-line": { "role": "neutral", "displayName": "Control Line", "canonical": "#888377" },
       "accent": { "role": "primary", "displayName": "Cinnabar", "canonical": "#b94732" },
       "green": { "role": "secondary", "displayName": "Verified Green", "canonical": "#2f6b55" },
       "rail": { "role": "neutral", "displayName": "Rail Ink", "canonical": "#1b1c1e" }
