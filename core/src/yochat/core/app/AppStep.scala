@@ -487,6 +487,27 @@ object Application:
             val normalized = note.flatMap(value => Text.normalize(value.trim, "contact_note").toOption).filter(_.nonEmpty)
             val updated    = contact.copy(note = normalized)
             (state.copy(contacts = state.contacts.updated(userPub, updated)), Vector(AppEffect.PersistContact(updated)))
+      case AppEvent.ContactDeleted(userPub, conversationId, keepHistory)                                =>
+        val sessions      = state.sessions.filter { case (_, session) => session.state.peerUserPub != userPub }
+        val conversations = if keepHistory then state.conversations else state.conversations - conversationId
+        val outgoing      =
+          if keepHistory then state.outgoing else state.outgoing.filterNot { case (_, message) => message.conversationId == conversationId }
+        val order         = if keepHistory then state.order else state.order - conversationId
+        val invitations   = state.invitations.filterNot { case (_, invitation) =>
+          invitation.ephemeralPrivate.isEmpty && invitation.invitation.fields.userPub == userPub
+        }
+        (
+          state.copy(
+            contacts = state.contacts - userPub,
+            sessions = sessions,
+            conversations = conversations,
+            outgoing = outgoing,
+            order = order,
+            invitations = invitations,
+            lateArrival = state.lateArrival.filterNot(_.conversationId == conversationId)
+          ),
+          Vector.empty
+        )
       case AppEvent.InvitationCreated(invitation, ephemeralPrivate, ratchetPrivate, expectedAccount, _) =>
         val id     = invitation.fields.ephPub.bytes
         val record = AppInvitation(

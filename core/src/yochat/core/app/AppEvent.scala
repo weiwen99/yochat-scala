@@ -47,6 +47,7 @@ enum AppEvent:
   case SafetyVerified(userPub: Ed25519Public, nowMs: Long)
   case SetContactAlias(userPub: Ed25519Public, alias: Option[String])
   case SetContactNote(userPub: Ed25519Public, note: Option[String])
+  case ContactDeleted(userPub: Ed25519Public, conversationId: ByteVector, keepHistory: Boolean)
 
   case InvitationCreated(
     invitation: Invitation,
