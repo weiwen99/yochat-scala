@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | 需求条数 | 5（4 处缺陷 + 1 条可复现运行路径） | 7（4 处代码修复 + 1 个 runner + 1 个新门禁 + 1 节规程） | 1.4× |
 | 表数 | 0 | 0 | — |
-| 组件数 | 0 新抽象 | 2 个新文件（`desktop-gate.sh` 284 行、`shell/passphrase-smoke.js` 186 行） | 需解释 |
+| 组件数 | 0 新抽象 | 2 个新文件（`desktop-gate.sh` 300 行、`shell/passphrase-smoke.js` 186 行） | 需解释 |
 | 配置项 | 2（超时、注入模式） | 3（另加 `YOCHAT_KEYCHAIN_UNAVAILABLE`） | 1.5× |
 | 工程师日 | 0.5（估算） | 1.5（估算，含三轮评审与复跑） | 3× |
 | 发布波次 | 1 | 1 | 1× |
@@ -79,7 +79,7 @@
 | S5/P1 | 标准/规格 | 降级分支无覆盖 | fix：`YOCHAT_KEYCHAIN_UNAVAILABLE` 钩子，`check.sh` 跑两条；补对照组验证红因 |
 | S6/P5 | 标准/规格 | 回执 commit 锚在 c415a07 | fix：回执记 head + dirty_files；HEAD 复跑 |
 | S7 | 标准 | 回执缺工具版本/日志/执行会话 | fix：补 node、electron、log、session、caller_manager |
-| S8/S9 | 标准 | 规模表与门禁计数不实 | fix：本表按实测重写（284/186 行，7 条 runner 调用） |
+| S8/S9 | 标准 | 规模表与门禁计数不实 | fix：本表按实测重写（300/186 行，7 条 runner 调用） |
 | S10/P4 | 标准/规格 | 声称熄屏验证但无回执 | fix：补 `display_before=off` 回执；HEAD 复跑时显示器被系统立即唤醒，如实记录 |
 | S11 | 标准 | `screencapture` 半句自设靶子 | fix：删除，改为截图路径入回执（并限定「窗口已建立时」） |
 | S12 | 标准 | `npm run` 绕过 runner；无看门狗 | fix：文档限定适用面；`passphrase-smoke` 加看门狗 |
@@ -101,9 +101,12 @@
 | R3-F1 | 标准/规格 | verification.md 把熄屏通过挂在 b696e37 | fix：改为锚 `8ad1d44`/`6a57864`，并写明 b696e37 重试被系统唤醒 |
 | R3-F2 | 标准/规格 | degraded 回执缺锚定字段且 command 未转义、不是合法 JSON | fix：复用同一模板（head/dirty_files/session/log/耗时），`json.load` 通过 |
 | R3-F3 | 规格 | 失败用例对照无锚定、无可复跑路径 | fix：在仓库内独立工作树复跑，回执 `head=c415a07`，步骤入 0014 |
+| R4-1 | 规格 | impl 的 Background 时长与锚不符 | fix：改为回执实测 2.7s 并标回执名 |
+| R4-2 | 规格 | impl 对红因的描述与回执相反（写成加密失败） | fix：改为「加密成功、返回 true、在 false 断言处变红」，并注明需 Aqua 会话 |
+| R4-3 | 规格 | 行数 284 在 HEAD 已过期 | fix：改为 300（`wc -l` 实测） |
 | R2 备注 3 | 标准 | 门禁自行 setsid 的后代不在组杀范围 | defer：入已知约束，当前无门禁如此 |
 
-## 干净态回执（HEAD `b696e37`，`dirty_files=0`）
+## 干净态回执（`b696e37`，`dirty_files=0`；`0bed255` 只改 degraded 分支与文档）
 
 | 门禁 | 结果 |
 | --- | --- |

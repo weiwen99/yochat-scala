@@ -26,7 +26,7 @@
 | `shell/main.js` | 钥匙串 IPC 异步化与降级 |
 | `shell/keychain-smoke.js` | 有界结束 |
 | `shell/passphrase-smoke.js` | 新增，186 行 |
-| `desktop-gate.sh` | 新增，284 行 |
+| `desktop-gate.sh` | 新增，300 行 |
 | `check.sh` | 门禁入口与清单 |
 | `shell/package.json` | `passphrase:smoke` 脚本 |
 | `docs/agents/verification.md` | 运行规程 |
@@ -47,7 +47,7 @@
 | `keychain-smoke` 经 runner | PASS，2.0s，session=Aqua |
 | `passphrase-smoke` Aqua | PASS，6.6s（remember 写文件、save/load、重启预填） |
 | `passphrase-smoke` 不可用钩子 | PASS，4.7s（false/null/不落盘） |
-| `passphrase-smoke` Background（不经 runner） | PASS，session=Background，3.2s |
+| `passphrase-smoke` Background（不经 runner） | PASS，session=Background，2.7s（`passphrase-1795764223531`） |
 | `ui-smoke` | PASS，双向 100 条，25.7s |
 | `electron-smoke` | PASS，双向 100 条 + B/A 重启，25.0s；另有一份熄屏回执（`6a57864`） |
 | `perf-start` | PASS，p50 1269ms / p95 1317ms / idle 741.7MB |
@@ -69,38 +69,3 @@
 - Background 分支只能人工验证，`check.sh` 因恒注入 Aqua 而永不进入它。
 - 回执只记录透传变量的名字，不记录值（值可能含路径）；取值保真由上面那次
   「空格与冒号」实测证明。
-
-## 失败用例对照（可复跑）
-
-目的：证明 `passphrase-smoke` 的不可用分支红在 Promise 误用本身，而不是红在「缺钩子」。
-
-```sh
-cd ~/projects/yochat/worktrees/desktop-gate
-git worktree add --detach ../oldimpl c415a07      # 旧实现，独立工作树
-cd ../oldimpl
-cp ../desktop-gate/shell/passphrase-smoke.js shell/
-ln -sfn ../desktop-gate/shell/node_modules shell/node_modules
-cp ../desktop-gate/desktop-gate.sh .
-(cd shell && npm ci)
-# 只加钩子，保留旧的同步写法：
-#   function keychainAvailable() {
-#     if (process.env.YOCHAT_KEYCHAIN_UNAVAILABLE === "1") return Promise.resolve(false);
-#     return typeof safeStorage.isAsyncEncryptionAvailable === "function" ? ... ;
-#   }
-YOCHAT_KEYCHAIN_UNAVAILABLE=1 \
-  YOCHAT_SERVER_JAR=../desktop-gate/out/server/assembly.dest/out.jar \
-  ./desktop-gate.sh node shell/passphrase-smoke.js
-```
-
-结果（回执归档在 `tmp/checks/old-impl-red/`）：
-
-- `passphrase-1795765018473.json`：`commit=c415a07`、`dirtyFiles=3`、`verdict=FAIL`、
-  `failure.stage=unavailable-contract`、
-  `failure.error="savePassphrase resolved true, expected false"`。
-- `desktop-gate-1795765017.json`：`head=c415a07`、`dirty_files=3`、`verdict=FAIL`。
-
-红因：旧 `main.js` 的 `if (!keychainAvailable())` 对 Promise 恒为假，于是走进
-`encryptString` 并失败。钩子已在位，因此红点不是钩子缺失。
-
-绿侧：`tmp/checks/passphrase-1795764275074.json`（`head=b696e37`、`dirtyFiles=0`）在同一
-断言上 `saved=false` 通过。
