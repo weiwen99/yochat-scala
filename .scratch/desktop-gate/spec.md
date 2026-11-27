@@ -112,6 +112,22 @@ per `docs/agents/git-workflow.md` (`s-` 前缀用于小型非计划修复). 本 
 - 中断语义：SIGTERM 到 runner 时判 `INCOMPLETE`（exit 143）并写回执；超时与管道输出两条
   路径都不留孤儿，`\| tail` 能正常收尾。
 
+## 干净态回执（HEAD 6a57864，显示器熄灭，session=Aqua）
+
+| 门禁 | 结果 |
+| --- | --- |
+| `keychain-smoke` | PASS，1.9s |
+| `passphrase-smoke`（Aqua） | PASS，7.0s |
+| `passphrase-smoke`（`YOCHAT_KEYCHAIN_UNAVAILABLE=1`） | PASS，4.7s |
+| `ui-smoke` | PASS，双向 100 条，25.8s |
+| `electron-smoke` | PASS，双向 100 条 + B/A 重启，24.9s |
+| `contrast-smoke` | PASS，16 项，1.8s |
+| `perf-start` | PASS，p50 1196ms / p95 1252ms / idle 756.6MB，311s |
+
+未跑：`check.sh` 的 Scala、模型与 spike 段。本次 diff 只改 `shell/`、`check.sh`
+的桌面段落与文档，不改 Scala、SQLite、协议或 Quint 模型；`c415a07` 的全量回执对
+这些段落仍然有效（该提交的正文记录了 closure full-gate receipt）。
+
 ## 验收
 
 `./check.sh` 全绿；`git worktree list` 只剩主检出；`git branch --list 'fix/*'` 为空；
