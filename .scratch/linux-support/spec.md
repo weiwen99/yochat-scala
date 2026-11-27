@@ -141,13 +141,16 @@ Electron 在 Linux 上的 `safeStorage` 走 libsecret/kwallet（或 `--password-
 
 ## 实测结果（2026-11-27）
 
-### w7（NixOS 26.11 x86_64，commit `e717a93`）
+### w7（NixOS 26.11 x86_64）
+
+桌面门禁锚 `97fbdef`、`dirty_files=0`、`electron_source=nix`；`server.e2e` 锚
+`e717a93`（与本提交只差 `shell/` 与文档，Scala 代码相同）；`perf-start` 是一次性观测。
 
 | 门 | 结果 |
 | --- | --- |
 | `keychain-smoke` | PASS，`backend=basic_text` |
 | `passphrase-smoke` | PASS，完整流程（remember 写盘、save、load、重启预填） |
-| `ui-smoke` | PASS，双向 100 条，37.6s（runner 回执 `duration_ms=37632`） |
+| `ui-smoke` | PASS，双向 100 条，38.3s（`desktop-gate-1795773840.json`） |
 | `electron-smoke` | PASS，双向 100 条 + B/A 重启，226s（m1 为 25s） |
 | `server.e2e` 行为契约 | #1–#7、#9–#15、#17 PASS；#8（1k <5s，即 `PERF#1K`）FAIL 25385ms |
 | `server.e2e` `PERF#1K` | FAIL，25385ms 对门限 5000ms（超阈 5.1 倍；即契约 #8） |
