@@ -87,9 +87,11 @@
 | `./mill server.e2e` | 18/18 PASS（S1 既有契约 + S3；含 1k/10k/PERF#RATE） |
 | `./mill core|store|server|ui.checkFormat`、`.fix --check` | 全绿 |
 | `./mill ui.fastLinkJS` | SUCCESS |
+| `./check.sh` | **EXIT=0**（2026-11-27，m1）；S1 E2E 18/18、S3E2E、S2E2E、S2PERF、S2BPERF、CONTRAST、COLD_START p50=1190ms/p95=1255ms、UI_SMOKE、ELECTRON_UI、Quint、spike crypto/storage/doobie 全 PASS |
 
-完整 `./check.sh`（含 desktop/Electron/spike/models）由本提交后的后台任务执行，回执在
-`tmp/checks/`；本文件不把未完成的回执写成通过。
+回执在 `tmp/checks/`（`desktop-gate-*.json`、`ui-*.json`、`electron-ui-*.json`、
+`desktop-*.json`、`s1-e2e.log`）。工作树里 `shell/node_modules` 需要指向主检出的 node_modules
+（新工作树不带 npm 依赖）；这是环境前置，不是代码通过条件。
 
 ## 实现评审记录
 
