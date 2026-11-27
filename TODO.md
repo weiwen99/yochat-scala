@@ -14,7 +14,8 @@ Status 与 `AGENTS.md` §10。本文件不与它们重复，也不记录已完�
 Linux 上已有通过记录：`shell/cross-host-smoke.js` 以 w7 作 B 端跑 server + 真实 Chrome，覆盖
 100+100 条 UI 消息、relay 断连重连、B/A 重启；回执见
 `docs/plans/2026/11/0010-s1-ui-automation/impl.md`（`CROSS_HOST_RATE` 1k/5k 样本，`ca33ec3`，m1/w7）。
-未验的是 Electron 壳、`desktop-gate.sh` runner，以及全部两进程交付门。
+未验的是仓库钉的 Electron 45.4.1 在 Linux 上能否启动（这次是靠 nixpkgs 的 45.3.4 绕过）、
+`desktop-gate.sh` runner 的 Linux 行为，以及全部两进程交付门。
 
 #### 2026-11-27 在 w7 的一次性观测（无回执，不能当门禁证据）
 
@@ -35,8 +36,9 @@ w7：NixOS 26.11 x86_64，commit `99600e5`。
   自限速），不能靠 `command -v bees`（不在 PATH）或 `systemctl is-active/enabled`（inactive /
   not-found，因为它是从 store 绝对路径手工拉起的）判断它是否在跑。时间类数值因此不可重复。
 - `store.test` 失败未做隔离重跑，按仓库口径只是**未分类的红**，不是已排除代码缺陷。
-- 慢的幅度按现有记录是：store 3.5–5.7 倍（8816ms 对 m1 全库 `total_ms` 1546–2553ms，端点分别见
-  0001/0004/0006 的 impl.md），electron 约 9 倍（224s 对 25.0s）。
+- 慢的幅度按现有记录是：store 3.5–5.7 倍（8816ms 对 m1 全库 `total_ms` 1546–2553ms；端点分别见
+  `0001-yochat-rewrite/impl.md:135`（1546）与 `0004-first-message-binding/impl.md:68`（2553）），
+  electron 约 9 倍（224s 对 25.0s）。
 
 #### 未跑、且决定 Linux 能否交付的门
 
