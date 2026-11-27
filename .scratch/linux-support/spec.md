@@ -66,6 +66,9 @@ nixpkgs Electron 45.3.4 后通过但 224s。
 - Linux 只看 X（Xwayland）；纯 Wayland 下的 Electron 启动不在本计划验证。
 - `--no-sandbox` 只在 Linux 且使用非 npm 二进制时加，属测试夹具的让步，不是产品默认。
 - w7 的负载不可控，时间类数值只记为观测。
+- `docs/agents/verification.md` 的行为契约清单仍写「15 E2E scenarios」且不含 `E2E#17`
+  （0008 引入），与实现的 16 条不一致。这是规范定义与实现的既存差异，涉及 AGENTS.md §6
+  的「15 个场景固定不变」，本次未动，留待单独裁决。
 
 ## 设计
 
