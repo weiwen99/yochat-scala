@@ -11,6 +11,17 @@ object AddFriendDialog:
 
   private val FocusableSelector = "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href]"
 
+  /** The disclosure text is versioned; bumping this value shows it open again on the next add-contact. */
+  val DisclosureVersion: Int = 1
+
+  def readDisclosureVersion(): Int =
+    try Option(dom.window.localStorage.getItem("yochat.disclosureVersion")).flatMap(_.toIntOption).getOrElse(0)
+    catch case _: Exception => 0
+
+  def writeDisclosureVersion(value: Int): Unit =
+    try dom.window.localStorage.setItem("yochat.disclosureVersion", value.toString)
+    catch case _: Exception => ()
+
   def apply(api: ApiClient, ui: UiState): HtmlElement =
     val previousFocus: Var[Option[dom.HTMLElement]]                    = Var(None)
     val keyHandler: Var[Option[js.Function1[dom.KeyboardEvent, Unit]]] = Var(None)
@@ -91,6 +102,7 @@ object AddFriendDialog:
           ),
           button(cls := "icon-button", aria.label := "关闭", title := "关闭", onClick --> (_ => ui.addFriend.set(false)), Icons("close"))
         ),
+        disclosure(api),
         div(
           cls   := "tabs",
           tabButton("我发出邀请", InviteTab.Issued, ui),
@@ -103,6 +115,64 @@ object AddFriendDialog:
         div(cls := "modal-foot", span("没有账号服务器，但有一个中继。"), span("安全码仍需当面核对"))
       )
     )
+
+  /** Pre-use disclosure. Shown in the add-contact flow (both tabs) so it appears before the first invitation and before the first reply. The
+    * read version is a local preference only.
+    */
+  private def disclosure(api: ApiClient): HtmlElement =
+    val version = Var(AddFriendDialog.readDisclosureVersion())
+    val open    = Var(version.now() < AddFriendDialog.DisclosureVersion)
+    div(
+      cls := "disclosure",
+      onMountCallback(context => context.thisNode.ref.setAttribute("data-disclosure-version", AddFriendDialog.DisclosureVersion.toString)),
+      div(
+        cls := "disclosure-head",
+        span(cls     := "disclosure-title", "使用前须知"),
+        span(
+          cls        := "disclosure-hint",
+          if version.now() < AddFriendDialog.DisclosureVersion then "首次使用请先阅读" else "隐私与可见性"
+        ),
+        button(
+          cls        := "text-button disclosure-toggle",
+          aria.label := "展开或收起使用前须知",
+          onClick --> (_ => open.update(!_)),
+          child.text <-- open.signal.map(value => if value then "收起" else "展开")
+        )
+      ),
+      child.maybe <-- open.signal.map { expanded =>
+        if !expanded then None
+        else
+          Some(
+            div(
+              cls := "disclosure-body",
+              ul(
+                cls := "disclosure-list",
+                li("中继能看到：连接端点、时间、帧数与大小，以及密文；看不到正文，也看不到你的用户公钥。"),
+                li("对方能看到你的公网地址（直连时）与全部设备公钥、设备别名。"),
+                li(s"本机中转地址：${relayAddress(api)}；换一台中继会改变谁能看到这些元数据。"),
+                li("拉黑可以被对方推断：消息会一直发不出去。我们不提供在线状态，也没有隐藏开关；单靠用户公钥不能查询在线状态。"),
+                li("没有公开目录或账号服务器；邀请只通过你自己选择的渠道发出，不要贴到公开场合。")
+              ),
+              div(
+                cls := "dialog-actions",
+                button(
+                  cls := "secondary-button",
+                  onClick --> (_ => {
+                    AddFriendDialog.writeDisclosureVersion(AddFriendDialog.DisclosureVersion)
+                    version.set(AddFriendDialog.DisclosureVersion)
+                    open.set(false)
+                  }),
+                  "我已了解"
+                )
+              )
+            )
+          )
+      }
+    )
+
+  private def relayAddress(api: ApiClient): String =
+    val relay = api.state.now().relay
+    s"${relay.host}:${relay.port}"
 
   private def tabButton(label: String, tab: InviteTab, ui: UiState): HtmlElement =
     button(

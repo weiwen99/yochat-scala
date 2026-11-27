@@ -2,7 +2,7 @@
 
 ## 状态
 
-- **S3-A 已实现并完成两轮实现评审**；S3-B 未开工，S3-C 仍阻塞于自己的 ADR。
+- **S3-A 已实现并完成两轮实现评审**；S3-B 已实现（通知、连接可见、键盘旅程、使用前告知）；S3-C 进行中。
 - 存储扩展按 `docs/adr/0012-s3-storage-blocked-peers-and-contact-tombstone.md`；设计记录按
   `design.md` 的「裁决」冻结（2026-11-27，owner 委派）。
 - 全量 `./check.sh` 回执见 `tmp/checks/`（本文件只记已实际跑过的命令与结果）。
@@ -106,6 +106,20 @@
 - **定向复核**：重读收尾 diff；`RelationshipStoreSpec` 的 EXPLAIN 断言覆盖
   `conversations`/`sessions`/`meta` 三个查询；S3E2E 重跑通过。未做第三次全量评审。
 
+## S3-B 交付（2026-11-27）
+
+| 需求 | 落地 |
+| --- | --- |
+| `G3JQAH0SXEXVDATA` 通知内容边界 | 渲染端决定是否通知（页面隐藏、逐会话静音、正文开关），载荷只有 `conversationId` 与可选正文；主进程默认固定文案「有一条新消息」，点击把会话 id 回送渲染端并切回该会话。正文默认关；逐会话静音存本地偏好。 |
+| `377PNHQWJ8PGCN80` 连接方式可见 | 聊天页头部 `data-route=relay`，文本「经中继 · 在线/离线」，路由条「本机 → 中继 → 对方」。 |
+| `3AEMNVEGME49ZT2R` 可达性基线 | 键盘旅程：Tab 到联系人 → Enter → Tab 到「打开聊天」→ Enter 回到会话 → 键盘发送；弹窗焦点陷阱继续由 ui-smoke 覆盖；外观跟随系统由 `color-scheme` 与两套主题对比度门覆盖。 |
+| `Q0MQBNAVS1TB1PBW` / `386RMXBPWJYEXT9P` 使用前告知 | 添加联系人对话框内置「使用前须知」：中继可见项、对方可见公网地址与设备公钥、本机中转地址、拉黑可推断且无在线状态开关、无公开目录；版本化，点「我已了解」后收起。 |
+| `REQ_20261103_NS77FQDYNCMNF71P` | 沿用 S3-A：`lateArrival` 按消息 id 触发一次可见横幅。 |
+
+新增门禁断言：`ui-smoke` 的 disclosure 与 keyboard-journey 阶段；`electron-smoke` 的 notifications 阶段
+（默认无正文、正文开关、逐会话静音、点击切回会话）。负例实测：删掉主进程 click 转发后，
+electron-smoke 在 notifications 阶段超时失败。
+
 ## 已知缺口
 
 1. **Fanout / FanoutAck / device-list 的双设备负断言**只有 store/unit 覆盖：A2 的 Fanout
@@ -116,6 +130,6 @@
    S3-B 的通知/可达性也不在 A2 上。
 3. **窗口外消息取不回**：裁决 2a，批准重发队列（`XBRY5Q81Z4ZPP6ER`）延后。
 4. **恢复短语与消息删除**仍延后；`contacts` 墓碑不是消息墓碑。
-5. **S3-B / S3-C 未开工**：通知、连接方式可见、键盘可达、使用前告知、搜索/十万条。
+5. **S3-C**：搜索与大量历史仍在实现中，见下节。
 6. 同一数据目录不支持同时打开两个 `Store`；第二个实例的写入对第一个实例的拉黑缓存不可见
    （ADR-0012 已知约束 5）。

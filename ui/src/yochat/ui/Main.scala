@@ -35,4 +35,8 @@ import org.scalajs.dom
   )
 
   render(dom.document.getElementById("app"), app)
-  api.start()
+  api.start { conversationId =>
+    api.selectConversation(Some(conversationId))
+    ui.view.set(View.Chat)
+    ui.mobileList.set(false)
+  }

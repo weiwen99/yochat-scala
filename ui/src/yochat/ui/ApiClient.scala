@@ -24,17 +24,34 @@ final class ApiClient:
   val canSend: Var[Boolean]                           = Var(false)
   val devices: Var[Vector[Device]]                    = Var(Vector.empty)
   val lateNotice: Var[Option[LateArrival]]            = Var(None)
+  val notifyBody: Var[Boolean]                        = Var(ApiClient.readFlag("yochat.notifyBody"))
 
-  private val socket: Var[Option[dom.WebSocket]]      = Var(None)
-  private val dismissedNotice: Var[Option[String]]    = Var(None)
-  private val dismissedLateArrival: Var[Option[Long]] = Var(None)
-  private val serverExited: Var[Boolean]              = Var(false)
-  private val sessionRequestId: Var[Long]             = Var(0L)
+  private val socket: Var[Option[dom.WebSocket]]               = Var(None)
+  private val dismissedNotice: Var[Option[String]]             = Var(None)
+  private val dismissedLateArrival: Var[Option[Long]]          = Var(None)
+  private val serverExited: Var[Boolean]                       = Var(false)
+  private val sessionRequestId: Var[Long]                      = Var(0L)
+  private val mutedConversations: Var[Set[String]]             = Var(ApiClient.readMuted())
+  private val notificationHandler: Var[Option[String => Unit]] = Var(None)
 
-  def start(): Unit =
+  def start(onNotification: String => Unit = _ => ()): Unit =
+    notificationHandler.set(Some(onNotification))
     listenForServerExit()
+    listenForNotificationClick()
     loadSession()
     connectSocket()
+
+  def mutedSignal(conversationId: String): Signal[Boolean] =
+    mutedConversations.signal.map(_.contains(conversationId))
+
+  def setMuted(conversationId: String, muted: Boolean): Unit =
+    val next = if muted then mutedConversations.now() + conversationId else mutedConversations.now() - conversationId
+    mutedConversations.set(next)
+    dom.window.localStorage.setItem("yochat.muted", next.toVector.sorted.mkString(","))
+
+  def setNotifyBody(value: Boolean): Unit =
+    notifyBody.set(value)
+    dom.window.localStorage.setItem("yochat.notifyBody", if value then "1" else "0")
 
   def dismissNotice(): Unit =
     dismissedNotice.set(notice.now())
@@ -253,8 +270,9 @@ final class ApiClient:
         val old  = messages.now()
         messages.set(next)
         if next.exists(message => message.author == "peer" && !old.exists(_.id == message.id)) then
-          val title = state.now().contacts.find(_.conversationId.contains(conversationId)).map(_.displayName).getOrElse("YoChat")
-          notifyNative(title)
+          val title  = state.now().contacts.find(_.conversationId.contains(conversationId)).map(_.displayName).getOrElse("YoChat")
+          val latest = next.filter(_.author == "peer").lastOption.map(_.body).getOrElse("")
+          notifyNative(conversationId, title, latest)
       case Failure(fail)  =>
         if !serverExited.now() then error.set(Some(message(fail)))
     }
@@ -330,9 +348,21 @@ final class ApiClient:
   private def post(path: String, body: Value): Future[Value] =
     request("POST", path, Some(ujson.write(body)))
 
-  private def notifyNative(title: String): Unit =
-    if dom.document.hidden && js.typeOf(js.Dynamic.global.yochat) != "undefined" then
-      js.Dynamic.global.yochat.applyDynamic("notify")(title, "有一条新消息")
+  private def notifyNative(conversationId: String, title: String, body: String): Unit =
+    if dom.document.hidden && !mutedConversations.now().contains(conversationId) &&
+      js.typeOf(js.Dynamic.global.yochat) != "undefined"
+    then
+      val payload = js.Dynamic.literal(conversationId = conversationId, title = title)
+      if notifyBody.now() && body.nonEmpty then payload.updateDynamic("body")(body)
+      js.Dynamic.global.yochat.applyDynamic("notify")(payload)
+
+  private def listenForNotificationClick(): Unit =
+    if js.typeOf(js.Dynamic.global.yochat) != "undefined" then
+      val bridge = js.Dynamic.global.yochat
+      if js.typeOf(bridge.onNotificationClick) == "function" then
+        val handler: js.Function1[String, Unit] = conversationId =>
+          if conversationId.nonEmpty then notificationHandler.now().foreach(callback => callback(conversationId))
+        bridge.applyDynamic("onNotificationClick")(handler)
 
   private def message(failure: Throwable): String =
     failure match
@@ -357,5 +387,18 @@ final class ApiClient:
       case value if value.startsWith("send-refused:")                                         => s"发送被拒绝：${value.stripPrefix("send-refused:")}"
       case value if value.startsWith("bad-request:")                                          => s"操作被拒绝：${value.stripPrefix("bad-request:")}"
       case value                                                                              => s"操作失败（$value）"
+
+object ApiClient:
+
+  def readFlag(key: String): Boolean =
+    try dom.window.localStorage.getItem(key) == "1"
+    catch case _: Exception => false
+
+  def readMuted(): Set[String] =
+    try
+      Option(dom.window.localStorage.getItem("yochat.muted"))
+        .map(_.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet)
+        .getOrElse(Set.empty)
+    catch case _: Exception => Set.empty
 
 final private[ui] class ApiException(val code: String) extends RuntimeException(code)

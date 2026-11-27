@@ -217,16 +217,49 @@ ipcMain.handle("passphrase-clear", () => {
   return true;
 });
 
-ipcMain.on("notify", (_event, payload) => {
-  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused()) return;
+// A notice carries an opaque conversation id and, only when the renderer's body toggle is on, a
+// short snippet. The shell adds no message text; the default body is a fixed phrase.
+function notifyDescriptor(payload) {
+  const conversationId = String((payload && payload.conversationId) || "");
+  if (!conversationId) return null;
   const title = String(payload && payload.title ? payload.title : "YoChat");
   const body = String(payload && payload.body ? payload.body : "有一条新消息");
-  const notification = new Notification({ title, body });
+  return { conversationId, title, body };
+}
+
+// Delivery probe: a gate can set YOCHAT_NOTIFY_LOG to record descriptors instead of depending on
+// the OS notification centre. Packaged apps ignore the variable, like the keychain gate hook.
+function notifyProbe() {
+  if (app.isPackaged) return null;
+  return process.env.YOCHAT_NOTIFY_LOG || null;
+}
+
+function recordNotification(descriptor) {
+  const target = notifyProbe();
+  if (!target) return false;
+  try {
+    fs.appendFileSync(target, JSON.stringify(descriptor) + "\n");
+  } catch (_) {
+    // The probe must never break delivery.
+  }
+  if (process.env.YOCHAT_NOTIFY_CLICK === "1" && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("notification-click", { conversationId: descriptor.conversationId });
+  }
+  return true;
+}
+
+ipcMain.on("notify", (_event, payload) => {
+  const descriptor = notifyDescriptor(payload);
+  if (!descriptor) return;
+  if (recordNotification(descriptor)) return;
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused()) return;
+  const notification = new Notification({ title: descriptor.title, body: descriptor.body });
   notification.on("click", () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.focus();
+      mainWindow.webContents.send("notification-click", { conversationId: descriptor.conversationId });
     }
   });
   notification.show();

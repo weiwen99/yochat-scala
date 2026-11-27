@@ -62,9 +62,10 @@ object ChatPanel:
           ),
           div(
             cls        := "head-route",
+            onMountCallback(context => context.thisNode.ref.setAttribute("data-route", "relay")),
             span(cls <-- state.map(value => if value.relay.online then "route-dot online" else "route-dot offline")),
-            span(child.text <-- state.map(value => if value.relay.online then "中继在线" else "中继离线")),
-            span(cls := "route-arrow", "本机 → 对方")
+            span(child.text <-- state.map(value => if value.relay.online then "经中继 · 在线" else "经中继 · 离线")),
+            span(cls := "route-arrow", "本机 → 中继 → 对方")
           )
         ),
         child <-- state.map(value => routeBar(value.relay.online)),
@@ -326,6 +327,31 @@ object ChatPanel:
                 )
               )
           }
+        ),
+        sectionTag(
+          cls := "ledger-section",
+          h3("通知"),
+          label(
+            cls := "checkbox-row",
+            input(
+              cls := "notify-body-toggle",
+              typ := "checkbox",
+              checked <-- api.notifyBody.signal,
+              onChange.mapToChecked --> (value => api.setNotifyBody(value))
+            ),
+            span("通知里显示消息正文（默认关闭；关闭时只显示联系人名）")
+          ),
+          label(
+            cls := "checkbox-row",
+            input(
+              cls := "notify-mute-toggle",
+              typ := "checkbox",
+              checked <-- api.mutedSignal(conversationId),
+              onChange.mapToChecked --> (value => api.setMuted(conversationId, value))
+            ),
+            span("这个会话不提醒")
+          ),
+          p(cls := "ledger-note", "通知由本机系统弹出，不经过中继；中继看不到通知内容。")
         ),
         sectionTag(
           cls := "ledger-section",

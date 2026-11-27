@@ -52,7 +52,11 @@ function launch(port, userData) {
       YOCHAT_PORT: String(port),
       YOCHAT_RELAY: process.env.YOCHAT_RELAY || relayEndpoint,
       YOCHAT_SERVER_JAR: serverJar,
-      YOCHAT_JAVA: java
+      YOCHAT_JAVA: java,
+      // Delivery probe: the shell records notice descriptors instead of relying on the OS
+      // notification centre, and forwards the click as if the user pressed the banner.
+      YOCHAT_NOTIFY_LOG: path.join(userData, "notify.log"),
+      YOCHAT_NOTIFY_CLICK: "1"
     }
   });
 }
@@ -157,7 +161,75 @@ async function main() {
       waitCount(pageB, ".message.peer", 101)
     ]);
 
-    result = { delivered: 100, received: 100, reciprocal: true, restarted: ["B", "A"] };
+    stage = "notifications";
+    const notifyLog = path.join(dirA, "notify.log");
+    const readNotices = () => {
+      if (!fs.existsSync(notifyLog)) return [];
+      return fs
+        .readFileSync(notifyLog, "utf8")
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line));
+    };
+    const awaitNotices = async (expected) => {
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        const notices = readNotices();
+        if (notices.length >= expected) return notices;
+        await sleep(100);
+      }
+      throw new Error(`notification count did not reach ${expected}: ${readNotices().length}`);
+    };
+    const conversationA = await pageA.evaluate(async () => {
+      const state = await (await fetch("/api/state")).json();
+      return state.conversations[0].id;
+    });
+    const sendNotice = async (body) => {
+      const composer = pageB.locator(".composer-input");
+      await composer.fill(body);
+      await composer.press("Enter");
+      await pageB.waitForFunction(() => document.querySelector(".composer-input")?.value === "");
+    };
+    // The renderer only notifies while the document is hidden; make that state explicit.
+    await pageA.evaluate(() =>
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true })
+    );
+    await pageA.locator('button[aria-label="联系人"]').first().click();
+    await sendNotice("notify-default");
+    const firstNotices = await awaitNotices(1);
+    const firstNotice = firstNotices[0];
+    if (firstNotice.conversationId !== conversationA) {
+      throw new Error(`notification carried the wrong conversation: ${firstNotice.conversationId} != ${conversationA}`);
+    }
+    if (firstNotice.body !== "有一条新消息") {
+      throw new Error(`default notification leaked the body: ${firstNotice.body}`);
+    }
+    await pageA.locator(".composer-input").waitFor({ timeout: 15_000 });
+    await pageA.locator(".notify-body-toggle").check();
+    await pageA.locator('button[aria-label="联系人"]').first().click();
+    await sendNotice("notify-with-body");
+    const secondNotices = await awaitNotices(2);
+    if (!secondNotices[1].body.includes("notify-with-body")) {
+      throw new Error(`body toggle did not include the text: ${secondNotices[1].body}`);
+    }
+    await pageA.locator(".composer-input").waitFor({ timeout: 15_000 });
+    await pageA.locator(".notify-mute-toggle").check();
+    await pageA.locator('button[aria-label="联系人"]').first().click();
+    await sendNotice("notify-muted");
+    await sleep(2_000);
+    if (readNotices().length !== 2) {
+      throw new Error(`muted conversation produced a notification: ${readNotices().length}`);
+    }
+    await pageA.locator(".conversation-row").first().click();
+    await pageA.locator(".notify-mute-toggle").uncheck();
+
+    result = {
+      delivered: 100,
+      received: 100,
+      reciprocal: true,
+      restarted: ["B", "A"],
+      notifications: { conversationScoped: true, bodyDefaultOff: true, bodyToggle: true, mute: true, click: true }
+    };
   } catch (error) {
     failure = { stage, error: error.name || "Error", detail: String(error.message || "").slice(0, 240) };
     if (pageA) await pageA.screenshot({ path: "/tmp/yochat-electron-a.png" }).catch(() => {});

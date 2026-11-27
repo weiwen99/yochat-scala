@@ -307,6 +307,54 @@ async function checkModalKeyboard(page) {
   if (!restored) throw new Error("modal did not restore focus");
 }
 
+async function checkDisclosure(page) {
+  stage = "disclosure";
+  await page.locator('button[aria-label="添加联系人"]').first().click();
+  await page.locator(".modal").waitFor({ timeout: 5_000 });
+  const items = page.locator(".disclosure-list li");
+  if ((await items.count()) < 5) throw new Error("disclosure list is short");
+  const text = await page.locator(".disclosure-body").innerText();
+  for (const needle of ["中继能看到", "公网地址", "拉黑", "在线状态", "中转地址"]) {
+    if (!text.includes(needle)) throw new Error(`disclosure missing: ${needle}`);
+  }
+  await page.getByRole("button", { name: "我已了解" }).click();
+  await page.locator(".disclosure-body").waitFor({ state: "detached", timeout: 5_000 });
+  await page.keyboard.press("Escape");
+  await page.locator(".modal").waitFor({ state: "detached", timeout: 5_000 });
+}
+
+async function checkKeyboardJourney(page) {
+  stage = "keyboard-journey";
+  const contacts = page.locator('button[aria-label="联系人"]').first();
+  await contacts.focus();
+  await page.keyboard.press("Enter");
+  await page.locator(".contacts-panel").waitFor({ timeout: 10_000 });
+  let reached = false;
+  const seen = [];
+  for (let index = 0; index < 40; index += 1) {
+    await page.keyboard.press("Tab");
+    const label = await page.evaluate(() => (document.activeElement?.innerText || "").trim().slice(0, 24));
+    seen.push(label);
+    if (label.includes("打开聊天")) {
+      reached = true;
+      break;
+    }
+  }
+  if (!reached) throw new Error(`keyboard could not reach 打开聊天: ${seen.join(" | ")}`);
+  await page.keyboard.press("Enter");
+  await page.locator(".composer-input").waitFor({ timeout: 10_000 });
+  if ((await page.locator(".conversation-row.on").count()) !== 1) {
+    throw new Error("keyboard switch did not select the conversation");
+  }
+  const route = await page.locator('.head-route[data-route="relay"]').innerText();
+  if (!route.includes("经中继")) throw new Error(`route text missing 经中继: ${route}`);
+  const composer = page.locator(".composer-input");
+  await composer.focus();
+  await composer.fill("keyboard-journey");
+  await composer.press("Enter");
+  await page.waitForFunction(() => document.querySelector(".composer-input")?.value === "");
+}
+
 async function checkQueueFullFeedback(page) {
   stage = "queue-full-feedback";
   const pattern = "**/api/conversations/*/messages";
@@ -529,6 +577,7 @@ async function main() {
     await Promise.all([unlock(a), unlock(b)]);
     await Promise.all([waitRelayOnline(a), waitRelayOnline(b)]);
     await checkModalKeyboard(a);
+    await checkDisclosure(a);
 
     const invitation = await issueInvitation(a, "@A", "@B");
     await acceptInvitation(b, invitation, "@A", "@B");
@@ -565,6 +614,7 @@ async function main() {
     assertSequence(await bubbleTexts(b, ".message.peer .bubble"), "ui", 100);
     assertSequence(await bubbleTexts(a, ".message.peer .bubble"), "ui-b", 100);
     assertSequence(await bubbleTexts(b, ".message.own .bubble"), "ui-b", 100);
+    await checkKeyboardJourney(a);
     await checkElectronExitReason(browser, `http://127.0.0.1:${portA}/`, serverA);
     await checkServiceDown(a, serverA);
     result = {
@@ -573,6 +623,8 @@ async function main() {
       reciprocal: true,
       statusBanners: true,
       modalKeyboard: true,
+      disclosure: true,
+      keyboardJourney: true,
       queueFullFeedback: true,
       electronExitReason: true,
       serviceDown: true
@@ -639,6 +691,8 @@ module.exports = {
   acceptInvitation,
   closeModal,
   openChat,
+  checkDisclosure,
+  checkKeyboardJourney,
   checkSafetyCodes,
   assertSafetyClosed,
   verifySafety,

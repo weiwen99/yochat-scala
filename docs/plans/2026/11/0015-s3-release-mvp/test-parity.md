@@ -47,3 +47,14 @@
 
 - owner 于 2026-11-27 委派执行者决定 S3 的范围与取舍（原话「请开始你的设计和实现。我希望中间
   不需要我干预。」）。本表按该委派签收；未做独立外部评审。
+
+## S3-B 映射（2026-11-27）
+
+| 需求 | 旧测试 | 新测试 | 结论 |
+| --- | --- | --- | --- |
+| `G3JQAH0SXEXVDATA` 通知内容边界 | 旧 `specs/blocking*.e2e.ts` 不覆盖通知；旧仓库无等价断言 | `shell/electron-smoke.js` 的 notifications 阶段：通知携带 `conversationId`；默认正文固定为「有一条新消息」（不含消息文本）；打开正文开关后含正文；逐会话静音后不再产生通知；点击通知把界面切回对应会话。负例：删掉主进程 click 转发后该阶段超时失败（已实测） | 等价，覆盖三条采纳子项；「定位到具体消息」按设计不做 |
+| `377PNHQWJ8PGCN80` 连接方式可见 | 旧 UI spec（只读快照，无正文） | `shell/ui-smoke.js` 的 keyboard-journey 阶段断言 `.head-route[data-route=relay]` 文本含「经中继」；聊天页与只读页共用 Shell | 等价 |
+| `3AEMNVEGME49ZT2R` 可达性基线 | 旧 WebdriverIO 键盘用例（快照缺正文） | `ui-smoke`：modal 焦点陷阱（既有）+ 新增 keyboard journey（键盘切到联系人、Tab 到「打开聊天」、Enter 回到会话、键盘发送）；`contrast-smoke` 保持绿；外观跟随系统由 `color-scheme` + 两套主题对比度检查覆盖 | 部分：渲染级对比度/焦点 3:1 测量按设计不做 |
+| `Q0MQBNAVS1TB1PBW` 使用前告知 | 无 | `ui-smoke` 的 disclosure 阶段：添加联系人对话框含 ≥5 条告知（中继可见项、公网地址、中转地址、拉黑可推断与在线状态、无公开目录），点「我已了解」后收起；版本存本地偏好 | 等价；首次添加与邀请生成同处一个对话框，两处都可见 |
+| `386RMXBPWJYEXT9P` 在线状态告知 | 无 | 同上：告知文案含「不提供在线状态、没有隐藏开关、单靠用户公钥不能查询在线状态」 | 等价（只告知，不做 presence） |
+| `REQ_20261103_NS77FQDYNCMNF71P` 迟到可察觉 | 旧 `history_arrival.rs`（只读快照） | S3-A 的 `InboundSpec.lateArrival` + UI 横幅按消息 id 去重；`StatusBanners` 只保留最近一条 | 部分：定位查看/锚点/重启后仍在按设计不做 |
