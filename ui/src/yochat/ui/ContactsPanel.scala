@@ -21,18 +21,13 @@ object ContactsPanel:
           else Some(button(cls := "primary-button", onClick --> (_ => ui.addFriend.set(true)), Icons("plus"), "添加联系人"))
         )
       ),
-      child.maybe <-- api.state.signal.map(state =>
-        if state.readOnly || state.contacts.isEmpty then None
-        else
-          Some(
-            input(
-              cls         := "text-input small contact-filter",
-              aria.label  := "筛选联系人",
-              placeholder := "按名称、账号、备注筛选",
-              value <-- ui.contactFilter,
-              onInput.mapToValue --> ui.contactFilter
-            )
-          )
+      input(
+        cls         := "text-input small contact-filter",
+        aria.label  := "筛选联系人",
+        placeholder := "按名称、账号、备注筛选",
+        display <-- api.state.signal.map(state => if state.readOnly || state.contacts.isEmpty then "none" else "block"),
+        value <-- ui.contactFilter,
+        onInput.mapToValue --> ui.contactFilter
       ),
       child <-- api.state.signal.combineWith(ui.contactFilter.signal).map { case (state, filter) =>
         val visible = state.contacts.filter(contact => matches(contact, filter))
@@ -52,13 +47,13 @@ object ContactsPanel:
   private def matches(contact: Contact, filter: String): Boolean =
     val needle = filter.trim.toLowerCase
     needle.isEmpty ||
-    Vector(
-      contact.displayName,
-      contact.alias.getOrElse(""),
-      contact.note.getOrElse(""),
-      contact.channelAccount,
-      contact.peerChannelAccount.getOrElse("")
-    ).exists(_.toLowerCase.contains(needle))
+      Vector(
+        contact.displayName,
+        contact.alias.getOrElse(""),
+        contact.note.getOrElse(""),
+        contact.channelAccount,
+        contact.peerChannelAccount.getOrElse("")
+      ).exists(_.toLowerCase.contains(needle))
 
   private def empty(ui: UiState, readOnly: Boolean): HtmlElement =
     div(
@@ -91,7 +86,7 @@ object ContactsPanel:
               p(s"${contact.channelLabel} · ${contact.channelAccount}")
             ),
             span(
-              cls    :=
+              cls :=
                 (if contact.blocked then "status-chip blocked"
                  else if contact.safetyVerified then "status-chip verified"
                  else "status-chip"),
@@ -102,7 +97,7 @@ object ContactsPanel:
           ),
           if contact.recreated then
             p(
-              cls      := "ledger-note",
+              cls := "ledger-note",
               "这是删除后重新建立的关系：安全码需要重新核对，旧记录不会自动继承。"
             )
           else div(cls := "hidden", ""),
@@ -117,7 +112,7 @@ object ContactsPanel:
           ),
           if contact.devices.nonEmpty then
             div(
-              cls      := "contact-codes",
+              cls := "contact-codes",
               div(
                 span(cls := "code-label", "对方设备"),
                 span(
@@ -163,7 +158,7 @@ object ContactsPanel:
             if state.readOnly then span(cls := "ledger-note", "关系变更只在主力设备进行")
             else if contact.blocked then
               button(
-                cls := "secondary-button",
+                cls       := "secondary-button",
                 onClick --> (_ =>
                   api.unblockContact(contact.userPub).onComplete {
                     case Success(_)    => ui.notify("已解除拉黑；拉黑期间对方放弃重试的消息取不回")
@@ -174,26 +169,24 @@ object ContactsPanel:
               )
             else
               button(
-                cls := "text-button",
+                cls       := "text-button",
                 onClick --> (_ => ui.confirmBlock.set(Some(contact.userPub))),
                 "拉黑"
-              )
-            ,
+              ),
             if state.readOnly then span(cls := "hidden", "")
             else
               button(
-                cls                         := "text-button danger",
+                cls := "text-button danger",
                 onClick --> (_ => {
                   ui.deleteHistory.set(false)
                   ui.confirmDelete.set(Some(contact.userPub))
                 }),
                 "删除联系人"
-              )
-            ,
+              ),
             if state.readOnly then span(cls := "hidden", "")
             else
               button(
-                cls                         := "text-button",
+                cls := "text-button",
                 onClick --> (_ => {
                   ui.aliasDraft.set(contact.alias.getOrElse(""))
                   ui.aliasEditing.set(true)
@@ -222,15 +215,15 @@ object ContactsPanel:
         cls := "alias-actions",
         button(cls := "text-button", onClick --> (_ => ui.confirmBlock.set(None)), "取消"),
         button(
-          cls      := "secondary-button",
-          onClick --> (_ =>
+          cls := "secondary-button",
+          onClick --> (_ => {
             api.blockContact(contact.userPub).onComplete {
               case Success(_)    =>
                 ui.confirmBlock.set(None)
                 ui.notify("已拉黑；不再接收也不再发送")
               case Failure(fail) => ui.failure(api.describeError(fail))
             }
-          ),
+          }),
           "确认拉黑"
         )
       )
@@ -247,7 +240,7 @@ object ContactsPanel:
       label(
         cls := "checkbox-row",
         input(
-          typ := "checkbox",
+          typ     := "checkbox",
           checked <-- ui.deleteHistory,
           onChange.mapToChecked --> ui.deleteHistory
         ),
@@ -257,7 +250,7 @@ object ContactsPanel:
         cls := "alias-actions",
         button(cls := "text-button", onClick --> (_ => ui.confirmDelete.set(None)), "取消"),
         button(
-          cls      := "secondary-button danger",
+          cls := "secondary-button danger",
           onClick --> (_ => {
             val history = ui.deleteHistory.now()
             api.deleteContact(contact.userPub, history).onComplete {
@@ -278,7 +271,7 @@ object ContactsPanel:
       if state.blockedPeers.isEmpty then div(cls := "hidden", "")
       else
         div(
-          cls                                    := "invitation-section",
+          cls := "invitation-section",
           div(
             cls := "section-title",
             h2("已拉黑"),
@@ -295,7 +288,7 @@ object ContactsPanel:
                   div(
                     span(cls := "invitation-title", peer.displayName),
                     span(
-                      cls    := "invitation-sub",
+                      cls := "invitation-sub",
                       if state.contacts.exists(_.userPub == peer.userPub) then "关系仍在，仅停止通信" else "关系已删除，拉黑记录保留"
                     )
                   )
@@ -305,7 +298,7 @@ object ContactsPanel:
                   if state.readOnly then span(cls := "ledger-note", "只在主力设备解除")
                   else
                     button(
-                      cls                         := "text-button",
+                      cls       := "text-button",
                       onClick --> (_ =>
                         api.unblockContact(peer.userPub).onComplete {
                           case Success(_)    => ui.notify("已解除拉黑")
@@ -341,7 +334,7 @@ object ContactsPanel:
         if state.readOnly then div(cls := "invitation-empty", "只读设备不处理邀请。")
         else
           div(
-            cls                        := "invitation-empty",
+            cls               := "invitation-empty",
             "没有待处理的邀请。",
             button(cls := "text-button", onClick --> (_ => ui.addFriend.set(true)), "添加联系人")
           )
@@ -368,7 +361,7 @@ object ContactsPanel:
                 if invitation.direction == "issued" then button(cls := "text-button", onClick --> (_ => UiUtil.copy(invitation.text, ui)), "复制")
                 else
                   button(
-                    cls                                             := "text-button",
+                    cls := "text-button",
                     onClick --> (_ => {
                       ui.inviteTab.set(InviteTab.Received)
                       ui.inviteText.set(invitation.text)

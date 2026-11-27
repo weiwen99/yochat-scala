@@ -2,7 +2,8 @@
 
 - Plan: 0015（设计记录 `docs/plans/2026/11/0015-s3-release-mvp/design.md`）
 - 需求编号用 ID 后缀；完整 ID 见 `docs/references/2026-11-20-yochat-reference-study/requirements.md`
-- Status: **draft，未开工**。八条待裁决未定前不动代码。
+- Status: **S3-A 已实现并完成两轮实现评审**；八条裁决已由 owner 委派决定（见设计记录的「裁决」）；
+  S3-B 待开工，S3-C 仍阻塞于自己的 ADR。实现记录见 `impl.md`，测试映射见 `test-parity.md`。
 
 ## 一句话
 
@@ -13,12 +14,12 @@ S3 = 关系结束（拉黑/删除）+ 发布级可见性（通知、连接方式
 
 **S3-A 关系结束（9，其中 5 条部分）**
 `ZWMFKB381M0AKCYN` `TW7PP68XQAKBAVYH` `J22VY0VTZVRBY1P6`（部分）`F7ZBKSBAC1N4KM2K`（部分）
-`SD1XKGXS4DBG5ZTE` `XS6GKW2ZZ4R1CS6Y` `GG1H42XAJXA0M4ZT`（部分：设备刷新做；二次邀请应答的行为见裁决 8） `9MKG1QMBXQAG6C12`（部分）
-`0P17VCWKG2FZ26SZ`（部分：别名为主显示与私有性已满足；备注写入、按别名/备注检索本波做；按用户别名检索随公开资料延后）
+`SD1XKGXS4DBG5ZTE` `XS6GKW2ZZ4R1CS6Y` `GG1H42XAJXA0M4ZT`（部分：设备刷新做；二次邀请应答按裁决 8a 维持现状）
+`9MKG1QMBXQAG6C12`（部分）`0P17VCWKG2FZ26SZ`（部分：别名/备注私有、备注写入与检索本波做）
 
 **S3-B 发布级可见性（6，其中 4 条部分）**
 `G3JQAH0SXEXVDATA`（部分：逐会话关闭、正文默认关、点击跳转会话；不含定位到消息）`377PNHQWJ8PGCN80` `3AEMNVEGME49ZT2R`（部分）`Q0MQBNAVS1TB1PBW`
-`386RMXBPWJYEXT9P`（部分：只做告知，不做 presence）`REQ_20261103_NS77FQDYNCMNF71P`（部分：只做可见提示；触发键是原件，需 store 暴露首次/重复信号）
+`386RMXBPWJYEXT9P`（部分：只做告知，不做 presence）`REQ_20261103_NS77FQDYNCMNF71P`（部分：只做 A1 可见提示；按消息 id 去重）
 
 **S3-C 历史可用性（2，阻塞）**
 `8F32S19RPRC25471` `3TK81N30WS2S6JWB`
@@ -32,31 +33,31 @@ S3 = 关系结束（拉黑/删除）+ 发布级可见性（通知、连接方式
 ## 关键约束
 
 - **拉黑窗口外取不回**：对方重试 3 次 / 约 15 秒（投递超时路径无退避）/ 在途 32 条后进 Failed，
-  `requestResend` 不接受 Failed；棘轮跳号上限 64 / 累计 256。解封后 `GapTooLarge` 当前会静默失步，
-  S3-A 必须补重建通道。
-- **关系变更只在主设备发起**：`device_sync` 快照数据单向 A1→A2；A2→A1 只有 sync-status/ack
-  （`syncRequest` 协议已定义但无生产发送方；DeviceList 要用户私钥、FanoutAck 方向相反），缺的是关系变更数据的上行承载与
-  A1 应用。
-- **没有消息墓碑**：S3 不做消息删除；将来若要，扇出与重传需要消息墓碑才不复活。联系人删除用的
-  contacts 墓碑是另一件事。
-- 行预算：19,614 行基线（只计五个模块 `*/src`），A+B 估算 3,500–5,500 行。
+  `requestResend` 不接受 Failed；棘轮跳号上限 64 / 累计 256。窗口外按裁决 2a 如实告知；
+  `GapTooLarge` 现在会触发 `ChannelRebuild` 通知 + 重建通道，不再静默失步。
+- **关系变更只在主设备发起**：A2 禁用拉黑/删除/核对/别名，只从 A1 快照接收
+  `state/recreated/note/blocked`；A2→A1 仍只有 sync-status/ack。
+- **没有消息墓碑**：S3 不做消息删除；联系人删除用的 contacts 墓碑是另一件事。
+- **存储**：`blocked_peers` 行存在即拉黑，单行删除/回滚在打开时失败关闭；协调回滚仍是已知约束
+  （ADR-0012）。
+- 行预算：19,614 行基线（只计五个模块 `*/src`），S3-A 实现净增约 1,277 行生产代码（+1,624/−347）；A+B 估算
+  3,500–5,500 行，仍在 30,000 上限内。
 - **可达性只到主流程与焦点**：渲染级对比度/焦点 3:1、搜索入口不做。
 - **迟到补入只到可见提示**：定位查看、锚点与草稿保留、重启后待查看不做。
 - v1 的 16 条行为契约不变，S3 只新增。
 
-## 八条待裁决
+## 八条裁决（2026-11-27，owner 委派）
 
-1. 采纳 15（含 9 部分）/ 阻塞 2 / 延后 18 是否接受。
-2. 解除拉黑窗口外：如实告知取不回，还是把最小批准路径拉进 S3-A。
-3. A2 上能否发起关系变更：禁用并提示，还是补反向通道。
-4. 搜索存储取舍：有界解密扫描 / 明文索引 / 不做。
-5. 十万条指标是否采纳。
-6. 行预算口径与上限。
-7. 存储 ADR（新密封域与 AAD）由谁写、走 ADR-0007 revision 还是新 ADR。
-8. 二次邀请应答：维持现状（AccountMismatch，登记为已知分歧），还是改成来源要求的新待确认项
-   （+1 表、+200–400 行、改两条 BindingSpec）。
+1. 接受 15 / 阻塞 2 / 延后 18。
+2. 解除拉黑窗口外：如实告知取不回。
+3. A2 不发起关系变更；只从快照接收状态。
+4. 搜索：有界解密扫描（S3-C 的 ADR 定稿后开工）。
+5. 十万条不继承旧数字；S3-C 定义可测形状与阈值。
+6. 行预算维持 30,000，只计五个模块 `*/src`。
+7. 存储扩展写 ADR-0012（不修订 ADR-0007 的 AAD 规则）。
+8. 二次邀请应答维持 `AccountMismatch` + version 递增，登记为已知分歧。
 
 ## 下一步
 
-裁决通过后：写 `test-parity.md`（对照旧 `blocking.rs`、`contact_sync.rs`、`relationship.rs`、
-`deletion_directive.rs`、`inbound_discard.rs` 与 `wdio.blocking*.conf.ts`），再按 S3-A 开实现计划。
+S3-B：通知（逐会话关闭、正文默认关、点击跳会话）、连接方式可见、键盘可达、使用前告知、
+迟到提示的收尾；之后 S3-C 先写搜索 ADR。

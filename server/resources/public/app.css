@@ -2057,3 +2057,38 @@ textarea.text-input.code-text {
   font-size: 16px;
   letter-spacing: 0.08em;
 }
+
+.contact-filter {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.confirm-box {
+  margin-top: 14px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line-strong);
+  background: var(--paper);
+}
+
+.checkbox-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.checkbox-row input {
+  margin-top: 3px;
+}
+
+.status-chip.blocked {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  color: var(--accent);
+}
+
+.text-button.danger {
+  color: var(--accent);
+}
