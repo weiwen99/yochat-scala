@@ -7,18 +7,18 @@
 ## 一句话
 
 S3 = 关系结束（拉黑/删除）+ 发布级可见性（通知、连接方式、可达性、使用前告知）+ 历史可用性
-（搜索/十万条，阻塞于 ADR）。从 35 条候选里采纳 15（其中 6 条部分）、阻塞 2、延后 18。
+（搜索/十万条，阻塞于 ADR）。从 35 条候选里采纳 15（其中 7 条部分）、阻塞 2、延后 18。
 
 ## 采纳
 
 **S3-A 关系结束（9，其中 4 条部分）**
 `ZWMFKB381M0AKCYN` `TW7PP68XQAKBAVYH` `J22VY0VTZVRBY1P6`（部分）`F7ZBKSBAC1N4KM2K`（部分）
 `SD1XKGXS4DBG5ZTE` `XS6GKW2ZZ4R1CS6Y` `GG1H42XAJXA0M4ZT` `9MKG1QMBXQAG6C12`（部分）
-`0P17VCWKG2FZ26SZ`（部分：私有性已满足，备注写入与联系人检索缺失）
+`0P17VCWKG2FZ26SZ`（部分：别名为主显示与私有性已满足；备注写入、按别名/备注检索本波做；按用户别名检索随公开资料延后）
 
 **S3-B 发布级可见性（6，其中 3 条部分）**
-`G3JQAH0SXEXVDATA` `377PNHQWJ8PGCN80` `3AEMNVEGME49ZT2R`（部分）`Q0MQBNAVS1TB1PBW`
-`386RMXBPWJYEXT9P`（部分：只做告知，不做 presence）`REQ_20261103_NS77FQDYNCMNF71P`（部分）
+`G3JQAH0SXEXVDATA`（部分：含点击跳转会话，不含定位到消息）`377PNHQWJ8PGCN80` `3AEMNVEGME49ZT2R`（部分）`Q0MQBNAVS1TB1PBW`
+`386RMXBPWJYEXT9P`（部分：只做告知，不做 presence）`REQ_20261103_NS77FQDYNCMNF71P`（部分：只做可见提示与不重复提醒）
 
 **S3-C 历史可用性（2，阻塞）**
 `8F32S19RPRC25471` `3TK81N30WS2S6JWB`
@@ -31,11 +31,15 @@ S3 = 关系结束（拉黑/删除）+ 发布级可见性（通知、连接方式
 
 ## 关键约束
 
-- **拉黑窗口外取不回**：对方重试 3 次 / 约 19 秒 / 在途 32 条后进 Failed，`requestResend` 不接受
-  Failed；棘轮跳号上限 64 / 累计 256。解封后 `GapTooLarge` 当前会静默失步，S3-A 必须补重建通道。
-- **关系变更只在主设备发起**：`device_sync` 是 A1→A2 单向，A2 无反向通道。
+- **拉黑窗口外取不回**：对方重试 3 次 / 约 15 秒（投递超时路径无退避）/ 在途 32 条后进 Failed，
+  `requestResend` 不接受 Failed；棘轮跳号上限 64 / 累计 256。解封后 `GapTooLarge` 当前会静默失步，
+  S3-A 必须补重建通道。
+- **关系变更只在主设备发起**：`device_sync` 快照数据单向 A1→A2；A2→A1 已有 sync-status/ack/
+  DeviceList/FanoutAck，缺的是关系变更数据的上行承载与 A1 应用。
 - **没有墓碑**：扇出会把删过的消息带回；S3 不做消息删除。
 - 行预算：19,614 行基线（只计五个模块 `*/src`），A+B 估算 3,500–5,500 行。
+- **可达性只到主流程与焦点**：渲染级对比度/焦点 3:1、搜索入口不做。
+- **迟到补入只到可见提示**：定位查看、锚点与草稿保留、重启后待查看不做。
 - v1 的 16 条行为契约不变，S3 只新增。
 
 ## 七条待裁决

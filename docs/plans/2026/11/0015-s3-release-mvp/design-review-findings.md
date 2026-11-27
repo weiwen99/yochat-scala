@@ -43,3 +43,37 @@
 
 第 1 轮 P1 12 条全部 fix；P2 13 条 fix、1 条 defer（S-10，理由见行）。第 2 轮只复审本轮 diff 与
 上轮关闭项。
+
+## 第 2 轮
+
+对象：`238e19f` 之后的修订（本轮 diff 覆盖 design / spec / meta 与上一轮 findings）。
+Standards 3 P1 + 5 备注，Spec 5 P1 + 4 备注。
+
+### Standards
+
+| # | 级别 | 发现 | 处置 | 关闭证据 |
+| --- | --- | --- | --- | --- |
+| S2-1 | P1 | 「约 19 秒」不可复现：`TimerId.Message` 直接 `sendNow`、不走退避，真实上限 3×5s ≈ 15 秒 | fix | 三处改为 15 秒并写明「投递超时路径无退避；wire 失败约 2 秒」 |
+| S2-2 | P1 | 入站表 FanoutAck 行代码位置与落盘点都错，且漏第 7 类 DeviceSync | fix | FanoutAck 改为 `DeviceSyncScheduler.listenRequests` → `FanoutService.handleAck` → `delivery_receipts`；补说明：其发送方是对端 companion，`handleAck` 只校验 `authorizedCompanion`、不看联系人，故必须加判定；表头限定「对端可发起的帧」，DeviceSync 为自有设备帧不加 guard 并写明理由 |
+| S2-3 | P1 | 已知约束 3 说「A2 没有反向通道」不实：A2→A1 已有 sync-status/ack/DeviceList/FanoutAck | fix | 改为「快照数据单向 A1→A2；缺的是关系变更数据的上行承载与 A1 应用」 |
+| S2-4 | P2 | 「6 条部分」应为 7 条 | fix | 四处（design×2、spec、meta）改 7 |
+| S2-5 | P2 | `Wire` 被称作 Data，而它含 DataAck/Gap/RekeyConfirm | fix | 表内改为「Wire（内含 Data / DataAck / Gap / RekeyConfirm）」 |
+
+### Spec
+
+| # | 级别 | 发现 | 处置 | 关闭证据 |
+| --- | --- | --- | --- | --- |
+| P2-1 | P1 | `0P17` 三句验收只交代第三句，且「用户别名」在 v1 不存在 | fix | 逐句改写：①别名为主显示已满足，①后半句随 `Z1P2` 延后；②按别名/备注检索本波做，按用户别名延后；③已满足；验收加一条可证伪断言 |
+| P2-2 | P1 | `NS77` 的「可察觉」被缩成一个 notice code，装不下「定位逐条查看 / 锚点与草稿 / 重启仍在」 | fix | 采纳范围写明只做「可见提示 + 同一原件不重复提醒」，其余进已知约束 8；验收加断言 |
+| P2-3 | P1 | 声明写进已知约束的对比度/焦点测量与搜索入口，已知约束里没有 → 静默删除 | fix | 新增已知约束 7 |
+| P2-4 | P1 | `G3JQ` 标「全条」但漏「点击跳转到对应会话」 | fix | 改判部分：做逐会话关闭、正文默认关、点击跳转会话；不做「定位到具体消息与保留草稿滚动」，进已知约束 8；验收加深链断言 |
+| P2-5 | P1 | `device_sync` 加 `state` + 「升 version」与协议结构不符；`deleted` 发不出去；`applyContact` 硬编码 `note=None` | fix | 重写该节：contacts 记录在 `records` 密文内，加 `state` 是向后兼容扩展、外层 `version` 保持 1；删除改为 contacts 墓碑行；`applyContact` 重写为保护性合并并保留 `note` |
+| P2-6 | P2 | `Q0MQ` 标全条但清单少三项 | fix | 清单补「直连对端可见本机公网地址」「联系人可见全部设备公钥与别名」「中转不知道设备属于谁、看不到用户公钥」 |
+| P2-7 | P2 | `386R` 少来源第三句 | fix | 补「用户公钥本身不能查询在线状态」 |
+| P2-8 | P2 | A2 禁用关系操作，却又说「其他设备保留历史直到用户在该设备上操作」，闭环缺失 | fix | 关系变更节改为「A2 上的历史只能等 A2 恢复能力后自查（裁决 3）」 |
+| P2-9 | P2 | 已知约束 1（扇出会把删过的消息带回）无可复核证据 | fix | 改写为条件句：「若 S3 做删除，扇出与重传需要墓碑才不复活」 |
+
+## 结论
+
+第 2 轮 P1 8 条全部 fix；P2 6 条 fix。第 3 轮只复审 diff 与关闭项；若 P1 仍不降，按
+DESIGN-DISCIPLINE R9 停轮并交人工。

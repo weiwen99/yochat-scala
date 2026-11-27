@@ -25,7 +25,7 @@
 
 | 维度 | 需求给的 | 本计划产出 | 倍率 |
 | --- | --- | --- | --- |
-| 需求条数 | 35 条候选 | 采纳 15（其中 6 条部分采纳）、阻塞待 ADR 2、延后 18 | 0.4× |
+| 需求条数 | 35 条候选 | 采纳 15（其中 7 条部分采纳）、阻塞待 ADR 2、延后 18 | 0.4× |
 | 表数 | 0（现 12） | +1（`blocked_peers`） | 需解释 |
 | 组件数 | 0 | +1（拉黑名单面板） | 需解释 |
 | 配置项 | 0 | +2（通知正文开关、隐私告知已读版本） | 需解释 |
@@ -74,18 +74,18 @@ S1/S2 之后缺两类东西：
 | `XS6GKW2ZZ4R1CS6Y` 重新添加不继承校验状态 | 全条（含「提示这是新建立的关系」） |
 | `GG1H42XAJXA0M4ZT` 联系人刷新保留拉黑与校验 | 全条（含「经另一份邀请再应答时作为新待确认项」） |
 | `9MKG1QMBXQAG6C12` 无法提供的消息有可验证答复 | **部分**：解除拉黑窗口外那条答复 |
-| `0P17VCWKG2FZ26SZ` 别名与备注私有 | **部分**：私有性已满足；备注写入路径与联系人内检索缺失，本波补 |
+| `0P17VCWKG2FZ26SZ` 别名与备注私有 | **部分**，逐句：①「别名为主显示」已满足（`displayName = alias orElse peerChannelAccount orElse 短公钥`）；①后半句「仍可看到对方自设的用户别名」不成立——v1 没有用户别名，它随 `Z1P2TGCMD0K4W1XP` 延后；②「按别名/备注/用户别名任一检索」本波做前两项（联系人列表在内存，过滤即可），「用户别名」同上延后；③「两者不出现在发给对方的数据」已满足（密封载荷）。备注写入路径本波补 |
 
 ### S3-B 发布级可见性（6 条，其中 3 条部分）
 
 | 需求 | 采纳范围 |
 | --- | --- |
-| `G3JQAH0SXEXVDATA` 桌面通知及其内容边界 | 全条：**逐会话关闭通知** + **是否含正文，默认不含**（来源验收的两条，不是自拟开关） |
+| `G3JQAH0SXEXVDATA` 桌面通知及其内容边界 | **部分**：**逐会话关闭通知**、**是否含正文（默认不含）**、**点击通知跳到对应会话** 三条做；「跳到会话并定位到具体消息、保留另一会话的草稿与滚动」不做（依赖锚点与滚动状态，与 `NS77` 的降级项同源），见已知约束 8 |
 | `377PNHQWJ8PGCN80` 当前连接方式对用户可见 | 全条：显示经中继与中继状态 |
 | `3AEMNVEGME49ZT2R` 主界面布局与可达性基线 | **部分**：键盘走完「启动→加好友→安全码→发消息→切换会话→打开联系人详情」、焦点顺序、外观跟随系统；**渲染级对比度与焦点指示测量**、以及「发起搜索」入口随 S3-C 延后 |
 | `Q0MQBNAVS1TB1PBW` 实际暴露的信息须在使用前如实告知 | 全条：出现在**首次添加联系人流程**与邀请生成处；清单含中转可见项与本机中转网络地址 |
 | `386RMXBPWJYEXT9P` 在线状态可被持钥者查知须说明 | **部分**：只做告知（不提供隐藏开关、不声称能隐藏），**不做 presence** |
-| `REQ_20261103_NS77FQDYNCMNF71P` 迟到补入可察觉且不漏读 | **部分**：顺序与不漏读由 S2b GBNV 覆盖；「可察觉」补一个状态提示与 E2E 断言 |
+| `REQ_20261103_NS77FQDYNCMNF71P` 迟到补入可察觉且不漏读 | **部分**：「不漏读」由 S2b GBNV 覆盖；「可察觉」只做到「有迟到补入时出现可见提示且同一原件不重复提醒」。来源验收里的「定位并逐条查看」「保留锚点与草稿」「重启后仍可见」不做，见已知约束 8 |
 
 ### S3-C 历史可用性（2 条，阻塞）
 
@@ -112,15 +112,21 @@ S1/S2 之后缺两类东西：
 
 1. **没有墓碑**：S2b 的扇出会把删过的消息再带回。S3 不做消息删除，所以「删除消息」在 S3 之后
    仍不可用。出处：`requirements.md` 的「消息默认永久保存 vs 用户删除」段。
-2. **拉黑窗口外的消息取不回**：对方重试预算耗尽（3 次 / 约 19 秒 / 在途 ≤32 条）后进入 Failed，
-   不再重发；`requestResend` 不接受 Failed。与裁决 2 绑定。
-3. **关系变更只在主设备发起**：`device_sync` 是 A1→A2 单向（`server/src/yochat/server/DeviceSyncService.scala`）。
-   A2 没有反向通道，A2 发起的拉黑无法告知 A1。S3-A 先在 A2 禁用这些操作并提示在主力设备操作；
-   是否补反向通道是裁决 3。
+2. **拉黑窗口外的消息取不回**：对方重试预算耗尽（3 次 / 约 15 秒；wire 失败约 2 秒 / 在途 ≤32 条）
+   后进入 Failed，不再重发；`requestResend` 不接受 Failed。与裁决 2 绑定。
+3. **关系变更只在主设备发起**：`device_sync` 的**快照数据**是 A1→A2 单向；A2→A1 已经存在
+   sync-status、ack、DeviceList、FanoutAck 四类帧（`CompanionService`、`CompanionSyncService`、
+   `DeviceSyncScheduler.acceptStatus/acceptAck`），缺的是「关系变更数据的上行携带与 A1 侧应用」，
+   不是通道本身。S3-A 先在 A2 禁用这些操作并提示在主力设备操作；是否补上行是裁决 3。
 4. v1 的 16 条行为契约不变；S3 只新增契约。
 5. 不改中继语义；入站丢弃发生在应用层。
 6. 自动更新、安装包矩阵、Windows、签名公证不在 S3。
-7. 行预算：A+B 估算 3,500–5,500 行（19,614 → 23,100–25,100）。若 18 条延后项再做，总量
+7. **可达性只做到主流程与焦点顺序**：渲染后的对比度与焦点指示 3:1 测量、深浅两套主题的对照
+   验证不在本波（`contrast-smoke` 是 token 级门，不是完整 WCAG 审计）；「发起搜索」入口随 S3-C
+   延后。来源验收里这两项是有意降级，不是遗漏。
+8. **迟到补入只做到可见提示**：「定位并逐条查看」「排序更新保留消息锚点与草稿」「重启后待查看
+   状态仍在」需要持久化的 UI 状态与导航，本波不做；同一原件的重复提醒由现有去重保证。
+9. 行预算：A+B 估算 3,500–5,500 行（19,614 → 23,100–25,100）。若 18 条延后项再做，总量
    31,300–37,600，**下界已超上限**，必须先删等量死代码或另立 ADR 提高上限。
 
 ## 设计
@@ -141,15 +147,20 @@ S1/S2 之后缺两类东西：
 
 | 入口 | 代码位置 | 落盘点 | 拉黑判定 |
 | --- | --- | --- | --- |
-| Data（Wire） | `AppRuntime.translateInbound` → `AppStep` | `messages` | 帧头无 `user_pub`，须先 `sessions.get(sessionId)` 取 `peer_user_pub` 再查 `blocked_peers` |
+| Wire（内含 Data / DataAck / Gap / RekeyConfirm） | `AppRuntime.translateInbound` → `AppStep` | `messages`、重传与缺口状态 | 帧头无 `user_pub`，须先 `sessions.get(sessionId)` 取 `peer_user_pub` 再查 `blocked_peers` |
 | Reply | `AppRuntime` 的 `replyEvent` | `contacts` / 待确认项 | 应答对一次性公钥密封，**必须先开箱**才知道 user_pub；开箱后立即丢弃，不落盘、不生成待确认 |
 | RekeyRequest / RekeyAccept | `AppRuntime` 独立分支 | 会话棘轮 | 按会话的 `peer_user_pub` 判定，命中即丢弃 |
 | DeviceList | `translateInbound` 返回 `None` → `CompanionSyncService` | `peer_device_lists` | 命中即丢弃，不更新设备列表 |
 | Fanout | `CompanionFanoutService.receive` | **`companion_messages`（正文）** | 命中即丢弃，否则「不增长本机存储」直接失败 |
-| FanoutAck | `CompanionSyncService` | 同步游标 | 命中即丢弃 |
+| FanoutAck | `DeviceSyncScheduler.listenRequests` → `FanoutService.handleAck` | **`delivery_receipts`** | 发送方是**对端 companion 设备**；`handleAck` 只校验 `authorizedCompanion`、不看联系人，因此必须加判定，否则被拉黑者可无界写行 |
 
-实现要求：判定收敛到一个 store 层 guard（`isBlocked(userPub)`），六处入口都调它，不许各写一份。
-`## 验收` 给一条「被拉黑者持续发送时，六类帧的落盘行数增量为 0」的可证伪断言。
+表的范围是**对端可发起的帧**。第 7 种 `DeviceSync` 只由本人设备发出（`CompanionSyncService.receive`
+落 `contacts/conversations/messages` 与 `device_sync` 检查点），不按联系人判定，**不加 guard**；
+它仍需通过自有设备鉴权，这是既有行为。
+
+实现要求：判定收敛到一个 store 层 guard（`isBlocked(userPub)`），上表六处入口都调它，不许各写一份。
+`## 验收` 给一条「被拉黑者持续发送时，这六类对端帧的落盘行数增量为 0」的可证伪断言
+（`messages`、`companion_messages`、`peer_device_lists`、`delivery_receipts`、待确认项、会话棘轮）。
 
 **出站拦截**：任何以被拉黑公钥为收端的帧一律不发。现有出站 kind 八种：Data、Reply、
 RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发送前统一查
@@ -159,12 +170,13 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
 
 - 棘轮单帧跳号上限 `MaxSkipGap=64`、累计 `MaxSkipTotal=256`（`core/src/yochat/core/S1Limits.scala`），
   超出返回 `GapTooLarge`。
-- 发送方重试上限 `MaxSendAttempts=3`、`DeliveryTimeoutMs=5000`、`RetryBackoffMs=2000`，约 19 秒后
-  消息进入 Failed；`requestResend` 只接受 `Queued|InFlight|Sent`，**不含 Failed**（`AppStep.scala`）。
+- 发送方重试上限 `MaxSendAttempts=3`、`DeliveryTimeoutMs=5000`；投递超时路径由 `TimerId.Message`
+  直接重发、**不走退避**，因此上限是 3×5s ≈ **15 秒**（`RetryBackoffMs=2000` 只在 `SendFailed`
+  分支用，wire 失败路径约 2 秒即 Failed）；`requestResend` 只接受 `Queued|InFlight|Sent`，**不含 Failed**（`AppStep.scala`）。
 - 在途窗口 `MaxInFlight=32`。
 
 因此在「拉黑期间不落盘」的前提下，可自动补齐的只有：解封时对方仍在重试、且棘轮跳号不超限的
-那一小段（约 19 秒 / 32 条以内）。超出后：
+那一小段（约 15 秒 / 32 条以内）。超出后：
 
 - 解封后第一帧可能直接 `GapTooLarge`。当前实现里 `GapTooLarge` 不触发 `RekeyRequired`、也不置
   `gapRequested`，会**静默丢帧、永久失步**。S3-A 必须补一条：`GapTooLarge` 映射到可重建通道的
@@ -175,10 +187,15 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
 **关系变更的同步**：现有 `device_sync` 的联系人载荷是固定 JSON（含 alias、safetyVerified），
 接收端 `applyContact` 只 upsert、**没有删除分支**。所以：
 
-- 给载荷加 `state`（active / blocked / deleted）并升 version，是本波唯一的数据格式变更；接收端按
-  「保护性状态不被旧记录覆盖」合并（blocked 优先，deleted 只在双方都确认后才删）。
-- 删除历史不做跨设备自动执行：本机删除即删 `messages`；其他设备保留各自历史，直到用户在该设备
-  上操作（`K54NXXBZW1R6415F` 延后）。
+- 联系人记录在 `records` 这层 JSON 里（`DeviceSyncProtocol` 把整个 `records` 密封），记录本身
+  没有版本字段，因此加 `state` 字段是**密文内的向后兼容扩展**：旧接收端忽略未知键，外层信封
+  `version == 1` 不变（改外层版本会让 A2 的 `open` 直接失败）。
+- `deleted` 需要墓碑：现有发送端快照来自 `store.contacts`，删除即删行，快照里不会出现该记录。
+  本波把删除实现为 contacts 墓碑行（只保留 `user_pub` + `state` + `version`），墓碑随同步下发；
+  接收端 `applyContact` 目前只 upsert 且硬编码 `note = None`，要重写为保护性合并：blocked 不被
+  active 覆盖、deleted 只删关系不删历史、`note` 保留。
+- 删除历史仍只在本机执行：本机删除即删 `messages`；其他设备保留各自历史（`K54NXXBZW1R6415F` 延后），
+  且 A2 不做关系操作（已知约束 3），所以 A2 上的历史只能等 A2 恢复能力后自查。
 - A2 发起的变更见已知约束 3。
 
 **不变量**
@@ -208,8 +225,9 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
   可预测；跟随系统外观。**不覆盖**：渲染级对比度与焦点 3:1 测量（现有 `contrast-smoke` 是 token
   级门，文件自述不是完整 WCAG 审计）、搜索入口（随 S3-C）。这两项写进已知约束。
 - **使用前告知**（`Q0MQBNAVS1TB1PBW`）：在首次添加联系人流程与邀请生成处展示，清单照来源：
-  中转可见（端点、时间、帧数、密文）与本机中转网络地址；「拉黑可被推断、我们不提供在线状态、
-  没有隐藏开关」（`386RMXBPWJYEXT9P` 的告知部分并入此处）。版本化重提示是显式追加项，
+  中转可见（端点、时间、帧数、密文）、直连对端可见本机公网地址、联系人可见全部设备公钥与别名、
+  中转不知道设备属于谁且看不到用户公钥，以及本机中转的网络地址；「拉黑可被推断、我们不提供在线状态、
+  没有隐藏开关、用户公钥本身不能用来查询在线状态」（`386RMXBPWJYEXT9P` 的告知部分并入此处）。版本化重提示是显式追加项，
   约 80 行 + 1 个本地配置，不需要可去掉。
 - **迟到可察觉**（`REQ_20261103_NS77FQDYNCMNF71P`，部分）：补一个 notice code 与 E2E 断言，
   不改排序逻辑。
@@ -258,7 +276,7 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
 
 ## 待裁决（owner）
 
-1. **范围**：采纳 15（含 6 条部分）/ 阻塞 2 / 延后 18 是否接受。最容易被认为必须有而被延后的
+1. **范围**：采纳 15（含 7 条部分）/ 阻塞 2 / 延后 18 是否接受。最容易被认为必须有而被延后的
    是「恢复短语」与「消息删除」。
 2. **解除拉黑的窗口外行为**：(a) 如实告知取不回（最小改动，但 `J22VY0VTZVRBY1P6` 的验收要降级）；
    (b) 把 `XBRY5Q81Z4ZPP6ER` 的最小批准路径拉进 S3-A（+800–1,200 行，含新协议状态）。
@@ -279,11 +297,13 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
     窗口内补齐、窗口外给出裁决 2 规定的行为；删除联系人询问历史、保留时消息仍在（搜索断言随
     S3-C 延后，本波只断言会话视图与本地库）；删除已拉黑保留拉黑记录且新应答不出现在界面；
     重加为未校验并提示新关系；对方换设备后拉黑与校验仍在；另一份邀请的应答作为新待确认项且
-    既有记录 version 不变。
+    既有记录 version 不变；备注可写入并按别名/备注过滤联系人（按用户别名检索不在本波）；迟到
+    补入出现一次可见提示且同一原件不重复提醒。
   - `./mill store.test`：`blocked_peers` 迁移、回滚、高水位（若采纳）测试。
   - 被拉黑者持续发送的负载测试：丢弃路径无排队放大。
 - **S3-B**
-  - `./mill server.e2e`：通知载荷不含正文（默认关）；逐会话关闭生效。
+  - `./mill server.e2e`：通知载荷不含正文（默认关）；逐会话关闭生效；点击通知打开对应会话
+    （深链只带会话标识，不带正文与联系人名）。
   - `node shell/contrast-smoke.js` 保持绿；键盘旅程的 E2E 用
     `./desktop-gate.sh node shell/ui-smoke.js` 的同一套驱动。
   - 首次添加联系人与邀请生成处的告知可见。
