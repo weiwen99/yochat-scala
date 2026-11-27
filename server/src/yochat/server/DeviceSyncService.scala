@@ -31,11 +31,16 @@ final class DeviceSyncService(
       syncSeqs <- store.messageSyncSeqs(lastAckedSyncSeq)
       snapshot <- store.snapshot
       orders   <- store.listAllMessageOrders
-      result   <- (syncSeqs, snapshot, orders) match
-                    case (Left(error), _, _)                          => IO.pure(Left(error.code))
-                    case (_, Left(error), _)                          => IO.pure(Left(error.code))
-                    case (_, _, Left(error))                          => IO.pure(Left(error.code))
-                    case (Right(seqs), Right(value), Right(orderMap)) =>
+      contacts <- store.listContactsForSync
+      blocked  <- store.listBlockedPeers
+      result   <- (syncSeqs, snapshot, orders, contacts, blocked) match
+                    case (Left(error), _, _, _, _)                                                            => IO.pure(Left(error.code))
+                    case (_, Left(error), _, _, _)                                                            => IO.pure(Left(error.code))
+                    case (_, _, Left(error), _, _)                                                            => IO.pure(Left(error.code))
+                    case (_, _, _, Left(error), _)                                                            => IO.pure(Left(error.code))
+                    case (_, _, _, _, Left(error))                                                            => IO.pure(Left(error.code))
+                    case (Right(seqs), Right(value), Right(orderMap), Right(contactRows), Right(blockedRows)) =>
+                      val blockedSet = blockedRows.map(_.userPub).toSet
                       val candidates = value.messages.values.flatten
                         .flatMap(message => seqs.get(message.id).map(seq => message -> seq))
                         .toVector
@@ -46,7 +51,7 @@ final class DeviceSyncService(
                         }
                         .take(MaxBatchMessages)
                       val base       = ujson.Obj(
-                        "contacts"      -> ujson.Arr(value.contacts.map(contactJson)*),
+                        "contacts"      -> ujson.Arr(contactRows.map(contactJson(_, blockedSet))*),
                         "conversations" -> ujson.Arr(value.conversations.map(conversationJson)*),
                         "messages"      -> ujson.Arr()
                       )
@@ -101,15 +106,19 @@ final class DeviceSyncService(
         yield Right(())
     }
 
-  private def contactJson(record: ContactRecord): ujson.Value =
+  private def contactJson(record: ContactRecord, blocked: Set[Ed25519Public]): ujson.Value =
     ujson.Obj(
       "userPub"            -> record.userPub.bytes.toHex,
       "channelLabel"       -> record.data.channelLabel,
       "channelAccount"     -> record.data.channelAccount,
       "peerChannelAccount" -> record.data.peerChannelAccount.map(ujson.Str.apply).getOrElse(ujson.Null),
       "alias"              -> record.data.alias.map(ujson.Str.apply).getOrElse(ujson.Null),
+      "note"               -> record.data.note.map(ujson.Str.apply).getOrElse(ujson.Null),
       "safetyVerified"     -> record.data.safetyVerified,
-      "confirmation"       -> confirmationCode(record)
+      "confirmation"       -> confirmationCode(record),
+      "state"              -> (if record.isActive then "active" else "deleted"),
+      "recreated"          -> record.data.recreated,
+      "blocked"            -> blocked.contains(record.userPub)
     )
 
   private def conversationJson(record: ConversationRecord): ujson.Value =

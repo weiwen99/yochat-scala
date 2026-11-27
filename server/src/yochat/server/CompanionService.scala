@@ -23,9 +23,10 @@ final class CompanionService private (
 ):
 
   def sessionJson: IO[Either[ServiceError, Value]] =
-    CompanionView.load(store).map {
-      case Left(error)     => Left(ServiceError.StoreFailed(error.code))
-      case Right(snapshot) => Right(CompanionView.stateJson(store, snapshot, relayHost, relayPort, online = true))
+    CompanionView.load(store).flatMap {
+      case Left(error)     => IO.pure(Left(ServiceError.StoreFailed(error.code)))
+      case Right(snapshot) =>
+        CompanionView.stateJson(store, snapshot, relayHost, relayPort, online = true).map(value => Right(value))
     }
 
   def stateJson: IO[Either[ServiceError, Value]] = sessionJson

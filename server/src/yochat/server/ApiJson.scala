@@ -8,7 +8,7 @@ import ujson.Value
 
 import yochat.core.{Invitation, SafetyNumber, SessionPhase}
 import yochat.core.app.{AppContact, AppLimits, AppState, ContactConfirmation, Conversation, InvitationLifecycle, Notification}
-import yochat.store.{MessageRecord, MessageState, Store}
+import yochat.store.{BlockedPeerRecord, MessageRecord, MessageState, StorageError, Store}
 
 object ApiJson:
 
@@ -37,7 +37,8 @@ object ApiJson:
     val contacts      = state.contacts.values.toVector.sortBy(contact => displayName(contact).toLowerCase)
     val conversations = state.conversations.values.toVector.sortBy(_.id.toHex)
     for
-      contactValues      <- sequence(contacts.map(contact => contactJson(store, state, contact)))
+      blockedRows        <- store.listBlockedPeers
+      contactValues      <- sequence(contacts.map(contact => contactJson(store, state, contact, blockedSet(blockedRows))))
       conversationValues <- sequence(conversations.map(conversation => conversationJson(store, state, conversation)))
     yield ujson.Obj(
       "unlocked"      -> state.lock.isUnlocked,
@@ -54,7 +55,9 @@ object ApiJson:
       "contacts"      -> ujson.Arr(contactValues*),
       "conversations" -> ujson.Arr(conversationValues*),
       "invitations"   -> ujson.Arr(invitations(state)*),
-      "sessions"      -> ujson.Arr(sessions(state)*)
+      "sessions"      -> ujson.Arr(sessions(state)*),
+      "blockedPeers"  -> ujson.Arr(blockedPeers(state, blockedSet(blockedRows))*),
+      "lateArrival"   -> lateArrival(state.lateArrival)
     )
 
   def visible(record: MessageRecord, conversation: Conversation, localUser: ByteVector): Boolean =
@@ -115,6 +118,23 @@ object ApiJson:
   def error(error: ServiceError): Value =
     ujson.Obj("error" -> error.code)
 
+  private def blockedSet(rows: Either[StorageError, List[BlockedPeerRecord]]): Set[ByteVector] =
+    rows.toOption.getOrElse(Nil).map(_.userPub.bytes).toSet
+
+  private def blockedPeers(state: AppState, blocked: Set[ByteVector]): Vector[Value] =
+    blocked.toVector.sortBy(_.toHex).map { user =>
+      val name     = state.contacts.values.find(_.userPub.bytes == user).map(displayName)
+      ujson.Obj(
+        "userPub"     -> user.toHex,
+        "displayName" -> name.map(value => ujson.Str(value)).getOrElse(ujson.Str(user.toHex.take(8)))
+      )
+    }
+
+  private def lateArrival(value: Option[yochat.core.app.LateArrival]): Value =
+    value match
+      case None       => ujson.Null
+      case Some(item) => ujson.Obj("messageId" -> item.messageId, "conversationId" -> item.conversationId.toHex)
+
   private def lastVisible(store: Store, conversation: Conversation, localUser: ByteVector): IO[Option[MessageRecord]] =
     for
       records <- store.listRecentMessages(conversation.id, AppLimits.MaxBuffered + 1)
@@ -124,22 +144,31 @@ object ApiJson:
         ordered(ready(values.filter(record => visible(record, conversation, localUser)), orderValues.toMap), orderValues.toMap).lastOption
       case _                                   => None
 
-  private def contactJson(store: Store, state: AppState, contact: AppContact): IO[Value] =
-    PeerDeviceListService.devicesFor(store, contact.userPub).flatMap { devices =>
-      val deviceJson = ujson.Arr(
-        devices.getOrElse(Vector.empty).map { entry =>
-          ujson.Obj(
-            "devicePub" -> entry.devicePub.bytes.toHex,
-            "role"      -> (if entry.role == yochat.core.s2.PeerDeviceRole.Primary then "primary" else "companion"),
-            "name"      -> entry.name,
-            "revokedAt" -> entry.revokedAt.map(value => ujson.Num(value.toDouble)).getOrElse(ujson.Null)
-          )
-        }*
-      )
-      contactJsonWithDevices(store, state, contact, deviceJson)
-    }
+  private def contactJson(store: Store, state: AppState, contact: AppContact, blocked: Set[ByteVector]): IO[Value] =
+    for
+      devices   <- PeerDeviceListService.devicesFor(store, contact.userPub)
+      recreated <- store.loadContact(contact.userPub).map(_.toOption.exists(_.data.recreated))
+      deviceJson = ujson.Arr(
+                     devices.getOrElse(Vector.empty).map { entry =>
+                       ujson.Obj(
+                         "devicePub" -> entry.devicePub.bytes.toHex,
+                         "role"      -> (if entry.role == yochat.core.s2.PeerDeviceRole.Primary then "primary" else "companion"),
+                         "name"      -> entry.name,
+                         "revokedAt" -> entry.revokedAt.map(value => ujson.Num(value.toDouble)).getOrElse(ujson.Null)
+                       )
+                     }*
+                   )
+      value     <- contactJsonWithDevices(store, state, contact, deviceJson, blocked.contains(contact.userPub.bytes), recreated)
+    yield value
 
-  private def contactJsonWithDevices(store: Store, state: AppState, contact: AppContact, devices: Value): IO[Value] =
+  private def contactJsonWithDevices(
+    store: Store,
+    state: AppState,
+    contact: AppContact,
+    devices: Value,
+    blocked: Boolean,
+    recreated: Boolean
+  ): IO[Value] =
     val conversation = state.conversations.values.find(_.peerUserPub == contact.userPub)
     val safety       = state.identity
       .flatMap(identity => SafetyNumber.derive(identity.user.publicKey, contact.userPub).toOption)
@@ -162,7 +191,10 @@ object ApiJson:
             "conversationId"     -> ujson.Null,
             "lastMessage"        -> "",
             "lastMessageAt"      -> 0L,
-            "devices"            -> devices
+            "devices"            -> devices,
+            "blocked"            -> blocked,
+            "recreated"          -> recreated,
+            "note"               -> contact.note.map(value => ujson.Str(value)).getOrElse(ujson.Null)
           )
         )
       case Some(conversation) =>
@@ -181,7 +213,10 @@ object ApiJson:
             "conversationId"     -> conversation.id.toHex,
             "lastMessage"        -> record.map(value => decodeBody(value.body)).getOrElse(""),
             "lastMessageAt"      -> record.map(_.createdAt).getOrElse(0L),
-            "devices"            -> devices
+            "devices"            -> devices,
+            "blocked"            -> blocked,
+            "recreated"          -> recreated,
+            "note"               -> contact.note.map(value => ujson.Str(value)).getOrElse(ujson.Null)
           )
         }
 

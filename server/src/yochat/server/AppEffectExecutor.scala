@@ -481,7 +481,7 @@ final class AppEffectExecutor(
       channelAccount = contact.channelAccount,
       peerChannelAccount = contact.peerChannelAccount,
       alias = contact.alias,
-      note = None,
+      note = contact.note,
       safetyVerified = contact.safetyVerified,
       confirmationState = contact.confirmation match
         case ContactConfirmation.Pending         => StoreConfirmation.Pending

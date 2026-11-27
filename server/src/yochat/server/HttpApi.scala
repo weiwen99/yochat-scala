@@ -146,6 +146,53 @@ final class HttpApi private ():
               }
             }
           } ~
+          path("contacts" / Segment / "block") { userRaw =>
+            post {
+              id(userRaw) match
+                case Left(error) => completeResult(IO.pure(Left(error)))
+                case Right(user) =>
+                  completeResult(service.blockContact(user).map(_.map(changed => ujson.Obj("ok" -> true, "changed" -> changed))))
+            }
+          } ~
+          path("contacts" / Segment / "unblock") { userRaw =>
+            post {
+              id(userRaw) match
+                case Left(error) => completeResult(IO.pure(Left(error)))
+                case Right(user) =>
+                  completeResult(service.unblockContact(user).map(_.map(changed => ujson.Obj("ok" -> true, "changed" -> changed))))
+            }
+          } ~
+          path("contacts" / Segment / "note") { userRaw =>
+            post {
+              entity(as[String]) { body =>
+                id(userRaw) match
+                  case Left(error) => completeResult(IO.pure(Left(error)))
+                  case Right(user) =>
+                    withObject(body) { json =>
+                      optional(json, "note")(string) match
+                        case Left(error) => IO.pure(Left(error))
+                        case Right(note) => service.setNote(user, note).map(_.map(_ => ujson.Obj("ok" -> true)))
+                    }
+              }
+            }
+          } ~
+          path("contacts" / Segment / "delete") { userRaw =>
+            post {
+              entity(as[String]) { body =>
+                id(userRaw) match
+                  case Left(error) => completeResult(IO.pure(Left(error)))
+                  case Right(user) =>
+                    withObject(body) { json =>
+                      optional(json, "deleteHistory")(bool) match
+                        case Left(error)               => IO.pure(Left(error))
+                        case Right(deleteHistoryValue) =>
+                          service
+                            .deleteContact(user, deleteHistoryValue.getOrElse(false))
+                            .map(_.map(blockRecordKept => ujson.Obj("ok" -> true, "blockRecordKept" -> blockRecordKept)))
+                    }
+              }
+            }
+          } ~
           path("contacts" / Segment / "safety") { userRaw =>
             post {
               id(userRaw) match
@@ -319,6 +366,11 @@ final class HttpApi private ():
     field(json, name) match
       case Some(ujson.Str(value)) => Right(value)
       case _                      => Left(ServiceError.BadRequest(name))
+
+  private def bool(json: Value, name: String): Either[ServiceError, Boolean] =
+    field(json, name) match
+      case Some(ujson.Bool(value)) => Right(value)
+      case _                       => Left(ServiceError.BadRequest(name))
 
   private def long(json: Value, name: String): Either[ServiceError, Long] =
     field(json, name) match

@@ -341,14 +341,14 @@ object AppRuntime:
       timers          <- TimerService.create(queue, stateRef, clock)
       random           = new RuntimeRandom
       notificationRef <- Ref.of[IO, Option[Notification]](None)
-      transport        = new RelayAppTransport(relay, queue, notifications, notificationRef, clock, timers)
+      transport        = new RelayAppTransport(relay, store, stateRef, queue, notifications, notificationRef, clock, timers)
       executor         = new AppEffectExecutor(
                            store,
                            identity,
                            transport,
                            (message, _) => FanoutService.sendForMessageRecord(store, relay, message).start.void
                          )
-      loop            <- eventLoop(transport, queue, inboundBudget, stateRef, messageIds, random, executor, fatal, clock, onState).start
+      loop            <- eventLoop(store, transport, queue, inboundBudget, stateRef, messageIds, random, executor, fatal, clock, onState).start
       inbound         <- relay.incoming
                            .flatMap(incoming =>
                              val bytes = RelayPayload.byteSize(incoming.payload)
@@ -392,6 +392,7 @@ object AppRuntime:
     yield runtime
 
   private def eventLoop(
+    store: Store,
     transport: RelayAppTransport,
     queue: Queue[IO, RuntimeCommand],
     inboundBudget: ByteBudget,
@@ -411,11 +412,11 @@ object AppRuntime:
             val released = command match
               case RuntimeCommand.Inbound(_, _, bytes) => inboundBudget.release(bytes)
               case _                                   => IO.unit
-            released *> handle(transport, command, queue, stateRef, messageIds, random, executor, fatal, clock, onState)
+            released *> handle(store, transport, command, queue, stateRef, messageIds, random, executor, fatal, clock, onState)
           }
           .attempt
           .flatMap {
-            case Right(_)    => eventLoop(transport, queue, inboundBudget, stateRef, messageIds, random, executor, fatal, clock, onState)
+            case Right(_)    => eventLoop(store, transport, queue, inboundBudget, stateRef, messageIds, random, executor, fatal, clock, onState)
             case Left(error) =>
               AppRuntime.publishFatal(
                 fatal,
@@ -427,6 +428,7 @@ object AppRuntime:
     }
 
   private def handle(
+    store: Store,
     transport: RelayAppTransport,
     command: RuntimeCommand,
     queue: Queue[IO, RuntimeCommand],
@@ -556,7 +558,7 @@ object AppRuntime:
                recoverRekeys(transport, queue, stateRef, random, executor, fatal, clock, onState)
            else IO.unit)
       case RuntimeCommand.Inbound(from, payload, _)     =>
-        translateInbound(from, payload, messageIds, random, stateRef, clock).flatMap {
+        translateInbound(store, from, payload, messageIds, random, stateRef, clock).flatMap {
           case None        => IO.unit
           case Some(event) => applyEvent(transport, event, queue, stateRef, random, executor, fatal, clock, onState)
         }
@@ -891,6 +893,7 @@ object AppRuntime:
     }
 
   private def translateInbound(
+    store: Store,
     from: Ed25519Public,
     payload: RelayPayload,
     messageIds: Ref[IO, Long],
@@ -908,56 +911,103 @@ object AppRuntime:
               state.sessions.get(frame.header.sessionId) match
                 case None        => IO.pure(None)
                 case Some(value) =>
-                  for
-                    nonce <- random.nonce
-                    newDh <- if value.state.dhPeer.contains(frame.header.dhPub) then IO.pure(None)
-                             else random.x25519.map(Some(_))
-                    event <- frame.header.kind match
-                               case MessageKind.Data | MessageKind.DataAck | MessageKind.Gap =>
-                                 messageIds
-                                   .updateAndGet(nextId)
-                                   .map(id => Some(AppEvent.InboundFrame(id, frame.header.sessionId, frame, newDh, nonce, now)))
-                               case MessageKind.RekeyConfirm                                 =>
-                                 expectedControl(state, frame.header.sessionId, RekeyRole.Responder) match
-                                   case None           => IO.pure(None)
-                                   case Some(expected) =>
-                                     IO.pure(
-                                       Some(
-                                         AppEvent.RekeyConfirmReceived(frame.header.sessionId, frame, expected, nonce, newDh, clock.millis())
-                                       )
-                                     )
-                               case MessageKind.RekeyConfirmAck                              =>
-                                 expectedControl(state, frame.header.sessionId, RekeyRole.Initiator) match
-                                   case None           => IO.pure(None)
-                                   case Some(expected) =>
-                                     random.x25519
-                                       .map(dh => Some(AppEvent.RekeyAckReceived(frame.header.sessionId, frame, expected, dh, clock.millis())))
-                  yield event
-        case RelayPayload.Reply(text)         => replyEvent(state, from, text, now, random)
+                  denied(store, state, value.state.peerUserPub).flatMap {
+                    case true  => IO.pure(None)
+                    case false =>
+                      for
+                        nonce <- random.nonce
+                        newDh <- if value.state.dhPeer.contains(frame.header.dhPub) then IO.pure(None)
+                                 else random.x25519.map(Some(_))
+                        event <- frame.header.kind match
+                                   case MessageKind.Data | MessageKind.DataAck | MessageKind.Gap =>
+                                     messageIds
+                                       .updateAndGet(nextId)
+                                       .map(id => Some(AppEvent.InboundFrame(id, frame.header.sessionId, frame, newDh, nonce, now)))
+                                   case MessageKind.RekeyConfirm                                 =>
+                                     expectedControl(state, frame.header.sessionId, RekeyRole.Responder) match
+                                       case None           => IO.pure(None)
+                                       case Some(expected) =>
+                                         IO.pure(
+                                           Some(
+                                             AppEvent.RekeyConfirmReceived(
+                                               frame.header.sessionId,
+                                               frame,
+                                               expected,
+                                               nonce,
+                                               newDh,
+                                               clock.millis()
+                                             )
+                                           )
+                                         )
+                                   case MessageKind.RekeyConfirmAck                              =>
+                                     expectedControl(state, frame.header.sessionId, RekeyRole.Initiator) match
+                                       case None           => IO.pure(None)
+                                       case Some(expected) =>
+                                         random.x25519
+                                           .map(dh =>
+                                             Some(AppEvent.RekeyAckReceived(frame.header.sessionId, frame, expected, dh, clock.millis()))
+                                           )
+                      yield event
+                  }
+        case RelayPayload.Reply(text)         => replyEvent(store, state, from, text, now, random)
         case RelayPayload.RekeyRequest(bytes) =>
           RekeyRequest.fromBytes(bytes) match
             case Left(_)        => IO.pure(None)
             case Right(request) =>
-              if !state.sessions.contains(request.sessionId) then IO.pure(None)
-              else
-                for
-                  r2     <- random.x25519
-                  r2Next <- random.x25519
-                  nonce  <- random.nonce
-                yield Some(AppEvent.RekeyRequestReceived(request.sessionId, request, r2, r2Next, nonce, clock.millis()))
+              state.sessions.get(request.sessionId) match
+                case None        => IO.pure(None)
+                case Some(value) =>
+                  denied(store, state, value.state.peerUserPub).flatMap {
+                    case true  => IO.pure(None)
+                    case false =>
+                      for
+                        r2     <- random.x25519
+                        r2Next <- random.x25519
+                        nonce  <- random.nonce
+                      yield Some(AppEvent.RekeyRequestReceived(request.sessionId, request, r2, r2Next, nonce, clock.millis()))
+                  }
         case RelayPayload.RekeyAccept(bytes)  =>
           RekeyAccept.fromBytes(bytes) match
             case Left(_)       => IO.pure(None)
             case Right(accept) =>
-              if !state.sessions.contains(accept.sessionId) then IO.pure(None)
-              else random.nonce.map(nonce => Some(AppEvent.RekeyAcceptReceived(accept.sessionId, accept, nonce, clock.millis())))
+              state.sessions.get(accept.sessionId) match
+                case None        => IO.pure(None)
+                case Some(value) =>
+                  denied(store, state, value.state.peerUserPub).flatMap {
+                    case true  => IO.pure(None)
+                    case false => random.nonce.map(nonce => Some(AppEvent.RekeyAcceptReceived(accept.sessionId, accept, nonce, clock.millis())))
+                  }
         case RelayPayload.DeviceSync(_)       => IO.pure(None)
         case RelayPayload.DeviceList(_)       => IO.pure(None)
         case RelayPayload.Fanout(_)           => IO.pure(None)
         case RelayPayload.FanoutAck(_)        => IO.pure(None)
     }
 
+  /** One admission predicate for every peer-derived entry: a blocked peer and a peer without an active contact are both denied. `Reply` uses
+    * `blockedOnly` because it precedes the contact; `DeviceSync` is for own devices.
+    */
+  private[server] def denied(store: Store, state: AppState, userPub: Ed25519Public): IO[Boolean] =
+    store.isBlocked(userPub).map(blocked => blocked || !state.contacts.contains(userPub))
+
+  private[server] def blockedOnly(store: Store, userPub: Ed25519Public): IO[Boolean] =
+    store.isBlocked(userPub)
+
+  private[server] def deniedForSession(store: Store, stateRef: Ref[IO, AppState], sessionId: SessionId): IO[Boolean] =
+    AppRuntime.readRef(stateRef).flatMap { state =>
+      state.sessions.get(sessionId) match
+        case None        => IO.pure(true)
+        case Some(value) => denied(store, state, value.state.peerUserPub)
+    }
+
+  private[server] def invitationBlocked(store: Store, stateRef: Ref[IO, AppState], invitationId: ByteVector): IO[Boolean] =
+    AppRuntime.readRef(stateRef).flatMap { state =>
+      state.invitations.get(invitationId).map(_.invitation.fields.userPub) match
+        case None          => IO.pure(false)
+        case Some(userPub) => blockedOnly(store, userPub)
+    }
+
   private def replyEvent(
+    store: Store,
     state: AppState,
     from: Ed25519Public,
     text: String,
@@ -973,9 +1023,13 @@ object AppRuntime:
               val ratchetPair = X25519KeyPair(ratchet, head.invitation.fields.ratchetPub)
               Reply.accept(head.invitation, text, ephemeral, ratchetPair, now) match
                 case Right(result) if result.fields.devicePub == from =>
-                  random
-                    .bytes(32)
-                    .map(conversationId => Some(AppEvent.ReplyReceived(head.id, conversationId, result, head.expectedAccount, now)))
+                  blockedOnly(store, result.fields.userPub).flatMap {
+                    case true  => IO.pure(None)
+                    case false =>
+                      random
+                        .bytes(32)
+                        .map(conversationId => Some(AppEvent.ReplyReceived(head.id, conversationId, result, head.expectedAccount, now)))
+                  }
                 case _                                                => tryInvitation(tail)
             case _                                => tryInvitation(tail)
     val candidates                                                       = state.invitations.valuesIterator
@@ -1100,6 +1154,8 @@ private[server] object TimerService:
 
 final private[server] class RelayAppTransport(
   relay: RelayClient,
+  store: Store,
+  stateRef: Ref[IO, AppState],
   queue: Queue[IO, RuntimeCommand],
   notifications: Queue[IO, Notification],
   lastNotification: Ref[IO, Option[Notification]],
@@ -1111,37 +1167,67 @@ final private[server] class RelayAppTransport(
     sendWireResult(toDevice, messageId, generation, wire).flatMap(feedback)
 
   def sendWireResult(toDevice: Ed25519Public, messageId: Long, generation: Long, wire: WireFrame): IO[AppEvent] =
-    relay.send(toDevice, RelayPayload.Wire(wire.bytes)).attempt.map {
-      case Right(_) => AppEvent.SendSucceeded(messageId, generation)
-      case Left(_)  => AppEvent.SendFailed(messageId, generation, clock.millis())
+    AppRuntime.deniedForSession(store, stateRef, wire.header.sessionId).flatMap {
+      case true  => IO.pure(AppEvent.SendFailed(messageId, generation, clock.millis()))
+      case false =>
+        relay.send(toDevice, RelayPayload.Wire(wire.bytes)).attempt.map {
+          case Right(_) => AppEvent.SendSucceeded(messageId, generation)
+          case Left(_)  => AppEvent.SendFailed(messageId, generation, clock.millis())
+        }
     }
 
   def sendAck(sessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame): IO[Unit] =
-    relay.send(toDevice, RelayPayload.Wire(frame.bytes))
+    AppRuntime.deniedForSession(store, stateRef, sessionId).flatMap {
+      case true  => IO.unit
+      case false => relay.send(toDevice, RelayPayload.Wire(frame.bytes))
+    }
 
   def sendGap(sessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame): IO[Unit] =
-    relay.send(toDevice, RelayPayload.Wire(frame.bytes))
+    AppRuntime.deniedForSession(store, stateRef, sessionId).flatMap {
+      case true  => IO.unit
+      case false => relay.send(toDevice, RelayPayload.Wire(frame.bytes))
+    }
 
   def sendReply(invitationId: ByteVector, toDevice: Ed25519Public, text: String): IO[Unit] =
-    relay.send(toDevice, RelayPayload.Reply(text))
+    AppRuntime.invitationBlocked(store, stateRef, invitationId).flatMap {
+      case true  => IO.unit
+      case false => relay.send(toDevice, RelayPayload.Reply(text))
+    }
 
   def sendReplyResult(invitationId: ByteVector, toDevice: Ed25519Public, text: String): IO[AppEvent] =
-    relay.send(toDevice, RelayPayload.Reply(text)).attempt.map {
-      case Right(_) => AppEvent.ReplySent(invitationId)
-      case Left(_)  => AppEvent.ReplySendFailed(invitationId, clock.millis())
+    def send: IO[AppEvent] =
+      relay.send(toDevice, RelayPayload.Reply(text)).attempt.map {
+        case Right(_) => AppEvent.ReplySent(invitationId)
+        case Left(_)  => AppEvent.ReplySendFailed(invitationId, clock.millis())
+      }
+    AppRuntime.invitationBlocked(store, stateRef, invitationId).flatMap {
+      case true  => IO.pure(AppEvent.ReplySendFailed(invitationId, clock.millis()))
+      case false => send
     }
 
   def sendRekeyRequest(sessionId: SessionId, toDevice: Ed25519Public, request: RekeyRequest): IO[Unit] =
-    relay.send(toDevice, RelayPayload.RekeyRequest(request.canonical))
+    AppRuntime.deniedForSession(store, stateRef, sessionId).flatMap {
+      case true  => IO.unit
+      case false => relay.send(toDevice, RelayPayload.RekeyRequest(request.canonical))
+    }
 
   def sendRekeyAccept(sessionId: SessionId, toDevice: Ed25519Public, accept: RekeyAccept): IO[Unit] =
-    relay.send(toDevice, RelayPayload.RekeyAccept(accept.canonical))
+    AppRuntime.deniedForSession(store, stateRef, sessionId).flatMap {
+      case true  => IO.unit
+      case false => relay.send(toDevice, RelayPayload.RekeyAccept(accept.canonical))
+    }
 
   def sendRekeyConfirm(newSessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame): IO[Unit] =
-    relay.send(toDevice, RelayPayload.Wire(frame.bytes))
+    AppRuntime.deniedForSession(store, stateRef, newSessionId).flatMap {
+      case true  => IO.unit
+      case false => relay.send(toDevice, RelayPayload.Wire(frame.bytes))
+    }
 
   def sendRekeyConfirmAck(newSessionId: SessionId, toDevice: Ed25519Public, frame: WireFrame): IO[Unit] =
-    relay.send(toDevice, RelayPayload.Wire(frame.bytes))
+    AppRuntime.deniedForSession(store, stateRef, newSessionId).flatMap {
+      case true  => IO.unit
+      case false => relay.send(toDevice, RelayPayload.Wire(frame.bytes))
+    }
 
   def startTimer(timer: TimerId, deadlineMs: Long, installationId: Long): IO[Unit] =
     timers.start(timer, deadlineMs, installationId)

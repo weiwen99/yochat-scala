@@ -249,6 +249,77 @@ final class AppService private (
         }
     }
 
+  def blockContact(user: ByteVector): IO[Either[ServiceError, Boolean]] =
+    AppService.publicKey(user).flatMap {
+      case Left(error)    => IO.pure(Left(error))
+      case Right(userPub) =>
+        withUnlockedEither { running =>
+          for
+            lock   <- running.store.lockGeneration
+            result <- lock match
+                        case Left(error)  => IO.pure[Either[ServiceError, Boolean]](Left(ServiceError.StoreFailed(error.code)))
+                        case Right(value) =>
+                          running.store.blockPeer(userPub, value).map(_.left.map(error => ServiceError.StoreFailed(error.code)))
+          yield result
+        }
+    }
+
+  def unblockContact(user: ByteVector): IO[Either[ServiceError, Boolean]] =
+    AppService.publicKey(user).flatMap {
+      case Left(error)    => IO.pure(Left(error))
+      case Right(userPub) =>
+        withUnlockedEither { running =>
+          for
+            lock   <- running.store.lockGeneration
+            result <- lock match
+                        case Left(error)  => IO.pure[Either[ServiceError, Boolean]](Left(ServiceError.StoreFailed(error.code)))
+                        case Right(value) =>
+                          running.store.unblockPeer(userPub, value).map(_.left.map(error => ServiceError.StoreFailed(error.code)))
+          yield result
+        }
+    }
+
+  def setNote(user: ByteVector, note: Option[String]): IO[Either[ServiceError, Unit]] =
+    AppService.publicKey(user).flatMap {
+      case Left(error)    => IO.pure(Left(error))
+      case Right(userPub) =>
+        withUnlockedEither { running =>
+          running.runtime.submit(AppEvent.SetContactNote(userPub, note)).map {
+            case true  => Right(())
+            case false => Left(ServiceError.SessionUnavailable)
+          }
+        }
+    }
+
+  def deleteContact(user: ByteVector, deleteHistory: Boolean): IO[Either[ServiceError, Boolean]] =
+    AppService.publicKey(user).flatMap {
+      case Left(error)    => IO.pure(Left(error))
+      case Right(userPub) =>
+        withUnlockedEither { running =>
+          for
+            loaded <- running.store.loadContact(userPub)
+            state  <- running.runtime.state
+            locked <- running.store.isBlocked(userPub)
+            lock   <- running.store.lockGeneration
+            result <- (loaded, lock) match
+                        case (Left(error), _)                  => IO.pure(Left(ServiceError.StoreFailed(error.code)))
+                        case (_, Left(error))                  => IO.pure(Left(ServiceError.StoreFailed(error.code)))
+                        case (Right(record), Right(lockValue)) =>
+                          val conversation = state.conversations.values.find(_.peerUserPub == userPub).map(_.id).getOrElse(ByteVector.empty)
+                          running.store.deleteRelationship(userPub, record.version, deleteHistory, lockValue).flatMap {
+                            case Left(error) => IO.pure(Left(ServiceError.StoreFailed(error.code)))
+                            case Right(_)    =>
+                              running.runtime
+                                .submit(AppEvent.ContactDeleted(userPub, conversation, keepHistory = !deleteHistory))
+                                .map {
+                                  case true  => Right(())
+                                  case false => Left(ServiceError.SessionUnavailable)
+                                }
+                          }
+          yield result.map(_ => locked).left.map(identity)
+        }
+    }
+
   def verifySafety(user: ByteVector): IO[Either[ServiceError, Unit]] =
     AppService.publicKey(user).flatMap {
       case Left(error)    => IO.pure(Left(error))

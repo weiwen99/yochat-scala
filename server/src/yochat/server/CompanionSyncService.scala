@@ -6,7 +6,7 @@ import ujson.Value
 
 import yochat.core.{Ed25519Public, Key32}
 import yochat.core.s2.{JoinManifest, LogicalKey, ManifestKey, OrderDependency, OrderStamp, SyncStatus}
-import yochat.store.{CompanionMessageRecord, ContactConfirmation, ContactData, MessageState, StorageError, Store}
+import yochat.store.{CompanionMessageRecord, ContactConfirmation, ContactData, ContactState, MessageState, StorageError, Store}
 import yochat.transport.{RelayClient, RelayPayload}
 
 /** S2-A receiver. It verifies the A1 snapshot, then upserts contacts, conversations and companion messages. */
@@ -153,19 +153,39 @@ final class CompanionSyncService(
     parseHex(json, "userPub").flatMap(Ed25519Public.from(_).left.map(_ => "user-pub")) match
       case Left(error)    => IO.pure(Left(error))
       case Right(userPub) =>
-        val data = ContactData(
+        val contactState = string(json, "state").getOrElse("active") match
+          case "deleted" => ContactState.Deleted
+          case _         => ContactState.Active
+        val data         = ContactData(
           channelLabel = string(json, "channelLabel").getOrElse(""),
           channelAccount = string(json, "channelAccount").getOrElse(""),
           peerChannelAccount = string(json, "peerChannelAccount"),
           alias = string(json, "alias"),
-          note = None,
+          note = string(json, "note"),
           safetyVerified = bool(json, "safetyVerified").getOrElse(false),
-          confirmationState = confirmation(json)
+          confirmationState = confirmation(json),
+          state = contactState,
+          recreated = bool(json, "recreated").getOrElse(false)
         )
-        store.loadContact(userPub).flatMap {
-          case Right(record)                  => store.updateContact(userPub, data, record.version, lockGeneration).map(mapStore)
-          case Left(StorageError.NotFound(_)) => store.insertContact(userPub, data, lockGeneration).map(mapStore)
-          case Left(error)                    => IO.pure(Left(error.code))
+        val blocked      = bool(json, "blocked").getOrElse(false)
+        store.loadContactForSync(userPub).flatMap {
+          case Left(error)     => IO.pure(Left(error.code))
+          case Right(existing) =>
+            val write =
+              contactState match
+                case ContactState.Deleted =>
+                  existing match
+                    case Some(record) if record.isActive => store.deleteContact(userPub, record.version, lockGeneration).map(mapStore)
+                    case _                               => IO.pure[Either[String, Unit]](Right(()))
+                case ContactState.Active  =>
+                  store.upsertContactFromSync(userPub, data, lockGeneration).map(mapStore)
+            write.flatMap {
+              case Left(error) => IO.pure(Left(error))
+              case Right(_)    =>
+                (if blocked then store.blockPeer(userPub, lockGeneration) else store.unblockPeer(userPub, lockGeneration)).map(
+                  _.map(_ => ()).left.map(_.code)
+                )
+            }
         }
 
   private def applyConversation(json: Value): IO[Either[String, Unit]] =

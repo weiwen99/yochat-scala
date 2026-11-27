@@ -74,20 +74,24 @@ object PeerDeviceListService:
     PeerDeviceList.fromBytes(bytes) match
       case Left(_)     => IO.pure(Left("device-list"))
       case Right(list) =>
-        store.listSessions.flatMap {
-          case Left(error)     => IO.pure(Left(error.code))
-          case Right(sessions) =>
-            sessions.find(session => session.state.peerDevicePub == from && session.state.peerUserPub == list.userPub) match
-              case None    => IO.pure(Left("not-a-contact"))
-              case Some(_) =>
-                store.upsertPeerDeviceList(list, receivedAt).flatMap { result =>
-                  val mark =
-                    if result.isRight then
-                      FanoutService.invalidateTargets(store, list.userPub)
-                      if (list.features & PeerDeviceList.FeatureS2b) != 0L then store.markS2bSeen.void else IO.unit
-                    else IO.unit
-                  mark.as(result.map(_ => ()).left.map(_.code))
-                }
+        store.isBlocked(list.userPub).flatMap {
+          case true  => IO.pure(Left("blocked"))
+          case false =>
+            store.listSessions.flatMap {
+              case Left(error)     => IO.pure(Left(error.code))
+              case Right(sessions) =>
+                sessions.find(session => session.state.peerDevicePub == from && session.state.peerUserPub == list.userPub) match
+                  case None    => IO.pure(Left("not-a-contact"))
+                  case Some(_) =>
+                    store.upsertPeerDeviceList(list, receivedAt).flatMap { result =>
+                      val mark =
+                        if result.isRight then
+                          FanoutService.invalidateTargets(store, list.userPub)
+                          if (list.features & PeerDeviceList.FeatureS2b) != 0L then store.markS2bSeen.void else IO.unit
+                        else IO.unit
+                      mark.as(result.map(_ => ()).left.map(_.code))
+                    }
+            }
         }
 
   def receiveCompanion(
@@ -100,18 +104,22 @@ object PeerDeviceListService:
       case Left(_)     => IO.pure(Left("device-list"))
       case Right(list) =>
         val sender = list.entries.find(entry => entry.devicePub == from)
-        store.loadContact(list.userPub).flatMap {
-          case Left(_)                                                                                               => IO.pure(Left("not-a-contact"))
-          case Right(_) if sender.forall(entry => entry.role != PeerDeviceRole.Primary || entry.revokedAt.isDefined) =>
-            IO.pure(Left("not-primary"))
-          case Right(_)                                                                                              =>
-            store.upsertPeerDeviceList(list, receivedAt).flatMap { result =>
-              val mark =
-                if result.isRight then
-                  FanoutService.invalidateTargets(store, list.userPub)
-                  if (list.features & PeerDeviceList.FeatureS2b) != 0L then store.markS2bSeen.void else IO.unit
-                else IO.unit
-              mark.as(result.map(_ => ()).left.map(_.code))
+        store.isBlocked(list.userPub).flatMap {
+          case true  => IO.pure(Left("blocked"))
+          case false =>
+            store.loadContact(list.userPub).flatMap {
+              case Left(_)                                                                                               => IO.pure(Left("not-a-contact"))
+              case Right(_) if sender.forall(entry => entry.role != PeerDeviceRole.Primary || entry.revokedAt.isDefined) =>
+                IO.pure(Left("not-primary"))
+              case Right(_)                                                                                              =>
+                store.upsertPeerDeviceList(list, receivedAt).flatMap { result =>
+                  val mark =
+                    if result.isRight then
+                      FanoutService.invalidateTargets(store, list.userPub)
+                      if (list.features & PeerDeviceList.FeatureS2b) != 0L then store.markS2bSeen.void else IO.unit
+                    else IO.unit
+                  mark.as(result.map(_ => ()).left.map(_.code))
+                }
             }
         }
 

@@ -41,15 +41,17 @@ object CompanionView:
     relayHost: String,
     relayPort: Int,
     online: Boolean
-  ): Value =
-    val contacts      = snapshot.contacts
-      .sortBy(contact => displayName(contact).toLowerCase)
-      .map(contact => contactJson(store, snapshot, contact))
-    val conversations = snapshot.conversations
-      .sortBy(value => value.conversation.id.toHex)
-      .map(value => conversationJson(snapshot, value))
-
-    ujson.Obj(
+  ): IO[Value] =
+    for
+      blocked      <- store.listBlockedPeers
+      blockedSet    = blocked.toOption.getOrElse(Nil).map(_.userPub).toSet
+      contacts      = snapshot.contacts
+                        .sortBy(contact => displayName(contact).toLowerCase)
+                        .map(contact => contactJson(store, snapshot, contact, blockedSet))
+      conversations = snapshot.conversations
+                        .sortBy(value => value.conversation.id.toHex)
+                        .map(value => conversationJson(snapshot, value))
+    yield ujson.Obj(
       "unlocked"       -> true,
       "readOnly"       -> true,
       "instanceExists" -> true,
@@ -68,7 +70,14 @@ object CompanionView:
       "contacts"       -> ujson.Arr(contacts*),
       "conversations"  -> ujson.Arr(conversations*),
       "invitations"    -> ujson.Arr(),
-      "sessions"       -> ujson.Arr()
+      "sessions"       -> ujson.Arr(),
+      "blockedPeers"   -> ujson.Arr(
+        blockedSet.toVector.sortBy(_.bytes.toHex).map { user =>
+          val name = snapshot.contacts.find(_.userPub == user).map(displayName).getOrElse(user.bytes.toHex.take(8))
+          ujson.Obj("userPub" -> user.bytes.toHex, "displayName" -> name)
+        }*
+      ),
+      "lateArrival"    -> ujson.Null
     )
 
   def messagesJson(store: Store, conversationId: ByteVector, limit: Int): IO[Either[StorageError, Value]] =
@@ -137,7 +146,12 @@ object CompanionView:
       }
       .map(_.map(values => Snapshot(contacts, values)))
 
-  private def contactJson(store: Store, snapshot: Snapshot, record: ContactRecord): Value =
+  private def contactJson(
+    store: Store,
+    snapshot: Snapshot,
+    record: ContactRecord,
+    blocked: Set[yochat.core.Ed25519Public]
+  ): Value =
     val conversation            = snapshot.conversations.find(_.conversation.peerUserPub == record.userPub)
     val last                    = conversation.flatMap(_.messages.lastOption)
     val peerDevice              = conversation.flatMap(_.messages.find(_.authorPub == record.userPub).map(_.devicePub))
@@ -154,7 +168,10 @@ object CompanionView:
       "confirmation"       -> confirmation(record),
       "conversationId"     -> conversation.map(_.conversation.id.toHex).map(ujson.Str.apply).getOrElse(ujson.Null),
       "lastMessage"        -> last.map(_.body.decodeUtf8.getOrElse("")).getOrElse(""),
-      "lastMessageAt"      -> last.map(_.createdAt).getOrElse(0L)
+      "lastMessageAt"      -> last.map(_.createdAt).getOrElse(0L),
+      "note"               -> record.data.note.map(ujson.Str.apply).getOrElse(ujson.Null),
+      "recreated"          -> record.data.recreated,
+      "blocked"            -> blocked.contains(record.userPub)
     )
 
   private def conversationJson(snapshot: Snapshot, value: ConversationView): Value =

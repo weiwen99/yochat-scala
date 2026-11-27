@@ -27,8 +27,8 @@ final class Store private[store] (
   private val blockedPeers: Ref[IO, Set[Ed25519Public]]
 ):
 
-  /** The in-memory blocklist is a read-through cache of `blocked_peers`; every write goes through this store, so the cache cannot drift from
-    * the row in the same process.
+  /** The in-memory blocklist is a read-through cache of `blocked_peers`; every write goes through this store, so
+    * the cache cannot drift from the row in the same process.
     */
   def isBlocked(userPub: Ed25519Public): IO[Boolean] =
     blockedPeers.get.map(_.contains(userPub)) // scalafix:ok DisableSyntax.no-unsafe-get
@@ -295,6 +295,16 @@ final class Store private[store] (
   def loadContactForSync(userPub: Ed25519Public): IO[Either[StorageError, Option[ContactRecord]]] =
     ContactRepository.loadForSync(runtime, userPub)
 
+  def listContactsForSync: IO[Either[StorageError, List[ContactRecord]]] =
+    ContactRepository.listAll(runtime)
+
+  def upsertContactFromSync(
+    userPub: Ed25519Public,
+    data: ContactData,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, ContactRecord]] =
+    runtime.now.flatMap(now => runtime.run(ContactRepository.upsertFromSyncProgram(runtime, userPub, data, expectedLockGeneration, now)))
+
   def updateContact(
     userPub: Ed25519Public,
     data: ContactData,
@@ -318,9 +328,9 @@ final class Store private[store] (
   ): IO[Either[StorageError, Unit]] =
     ContactRepository.delete(runtime, userPub, expectedVersion, expectedLockGeneration)
 
-  /** Ends a relationship. Keeping history leaves sessions, messages and the conversation in place so the app can restore the archived thread;
-    * deleting history also removes the peer's sessions, because `conversations` has no peer-device column and a session without a conversation
-    * would make the next open fail.
+  /** Ends a relationship. Keeping history leaves sessions, messages and the conversation in place so the app can
+    * restore the archived thread; deleting history also removes the peer's sessions, because `conversations` has
+    * no peer-device column and a session without a conversation would make the next open fail.
     */
   def deleteRelationship(
     userPub: Ed25519Public,
@@ -738,8 +748,8 @@ object Store:
       for
         initialized <- runtime.run(Schema.initialize)
         blocked     <- initialized match
-                         case Left(error) => IO.pure(Left(error))
-                         case Right(_)    => runtime.run(BlockedPeerRepository.loadAll)
+                         case Left(error)  => IO.pure(Left(error))
+                         case Right(_)     => runtime.run(BlockedPeerRepository.loadAll)
         cache       <- blocked match
                          case Right(values) => Ref.of[IO, Set[Ed25519Public]](values).map(Right(_))
                          case Left(error)   => IO.pure(Left(error))

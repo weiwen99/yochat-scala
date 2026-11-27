@@ -33,10 +33,14 @@ object FanoutService:
     store.loadConversation(message.conversationId).flatMap {
       case Left(_)             => IO.unit
       case Right(conversation) =>
-        targets(store, conversation.peerUserPub).flatMap { entries =>
-          entries.foldLeft(IO.unit) { (acc, entry) =>
-            acc *> sendTo(store, relay, message, entry).attempt.void
-          }
+        store.isBlocked(conversation.peerUserPub).flatMap {
+          case true  => IO.unit
+          case false =>
+            targets(store, conversation.peerUserPub).flatMap { entries =>
+              entries.foldLeft(IO.unit) { (acc, entry) =>
+                acc *> sendTo(store, relay, message, entry).attempt.void
+              }
+            }
         }
     }
 
@@ -56,12 +60,16 @@ object FanoutService:
         if ack.recipientDevice != store.identity.devicePublic || ack.senderDevice != from then IO.unit
         else
           authorizedCompanion(store, ack.senderDevice).flatMap {
-            case None    => IO.unit
-            case Some(_) =>
-              store.lockGeneration.flatMap {
-                case Left(_)     => IO.unit
-                case Right(lock) =>
-                  IO.realTime.flatMap(time => store.markDeliveryAcked(ack.logicalKey, ack.senderDevice, time.toMillis, lock).void)
+            case None          => IO.unit
+            case Some(userPub) =>
+              store.isBlocked(userPub).flatMap {
+                case true  => IO.unit
+                case false =>
+                  store.lockGeneration.flatMap {
+                    case Left(_)     => IO.unit
+                    case Right(lock) =>
+                      IO.realTime.flatMap(time => store.markDeliveryAcked(ack.logicalKey, ack.senderDevice, time.toMillis, lock).void)
+                  }
               }
           }
 
@@ -104,17 +112,19 @@ object FanoutService:
             }
         }
 
-  private def authorizedCompanion(store: Store, device: Ed25519Public): IO[Option[PeerDeviceEntry]] =
+  private def authorizedCompanion(store: Store, device: Ed25519Public): IO[Option[Ed25519Public]] =
     store.listContacts.flatMap {
       case Left(_)         => IO.pure(None)
       case Right(contacts) =>
-        contacts.foldLeft(IO.pure(Option.empty[PeerDeviceEntry])) { (acc, contact) =>
+        contacts.foldLeft(IO.pure(Option.empty[Ed25519Public])) { (acc, contact) =>
           acc.flatMap {
             case Some(value) => IO.pure(Some(value))
             case None        =>
               store.loadPeerDeviceList(contact.userPub).map {
                 case Right(list) if (list.features & PeerDeviceList.FeatureS2b) != 0L =>
-                  list.entries.find(entry => entry.devicePub == device && entry.role == PeerDeviceRole.Companion && entry.revokedAt.isEmpty)
+                  list.entries
+                    .find(entry => entry.devicePub == device && entry.role == PeerDeviceRole.Companion && entry.revokedAt.isEmpty)
+                    .map(_ => contact.userPub)
                 case _                                                                => None
               }
           }
@@ -200,13 +210,17 @@ object FanoutService:
         store.loadConversation(message.conversationId).flatMap {
           case Left(_)             => IO.unit
           case Right(conversation) =>
-            store.loadPeerDeviceList(conversation.peerUserPub).flatMap {
-              case Left(_)     => IO.unit
-              case Right(list) =>
-                list.entries.find(_.devicePub == receipt.recipientDevice) match
-                  case None                                     => IO.unit
-                  case Some(entry) if entry.revokedAt.isDefined => IO.unit
-                  case Some(entry)                              => sendTo(store, relay, message, entry)
+            store.isBlocked(conversation.peerUserPub).flatMap {
+              case true  => IO.unit
+              case false =>
+                store.loadPeerDeviceList(conversation.peerUserPub).flatMap {
+                  case Left(_)     => IO.unit
+                  case Right(list) =>
+                    list.entries.find(_.devicePub == receipt.recipientDevice) match
+                      case None                                     => IO.unit
+                      case Some(entry) if entry.revokedAt.isDefined => IO.unit
+                      case Some(entry)                              => sendTo(store, relay, message, entry)
+                }
             }
         }
     }

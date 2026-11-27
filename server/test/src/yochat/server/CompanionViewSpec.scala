@@ -45,7 +45,7 @@ final class CompanionViewSpec extends FunSuite:
               state    <- snapshot match
                             case Left(error) => IO.raiseError(new AssertionError(error.code))
                             case Right(value) =>
-                              IO.pure(CompanionView.stateJson(store, value, "127.0.0.1", 7654, online = true))
+                              CompanionView.stateJson(store, value, "127.0.0.1", 7654, online = true)
               messages <- CompanionView.messagesJson(store, fixture.conversationId, 10)
             yield
               assertEquals(ujson.read(state).obj("unlocked").bool, true)

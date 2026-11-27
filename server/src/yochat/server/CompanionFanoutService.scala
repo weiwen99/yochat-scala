@@ -25,44 +25,48 @@ final class CompanionFanoutService(
       case Right(value) =>
         if value.recipientDevice != store.identity.devicePublic then IO.pure(Left("recipient"))
         else
-          authorize(value.senderUser, value.senderDevice).flatMap {
-            case Left(error) => IO.pure(Left(error))
-            case Right(_)    =>
-              FanoutEnvelope.open(fanoutPrivate, store.identity.devicePublic, value) match
-                case Left(_)     => IO.pure(Left("open"))
-                case Right(body) =>
-                  localConversation(value.senderUser).flatMap {
-                    case Left(error)           => IO.pure(Left(error))
-                    case Right(conversationId) =>
-                      val key = LogicalKey(conversationId, value.senderDevice, value.authorSeq)
-                      IO.realTime.flatMap { time =>
-                        val record = CompanionMessageRecord(
-                          sourceId = 0L,
-                          conversationId = conversationId,
-                          authorPub = value.senderUser,
-                          devicePub = value.senderDevice,
-                          seq = value.authorSeq,
-                          body = body,
-                          state = MessageState.Received,
-                          createdAt = time.toMillis,
-                          syncSeq = 0L,
-                          logicalKey = Some(key)
-                        )
-                        store.upsertCompanionMessage(record).flatMap {
-                          case Left(error)   => IO.pure(Left(error.code))
-                          case Right(stored) =>
-                            val stamp = value.order.getOrElse(OrderStamp.legacy(value.authorSeq))
-                            store.lockGeneration.flatMap {
-                              case Left(error) => IO.pure(Left(error.code))
-                              case Right(lock) =>
-                                store.upsertMessageOrder(key, stamp, time.toMillis, lock).flatMap {
+          store.isBlocked(value.senderUser).flatMap {
+            case true  => IO.pure(Left("blocked"))
+            case false =>
+              authorize(value.senderUser, value.senderDevice).flatMap {
+                case Left(error) => IO.pure(Left(error))
+                case Right(_)    =>
+                  FanoutEnvelope.open(fanoutPrivate, store.identity.devicePublic, value) match
+                    case Left(_)     => IO.pure(Left("open"))
+                    case Right(body) =>
+                      localConversation(value.senderUser).flatMap {
+                        case Left(error)           => IO.pure(Left(error))
+                        case Right(conversationId) =>
+                          val key = LogicalKey(conversationId, value.senderDevice, value.authorSeq)
+                          IO.realTime.flatMap { time =>
+                            val record = CompanionMessageRecord(
+                              sourceId = 0L,
+                              conversationId = conversationId,
+                              authorPub = value.senderUser,
+                              devicePub = value.senderDevice,
+                              seq = value.authorSeq,
+                              body = body,
+                              state = MessageState.Received,
+                              createdAt = time.toMillis,
+                              syncSeq = 0L,
+                              logicalKey = Some(key)
+                            )
+                            store.upsertCompanionMessage(record).flatMap {
+                              case Left(error)   => IO.pure(Left(error.code))
+                              case Right(stored) =>
+                                val stamp = value.order.getOrElse(OrderStamp.legacy(value.authorSeq))
+                                store.lockGeneration.flatMap {
                                   case Left(error) => IO.pure(Left(error.code))
-                                  case Right(_)    => acknowledge(value, time.toMillis).attempt.as(Right(stored.record))
+                                  case Right(lock) =>
+                                    store.upsertMessageOrder(key, stamp, time.toMillis, lock).flatMap {
+                                      case Left(error) => IO.pure(Left(error.code))
+                                      case Right(_)    => acknowledge(value, time.toMillis).attempt.as(Right(stored.record))
+                                    }
                                 }
                             }
-                        }
+                          }
                       }
-                  }
+              }
           }
 
   /** B1 uses its own local conversation id. A2's visible conversation is the one A1 already synchronized for the same peer. */

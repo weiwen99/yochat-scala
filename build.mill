@@ -122,7 +122,7 @@ object server extends CommonModule with ScalafmtModule with ScalafixModule:
     ()
   }
 
-  /** Two-process functional S1 behavior contracts. Not a load test. */
+  /** Two-process functional S1 + S3 behavior contracts. Not a load test. */
   def e2e(): Command[Unit] = Task.Command {
     val classpath = test.runClasspath().map(_.path).mkString(java.io.File.pathSeparator)
     Option(System.getProperty("e2e.only")) match
@@ -138,8 +138,22 @@ object server extends CommonModule with ScalafmtModule with ScalafixModule:
           stdout = os.Inherit,
           stderr = os.Inherit
         )
+        e2eS3(classpath)
     ()
   }
+
+  /** Two-process S3-A behavior contract (block, unblock, delete, re-add). Idempotent with `e2e`. */
+  def s3e2e(): Command[Unit] = Task.Command {
+    e2eS3(test.runClasspath().map(_.path).mkString(java.io.File.pathSeparator))
+    ()
+  }
+
+  private def e2eS3(classpath: String): Unit =
+    os.proc("java", "-cp", classpath, "yochat.server.e2e.S3E2E").call(
+      cwd = moduleDir,
+      stdout = os.Inherit,
+      stderr = os.Inherit
+    )
 
   /** Fixed S2-A companion behavior contract; requires a built server and test classpath. */
   def s2e2e(): Command[Unit] = Task.Command {

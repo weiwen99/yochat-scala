@@ -11,9 +11,9 @@ import yochat.core.s2.JoinManifest
 import yochat.store.{DeviceRecord, DeviceRole, Store}
 import yochat.transport.{RelayClient, RelayPayload}
 
-/** A1-side automatic snapshot trigger. A2 sends a small `s2-sync-request` after pairing, restart, or reconnect; A1 answers with a sealed
-  * snapshot. A1 also coalesces visible-state changes and pushes a fresh snapshot to active companion devices. No polling loop or relaying of
-  * user messages is added to the S1 peer path.
+/** A1-side automatic snapshot trigger. A1 pushes a sealed snapshot after visible-state changes and asks each active companion for its sync
+  * status when the relay comes online; the protocol defines `s2-sync-request`, but no production companion sends it yet, so it is not claimed
+  * here. No polling loop or relaying of user messages is added to the S1 peer path.
   */
 final class DeviceSyncScheduler private (
   requestFiber: Fiber[IO, Throwable, Unit],
