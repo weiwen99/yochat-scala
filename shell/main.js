@@ -168,27 +168,38 @@ function createWindow() {
   }
 }
 
-function keychainAvailable() {
-  return typeof safeStorage.isAsyncEncryptionAvailable === "function"
-    ? safeStorage.isAsyncEncryptionAvailable()
-    : safeStorage.isEncryptionAvailable();
+// safeStorage's async API is the only supported one in Electron 45; the sync
+// variants are deprecated. The probe resolves a boolean, so a caller that treats
+// the Promise as a value would see "available" even when the keychain is not.
+async function keychainAvailable() {
+  try {
+    return await safeStorage.isAsyncEncryptionAvailable();
+  } catch (_) {
+    return false;
+  }
 }
 
 ipcMain.handle("passphrase-available", () => keychainAvailable());
 
-ipcMain.handle("passphrase-save", (_event, value) => {
-  if (!keychainAvailable()) return false;
+ipcMain.handle("passphrase-save", async (_event, value) => {
+  if (!(await keychainAvailable())) return false;
   const target = path.join(app.getPath("userData"), "passphrase.bin");
-  fs.writeFileSync(target, safeStorage.encryptString(String(value)), { mode: 0o600 });
-  return true;
+  try {
+    const encrypted = await safeStorage.encryptStringAsync(String(value));
+    await fs.promises.writeFile(target, encrypted, { mode: 0o600 });
+    return true;
+  } catch (_) {
+    return false;
+  }
 });
 
-ipcMain.handle("passphrase-load", () => {
-  if (!keychainAvailable()) return null;
+ipcMain.handle("passphrase-load", async () => {
+  if (!(await keychainAvailable())) return null;
   const target = path.join(app.getPath("userData"), "passphrase.bin");
-  if (!fs.existsSync(target)) return null;
   try {
-    return safeStorage.decryptString(fs.readFileSync(target));
+    const encrypted = await fs.promises.readFile(target);
+    const { result } = await safeStorage.decryptStringAsync(encrypted);
+    return result;
   } catch (_) {
     return null;
   }

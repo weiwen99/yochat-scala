@@ -12,7 +12,8 @@
     "ui:electron": "node electron-smoke.js",
     "contrast:smoke": "node contrast-smoke.js",
     "cross:host": "node cross-host-smoke.js",
-    "check": "node --check main.js && node --check preload.js && node --check keychain-smoke.js && node --check perf-start.js && node --check ui-smoke.js && node --check contrast-smoke.js && node --check electron-smoke.js && node --check cross-host-smoke.js",
+    "passphrase:smoke": "node passphrase-smoke.js",
+    "check": "node --check main.js && node --check preload.js && node --check keychain-smoke.js && node --check perf-start.js && node --check ui-smoke.js && node --check contrast-smoke.js && node --check electron-smoke.js && node --check cross-host-smoke.js && node --check passphrase-smoke.js",
     "check:keychain": "electron keychain-smoke.js"
   },
   "devDependencies": {

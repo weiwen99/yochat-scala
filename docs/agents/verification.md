@@ -98,6 +98,19 @@ During development, run the checks the change actually affects and reuse results
 - Gate red: isolate and rerun. A fixed failing location is this change's bug; a drifting location under load is a flake. Do not global-serialize with `-j 1` to hide it.
 - Local unit tests are not production acceptance. Say what was actually run.
 
+## Desktop gates
+
+Run every Electron gate through `./desktop-gate.sh <command> [args...]` (`check.sh` does).
+
+- **Keychain items are created from an interactive session.** On macOS `safeStorage` is backed by a per-app keychain item. Creating it needs the Aqua session; over ssh (`launchctl managername` reports `Background`) creation fails with `errSecInteractionNotAllowed`. Once the item exists with an ACL that allows the app, later Background reads can succeed — so a gate must not depend on which state it finds. The runner removes the ambiguity: it joins the Aqua session with `launchctl asuser` when it has passwordless sudo, runs directly when already in Aqua, and prints `DEGRADED` when it can do neither.
+- The keychain identity is per app. `electron <script>` uses `Electron Safe Storage`; the product (`electron .` in `shell/`) uses its own item. `keychain-smoke` probes the raw `safeStorage` layer, `passphrase-smoke` drives the real app's IPC handlers in whichever session it runs.
+- `caffeinate -dims` holds display and idle sleep for the duration.
+- `YOCHAT_GATE_TIMEOUT` (seconds, default 1800) bounds each gate. Exit 124/137 prints `verdict=INCOMPLETE` and is not a pass.
+- Each run writes `tmp/checks/desktop-gate-<epoch>.json` with the injection mode, display state, lock state, and duration. The gate's own receipt holds the measurements; compare performance numbers only at the same display state.
+- A gate that hangs is a failure, not a result. `keychain-smoke` exits 2 (unavailable), 1 (mismatch or error), or 3 (30s watchdog).
+- `screencapture` is denied by TCC to ssh and injected sessions alike; failure evidence comes from Playwright's `page.screenshot`, which needs no TCC grant.
+- Verified 2026-11-27 on m1: `electron-smoke` passed with the display off (100 messages each way, both restarts) and with the display on; `passphrase-smoke` passed in Aqua (save, restart, prefilled) and in Background (boolean contract). The **locked** screen state is recorded in receipts but unverified: unlocking needs the user's password, so no automated run can cover it.
+
 ## Receipts
 
 Checks write under `tmp/checks/<timestamp>/` (ignored). Each receipt records the command, tool versions, input hash, duration, verdict, and the log path. Only a complete receipt with an explicit verdict counts.

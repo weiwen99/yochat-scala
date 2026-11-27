@@ -31,6 +31,8 @@ node --check shell/ui-smoke.js
 node --check shell/contrast-smoke.js
 node --check shell/electron-smoke.js
 node --check shell/cross-host-smoke.js
+node --check shell/passphrase-smoke.js
+bash -n desktop-gate.sh
 ./mill server.e2e
 ./mill server.s2e2e
 ./mill server.s2perf
@@ -41,12 +43,14 @@ if [ ! -x shell/node_modules/.bin/electron ]; then
   echo "desktop gate requires shell/node_modules; run npm ci in shell" >&2
   exit 1
 fi
-node shell/perf-start.js
-node shell/contrast-smoke.js
-node shell/ui-smoke.js
-node shell/electron-smoke.js
+./desktop-gate.sh ./shell/node_modules/.bin/electron shell/keychain-smoke.js
+./desktop-gate.sh node shell/passphrase-smoke.js
+./desktop-gate.sh node shell/perf-start.js
+./desktop-gate.sh node shell/contrast-smoke.js
+./desktop-gate.sh node shell/ui-smoke.js
+./desktop-gate.sh node shell/electron-smoke.js
 if [ "${YOCHAT_CROSS_HOST:-0}" = "1" ]; then
-  node shell/cross-host-smoke.js
+  ./desktop-gate.sh node shell/cross-host-smoke.js
 fi
 ./models/check.sh
 ./mill spike.checkFormat
