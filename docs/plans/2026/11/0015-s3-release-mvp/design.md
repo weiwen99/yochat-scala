@@ -1,6 +1,6 @@
 # Plan 0015 design: S3 发布级 MVP 的范围
 
-- Status: draft（未开工；范围待 owner 裁决，本文件冻结于实现开始）
+- Status: frozen（2026-11-27；八条裁决已由 owner 委派决定，见「裁决」；实现从 S3-A 开始）
 - 前序：ADR-0003（v1 范围与 S2/S3 边界）、0001（重写）、0010/0011/0012/0013（S2 与 S2b 多设备）、0014（桌面门禁）
 - 候选来源：`docs/references/2026-11-20-yochat-reference-study/requirements.md` 的 S3 段（35 条，文件自述「是建议，不是已拍板的 S3 清单」）
 - 需求编号：正文用 ID 后缀；完整 ID 见来源表。两条前缀不同，按全 ID 写：`REQ_20260919_757FNZE6B8FN15YV`、`REQ_20261103_NS77FQDYNCMNF71P`
@@ -11,7 +11,8 @@
 
 **口径**（上一版未写明，是第 1 轮评审的 P1）：下表只计 `core store transport server ui` 的
 `*/src`。不计 `spike/src`（2,143 行，gate 实验代码）与 `shell/*.js`（壳层，不是 v1 产品逻辑）。
-若把两者计入，基线 23,990 行，余量相应减少 4,376 行。裁决 6 需要这个口径。
+若把两者计入，基线 23,990 行，余量相应减少 4,376 行。裁决 6 维持此口径：AGENTS.md §5 的
+「v1 生产代码」指产品模块，`spike/` 是可弃实验代码，`shell/*.js` 是壳层；两者单列观测，不占产品额度。
 
 | 项 | 当前 | 上限 | 余量 |
 | --- | ---: | ---: | ---: |
@@ -26,7 +27,7 @@
 | 维度 | 需求给的 | 本计划产出 | 倍率 |
 | --- | --- | --- | --- |
 | 需求条数 | 35 条候选 | 采纳 15（其中 9 条部分采纳）、阻塞待 ADR 2、延后 18 | 0.4× |
-| 表数 | 0（现 12） | +1（`blocked_peers`）；若裁决 8 选 (b) 再 +1（第二条待确认项） | 需解释 |
+| 表数 | 0（现 12） | +1（`blocked_peers`）；裁决 8(a) 维持现状，不再加表 | 需解释 |
 | 组件数 | 0 | +1（拉黑名单面板） | 需解释 |
 | 配置项 | 0 | +2（通知正文开关、隐私告知已读版本） | 需解释 |
 | 工程师日 | 未给 | S3-A 12–18、S3-B 4–6（估算；S3-C 另计 6–10，阻塞） | — |
@@ -43,7 +44,9 @@
 
 ## 状态与前序
 
-- 状态：**draft**。范围与八条裁决未定前不开工（见「待裁决」）。
+- 状态：**frozen（2026-11-27）**。八条裁决由 owner 在 2026-11-27 委派决定（原话「请开始你的设计
+  和实现。我希望中间不需要我干预。」）；决定与理由见「裁决」，实现按 S3-A → S3-B 推进，S3-C 仍阻塞于
+  自己的 ADR。
 - S1 已交付（ADR-0003）：单用户单联系人、邀请/应答、单聊、先落盘、重启与重连、应用锁、安全码。
 - S2 / S2b 已交付（0010–0013）：本人多设备、设备列表与扇出、GBNV 因果序、吊销生效。
 - 0013 的 `meta.md` 写「Next: S3 scope decision (Plan 0014)」；0014 已被桌面门禁占用，故用 0015。
@@ -68,11 +71,11 @@ S1/S2 之后缺两类东西：
 | --- | --- |
 | `ZWMFKB381M0AKCYN` 拉黑停止双向通信且不产生响应 | 全条 |
 | `TW7PP68XQAKBAVYH` 拉黑可推断性说明 | 全条 |
-| `J22VY0VTZVRBY1P6` 解除拉黑补齐期间消息 | **部分**：窗口内的自动补齐；窗口外行为见裁决 2 |
+| `J22VY0VTZVRBY1P6` 解除拉黑补齐期间消息 | **部分**：窗口内的自动补齐；窗口外不取回，界面如实说明（裁决 2(a)） |
 | `F7ZBKSBAC1N4KM2K` 删除联系人时询问是否删除历史 | **部分**：询问 + 本机删除 + 关系变更同步；「其他设备各自确认后才删」随 `K54NXXBZW1R6415F` 延后 |
 | `SD1XKGXS4DBG5ZTE` 删除已拉黑保留拉黑记录 | 全条 |
 | `XS6GKW2ZZ4R1CS6Y` 重新添加不继承校验状态 | 全条（含「提示这是新建立的关系」） |
-| `GG1H42XAJXA0M4ZT` 联系人刷新保留拉黑与校验 | **部分**：设备刷新这条路（换设备/吊销）做，拉黑与校验保留。**「经另一份邀请再应答时作为新待确认项、不自动改写既有记录」与现有实现相反**：`AppStep.ReplyReceived` 对已存在联系人的应答走 `AccountMismatch` + `PersistContact`（version 递增），只有联系人不存在才生成 `Pending`；`BindingSpec` 有两条测试断言这个行为。要做成来源要求，得改写该分支、给「同一 user_pub 的第二条待确认项」找承载（`contacts` 主键就是 `user_pub`，现模型放不下），预计 +1 表、+200–400 行，并让两条既有测试变红（需签字）。这条进裁决 8 |
+| `GG1H42XAJXA0M4ZT` 联系人刷新保留拉黑与校验 | **部分**：设备刷新这条路（换设备/吊销）做，拉黑与校验保留。**「经另一份邀请再应答时作为新待确认项、不自动改写既有记录」与现有实现相反**：`AppStep.ReplyReceived` 对已存在联系人的应答走 `AccountMismatch` + `PersistContact`（version 递增），只有联系人不存在才生成 `Pending`；`BindingSpec` 有两条测试断言这个行为。要做成来源要求，得改写该分支、给「同一 user_pub 的第二条待确认项」找承载（`contacts` 主键就是 `user_pub`，现模型放不下），预计 +1 表、+200–400 行，并让两条既有测试变红（需签字）。**裁决 8(a)：维持现状**（见「裁决」），把来源要求登记为已知分歧；本条按「设备刷新做、二次邀请应答不改」验收 |
 | `9MKG1QMBXQAG6C12` 无法提供的消息有可验证答复 | **部分**：解除拉黑窗口外那条答复 |
 | `0P17VCWKG2FZ26SZ` 别名与备注私有 | **部分**，逐句：①「别名为主显示」已满足（`displayName = alias orElse peerChannelAccount orElse 短公钥`）；①后半句「仍可看到对方自设的用户别名」不成立——v1 没有用户别名，它随 `Z1P2TGCMD0K4W1XP` 延后；②「按别名/备注/用户别名任一检索」本波做前两项（联系人列表在内存，过滤即可），「用户别名」同上延后；③「两者不出现在发给对方的数据」已满足（密封载荷）。备注写入路径本波补 |
 
@@ -106,7 +109,7 @@ S1/S2 之后缺两类东西：
 | `REQ_20260919_757FNZE6B8FN15YV` 渠道身份保存复用 | 邀请已带渠道身份；「保存复用」是输入便利，不是协议能力。 |
 | `F53PQ4FB8VT4SCV9` 公开张贴邀请的代价说明 | 公开张贴不在范围，说明随功能走。 |
 | `CE3T62ZJNE2FKYKE` 联系人分组私有 | 真实理由是成本：新字段 + 分组 UI 约 400–600 行，收益低于同预算下的其他项。来源文档认为分组有独立价值，本计划不否认，只按预算排后。 |
-| `XBRY5Q81Z4ZPP6ER` 大范围重发需批准 | 需要批准队列与新协议状态。与裁决 2 联动：若不批准，解除拉黑的窗口外路径只能如实说明缺口。 |
+| `XBRY5Q81Z4ZPP6ER` 大范围重发需批准 | 需要批准队列与新协议状态。裁决 2(a) 选择不批准，因此解除拉黑的窗口外路径只能如实说明缺口。 |
 | `WW7ZXW92D1B6NVH9` 引用回复 | 消息结构要加引用字段，牵动 GBNV 与去重。 |
 | 消息删除 5 条（`PE8XM7D0MPZ2XWTV`、`F9J932YWK907YPY7`、`Y4W1WTZE4K8TNEYD`、`K54NXXBZW1R6415F`、`SR68DSXCX4S5TZ3R`） | 墓碑、逐设备确认、跨设备传播是协议级改动，与 GBNV 顺序语义耦合。 |
 | `0FAYS8R0Z7A9WF3Q` 配额暂停与恢复 | S1 已有有界队列与固定上限；暂停/恢复面向大流量。 |
@@ -119,7 +122,9 @@ S1/S2 之后缺两类东西：
    contacts 墓碑是另一件事（见「关系变更的同步」）。出处：`requirements.md` 的「消息默认永久
    保存 vs 用户删除」段。
 2. **拉黑窗口外的消息取不回**：对方重试预算耗尽（3 次 / 约 15 秒；wire 失败约 2 秒 / 在途 ≤32 条）
-   后进入 Failed，不再重发；`requestResend` 不接受 Failed。与裁决 2 绑定。
+   后进入 Failed，不再重发；`requestResend` 不接受 Failed。**裁决 2(a)**：如实告知取不回，
+   `J22VY0VTZVRBY1P6` 按「窗口内自动补齐、窗口外明确告知」降级验收；不引入批准队列
+   （`XBRY5Q81Z4ZPP6ER` 仍延后）。
 3. **关系变更只在主设备发起**：`device_sync` 的**快照数据**是 A1→A2 单向；A2→A1 已经存在
    sync-status 与 ack 两类帧（`CompanionService.requestLoop` 取 `receiver.statusBytes` →
    `DeviceSyncProtocol.syncStatus`；`CompanionSyncService` 的 ack；A1 侧
@@ -127,7 +132,8 @@ S1/S2 之后缺两类东西：
    发送方（只有测试用），不能当既有先例。
    `DeviceList` 不可能由 A2 发出：构建它需要 A1 才持有的用户私钥（`PeerDeviceListService.build`
    返回 `primary-user-key`）；`FanoutAck` 的方向是对端 companion → 本机 A1，不是 A2 → A1。
-   缺的是「关系变更数据的上行携带与 A1 侧应用」，不是通道本身。S3-A 先在 A2 禁用这些操作并提示在主力设备操作；是否补上行是裁决 3。
+   缺的是「关系变更数据的上行携带与 A1 侧应用」，不是通道本身。**裁决 3(a)**：S3-A 在 A2 禁用这些
+   操作并提示在主力设备操作；A2 只通过 A1→A2 快照接收联系人状态（`blocked` / `deleted`），不发起。
 4. v1 的 16 条行为契约不变；S3 只新增契约。
 5. 不改中继语义；入站丢弃发生在应用层。
 6. 自动更新、安装包矩阵、Windows、签名公证不在 S3。
@@ -144,13 +150,25 @@ S1/S2 之后缺两类东西：
 
 ### 存储与 ADR 边界
 
-- `blocked_peers` 的载荷若要密封，需要新的域子密钥与 AAD 域标签；ADR-0007 §3/§4 规定
-  **改变 AAD 的迁移必须新开 ADR**。S3-A 开工前先写存储 ADR（或 ADR-0007 revision），写明：
-  域标签、`databaseKey` 派生节点、AAD 字段清单、索引。
-- 为满足「仅含其用户公钥」，`blocked_peers` **只存** `user_pub`（主键）与 `created_at`；
-  不存理由、别名、备注、渠道身份。
-- 防止一行被回滚即静默解除拉黑：`blocked_peers` 需要 `meta` 高水位（与 `contact-version` 同法），
-  或明确登记为已知约束「v1 不防本地删行」。二选一在存储 ADR 里定。
+存储扩展由 **ADR-0012**（2026-11-27，owner 委派接受）定稿，不修订 ADR-0007 的 AAD 规则：
+
+- `blocked_peers` **不密封载荷**：行只有 `user_pub`（主键）、`version`、`created_at`、`updated_at`。
+  行存在即拉黑；解除拉黑先推进 `meta["blocked-version/<hex>"]` 高水位再删行（ADR-0007 §4 的删除
+  模式）。`user_pub` 是公钥、行数是 ADR-0007 已登记的泄漏项，因此不新增密封域，也不新增
+  `databaseKey` 派生节点或 AAD 标签。
+- 回滚保护：行版本必须等于 `meta` 高水位，否则打开实例即 `StaleGeneration`（失败关闭）。
+  协调回滚（行 + `meta` 一起回滚）仍是 ADR-0007 的已知约束。
+- `contacts.sealed` 升到 codec v2：新增 `state`（`active` / `deleted`）与 `recreated` 标志；AAD 不变
+  （仍是 `contact/v1` + `userPub` + `version`）。v1 行按 `active` 读。删除联系人 = 行保留、
+  `state=deleted`、清空别名/备注/渠道身份、`version+1`；`listContacts`/`snapshot` 过滤 deleted。
+  重加时 upsert 把同一行复活为 `state=active`、`safetyVerified=false`、`recreated=true`；
+  核对安全码后 `recreated` 清除。
+- 删除联系人**不删除会话行**：`conversations` 表没有 peer device 列，删掉 session 后
+  `AppStateRestore` 无法把保留下来的历史会话映射到对端设备，应用会打不开。关系结束改由统一的
+  准入判定保证——入站六个入口要求「存在 active 联系人」，出站（Reply 除外）同样要求；
+  拉黑额外由 `blocked_peers` 判定。可选的历史删除删 `messages`、`message_order`、
+  `delivery_receipts` 与 `conversations`（本机行为，ADR-0007 已登记消息删除不在防篡改承诺内）；
+  删除联系人同时移除该对端的待处理邀请，避免旧邀请把关系重新建起来。
 
 ### S3-A 关系结束
 
@@ -195,7 +213,7 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
   `gapRequested`，会**静默丢帧、永久失步**。S3-A 必须补一条：`GapTooLarge` 映射到可重建通道的
   状态（复用 S1 的 rekey 路径），或在解封时主动重建。这是 S3-A 的核心改动，不再是「零成本复用」。
 - 窗口外的消息要么走批准重发（`XBRY5Q81Z4ZPP6ER`，本计划延后），要么如实告诉用户取不回。
-  这是裁决 2。
+  **裁决 2(a)：如实告知取不回**；不把批准路径拉进 S3-A。
 
 **关系变更的同步**：现有 `device_sync` 的联系人载荷是固定 JSON（含 alias、safetyVerified），
 接收端 `applyContact` 只 upsert、**没有删除分支**。所以：
@@ -209,8 +227,9 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
   渠道身份），`contacts.version` 递增。这需要 `ContactData` 增加 `state`、`ContactVersion` 提升
   并兼容读旧行——是一次存储 codec 变更，必须并入存储 ADR 与 `store.test` 的迁移测试，不能只写
   「加一列」（当前 `contacts` 表没有 `state` 列，`sealed/created_at` 都是 NOT NULL）。
-- 接收端 `applyContact` 目前只 upsert 且硬编码 `note = None`，要重写为保护性合并：blocked 不被
-  active 覆盖、deleted 只删关系不删历史、`note` 保留。
+- 接收端 `applyContact` 目前只 upsert 且硬编码 `note = None`，要重写为读 `state`、`blocked`、
+  `note`：`deleted` 只删关系不删历史，`note` 保留；`blocked` 由 A1 快照权威设置（A2 不发起关系
+  变更，因此没有并发写者，不需要「blocked 不被 active 覆盖」的合并规则）。
 - 删除历史仍只在本机执行：本机删除即删 `messages`；其他设备保留各自历史（`K54NXXBZW1R6415F` 延后），
   且 A2 不做关系操作（已知约束 3），所以 A2 上的历史只能等 A2 恢复能力后自查。
 - A2 发起的变更见已知约束 3。
@@ -221,8 +240,8 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
 2. 出站八种 kind 对被拉黑公钥零发送。
 3. 删除已拉黑的联系人：关系删除、`blocked_peers` 记录保留到用户在拉黑名单里显式移除。
 4. 重新添加是新关系：`safety_verified=false`，界面提示「这是新建立的关系」。
-5. 刷新（换设备/吊销）保留拉黑与校验。至于「经另一份邀请再次应答」：当前实现是
-   `AccountMismatch` + version 递增，不是新待确认项；本波是否改由裁决 8 决定，验收按裁决结果写。
+5. 刷新（换设备/吊销）保留拉黑与校验。「经另一份邀请再次应答」按裁决 8(a) 维持现状：
+   `AccountMismatch` + version 递增，登记为已知分歧。
 6. 任何界面不得声称「对方不会知道」；拉黑确认页含两条说明（可推断、绑定单把公钥）。
 
 **失败模式**
@@ -287,29 +306,44 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
 
 ## 取代的旧文档
 
-- **owner 裁决通过后**，本计划取代 `docs/references/2026-11-20-yochat-reference-study/requirements.md`
-  的 S3 分批表作为范围依据（该文件自述是建议而非清单）。裁决前不取代；若裁决否决，该表仍是候选
-  来源，本计划退为提案。
+- **已裁决（2026-11-27）**：本计划取代 `docs/references/2026-11-20-yochat-reference-study/requirements.md`
+  的 S3 分批表作为范围依据（该文件自述是建议而非清单）。
 - 不取代 ADR-0003；它的「S3 = 重新论证的子集」由本计划落地。S3 完成后另立 ADR 固化采纳/延后清单。
-- 与 ADR-0007 的边界：恢复短语仍不做；但 `blocked_peers` 的新密封域必须先过存储 ADR。
-- 与 ADR-0004：不新增阈值；十万条指标若采纳，按 ADR-0004 走 ADR + 签字。
+- 与 ADR-0007 的边界：恢复短语仍不做；`blocked_peers` 与 contacts 墓碑已由 ADR-0012 定稿，
+  不改变 ADR-0007 §3 的 AAD 规则。
+- 与 ADR-0004：不新增阈值；十万条指标不继承旧数字，S3-C 的 ADR 定义形状与阈值后按 ADR-0004 签。
 
-## 待裁决（owner）
+## 裁决（2026-11-27，owner 委派）
 
-1. **范围**：采纳 15（含 9 条部分）/ 阻塞 2 / 延后 18 是否接受。最容易被认为必须有而被延后的
-   是「恢复短语」与「消息删除」。
-2. **解除拉黑的窗口外行为**：(a) 如实告知取不回（最小改动，但 `J22VY0VTZVRBY1P6` 的验收要降级）；
-   (b) 把 `XBRY5Q81Z4ZPP6ER` 的最小批准路径拉进 S3-A（+800–1,200 行，含新协议状态）。
-3. **A2 上能否发起关系变更**：(a) 先禁用并提示在主力设备操作（0 成本，可用性差）；
-   (b) 补关系变更的上行承载（+1,200–1,800 行：复用现有 sync-status/ack 骨架，加记录类型、
-   签名与 A1 侧应用；`syncRequest` 虽已定义但无生产发送方，不能直接当承载）。设计按 (a) 写；若选 (b)，已知约束 3 与「A2 历史待恢复后自查」那句作废。
-4. **搜索的存储取舍**：A 有界解密扫描 / B 明文索引 / C 不做搜索。需 ADR。
-5. **十万条指标**是否采纳；采纳则要定义数据形状与阈值（ADR）。
-6. **行预算口径**：30,000 行上限按哪个口径计（是否含 `spike/` 与 `shell/*.js`）；维持还是提高。
-7. **存储 ADR**：新密封域与 AAD 变更需要 ADR-0007 revision 或新 ADR 并由人签字；确认由谁写。
-8. **二次邀请应答的行为**（`GG1H42XAJXA0M4ZT`）：(a) 维持现状（`AccountMismatch` + version 递增），
-   把来源要求登记为已知分歧，0 成本；(b) 改成来源要求：改写 `ReplyReceived` 的既有联系人分支、
-   给第二条待确认项加承载（+1 表、+200–400 行），并改两条 `BindingSpec` 断言（需签字）。
+owner 在 2026-11-27 以「请开始你的设计和实现。我希望中间不需要我干预。」把八条决定委派给执行者。
+以下决定、理由与代价都按可证伪口径写；后续若要推翻，按 ADR 的取代流程走，不静默改写。
+
+1. **范围：接受** 采纳 15（含 9 条部分）/ 阻塞 2 / 延后 18。理由：30,000 行硬上限决定必须取
+   子集；恢复短语需要密钥管理 ADR 与外部密码学评审，消息删除需要消息墓碑与逐设备确认，
+   二者都是协议/密钥层改动，不应为了「必须有」跳过评审。代价：v1 没有恢复短语与消息删除，
+   写进已知约束与发布说明。
+2. **解除拉黑窗口外：选 (a) 如实告知取不回。** 理由：批准路径是新协议状态（模型 + 单独签字），
+   窗口只有约 15 秒 / 32 条；诚实告知不伪造保证。代价：`J22VY0VTZVRBY1P6` 的验收降级为
+   「窗口内自动补齐 + 窗口外明确说明缺口」，不实现批准重发。
+3. **A2 发起关系变更：选 (a) 先禁用并提示在主力设备操作。** 理由：A2 不持有用户私钥，
+   `PeerDeviceListService.build` 返回 `primary-user-key`，A2 无法签关系变更所需的设备列表；
+   单写者避免关系状态并发合并。A2 通过 A1→A2 快照接收 `blocked` / `deleted` 状态并只读应用。
+   代价：A2 上不能拉黑/删除，界面必须给出可执行提示。
+4. **搜索存储：选 A 有界解密扫描。** 理由：保留 ADR-0007 的静态加密；明文倒排索引等于放弃一半
+   静态加密，除非改存储方案否则不接受；不做搜索不满足需求意图。代价：S3-C 的延迟随历史增长，
+   需要可测上界与自己的门；本波不实现。
+5. **十万条指标：不继承旧数字，保留「大量历史可用」目标。** 理由：旧项目的 10 万条是旧验收
+   口径，数据形状、硬件与测量方法未记录，直接继承会把估算当实测。S3-C 的 ADR 定义数据形状
+   （条数 × 大小）、首屏与滚动阈值，按 ADR-0004 签。
+6. **行预算：维持 30,000，只计五个模块 `*/src`。** `spike/` 是可弃实验代码，`shell/*.js` 是壳层；
+   两者单列观测（含则 23,990），不占产品额度。A+B 估算后 23,100–25,100，仍在限内。
+7. **存储 ADR：新写 ADR-0012，由执行者起草，owner 委派接受；不修订 ADR-0007。**
+   `blocked_peers` 不密封载荷（只有公钥与版本/时间戳），因此不改 ADR-0007 §3 的 AAD 规则；
+   `contacts.sealed` 的 codec v2 也不改 AAD（仍绑定 `userPub` + `version`）。
+8. **二次邀请应答：选 (a) 维持现状，登记为已知分歧。** 理由：`AccountMismatch` + version 递增
+   是失败关闭的提示；同一 `user_pub` 的第二条待确认项没有承载（`contacts` 主键就是 `user_pub`），
+   且自动接受会绕过安全码重新核对（ADR-0009 的绑定语义）。重新建立关系走「删除后重加」的新
+   邀请路径。代价：来源要求的「另一份邀请作为新待确认项」不实现，写进已知分歧。
 
 ## 验收
 
@@ -321,16 +355,17 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
     `version`/`received_at` 不变（它是 upsert，数行数恒真）；`delivery_receipts` 的
     `state`/`updated_at` 不变（只 UPDATE，无 INSERT）；待确认项不新增；会话棘轮不推进；
     八种出站 kind 零帧。删掉对应的 guard 后每条断言都必须变红。解除拉黑后
-    窗口内补齐、窗口外给出裁决 2 规定的行为；删除联系人询问历史、保留时消息仍在（搜索断言随
+    窗口内补齐、窗口外按裁决 2(a) 如实告知取不回；删除联系人询问历史、保留时消息仍在（搜索断言随
     S3-C 延后，本波只断言会话视图与本地库）；删除已拉黑保留拉黑记录且新应答不出现在界面；
     重加为未校验并提示新关系；对方换设备后拉黑与校验仍在；备注可写入并按别名/备注过滤联系人
     （按用户别名检索不在本波）；迟到补入出现可见提示，同一原件只提示一次。「另一份邀请的应答」
-    不在本清单里——它的行为随裁决 8，见下一条子场景。
+    不在本清单里——按裁决 8(a) 维持现状，见下一条子场景。
   - Reply 入口单独一条子场景：**拉黑期间**对方另发一份邀请并应答，解封前不得生成新的待确认项、
-    `contacts` 行 version 不变（这条能删 guard 变红）。解封后同一帧的行为随裁决 8：维持现状则是
-    `AccountMismatch` + version 递增；若采纳来源要求则是新待确认项且 version 不变。普通已建立
-    关系的 Reply 不产生待确认项，不能拿它当 Reply guard 的覆盖证据。
-  - `./mill store.test`：`blocked_peers` 迁移、回滚、高水位（若采纳）测试。
+    `contacts` 行 version 不变（这条能删 guard 变红）。解封后同一帧按裁决 8(a) 走
+    `AccountMismatch` + version 递增。普通已建立关系的 Reply 不产生待确认项，不能拿它当 Reply
+    guard 的覆盖证据。
+  - `./mill store.test`：`blocked_peers` 迁移、回滚、高水位测试；`ContactData` v1→v2 兼容读；
+    删除/重加/历史删除。
   - 被拉黑者持续发送的负载测试：丢弃路径无排队放大。
 - **S3-B**
   - `./desktop-gate.sh node shell/electron-smoke.js` 新增断言：通知载荷不含正文（默认关）；
@@ -341,5 +376,4 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
   - 首次添加联系人与邀请生成处的告知可见。
 - **全波次**
   - m1 上 `./check.sh` 全绿并保存回执；Linux 只作功能验证（w7），不作性能判决。
-  - `./models/check.sh` 不变；本次不动协议模型；若裁决 2(b)/3(b) 引入协议状态，则先改模型并
-    单独一轮签字。
+  - `./models/check.sh` 不变；本次不动协议模型（裁决 2(a)/3(a)/8(a) 都不引入新协议状态）。
