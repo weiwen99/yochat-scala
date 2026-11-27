@@ -1,6 +1,6 @@
 # Plan docs
 
-Two tiers, one owner per artifact.
+One owner per artifact. A backlog entry exists only until its effort directory exists; the spec then owns the work.
 
 | Artifact | Location | Format | Lifetime |
 | --- | --- | --- | --- |

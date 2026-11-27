@@ -1,6 +1,7 @@
 # TODO
 
-活的待办清单，只放**还没有 effort 目录**的条目。开工即移入 `.scratch/<effort>/spec.md`，并从这里删除。
+活的待办清单，只放**本次工作还没有 effort 目录**的条目。开工即移入 `.scratch/<effort>/spec.md`，并从这里删除。
+归属按「这项工作自己的 effort」判断，不按它要改的文件原先属于哪个 effort：改一个已结项模块的新增能力，仍算新条目。
 
 单一来源分工：已开工项的状态在 `.scratch/`；冻结记录在 `docs/plans/`；发布状态在 `README.md` 的
 Status 与 `AGENTS.md` §10。本文件不与它们重复，也不记录已完成项。
@@ -12,9 +13,10 @@ Status 与 `AGENTS.md` §10。本文件不与它们重复，也不记录已完�
 **状态：部分验过，未开工。**
 
 Linux 上已有通过记录：`shell/cross-host-smoke.js` 以 w7 作 B 端跑 server + 真实 Chrome，覆盖
-100+100 条 UI 消息、relay 断连重连、B/A 重启；回执见
-`docs/plans/2026/11/0010-s1-ui-automation/impl.md`（`CROSS_HOST_RATE` 1k/5k 样本，`ca33ec3`，m1/w7）。
-未验的是仓库钉的 Electron 45.4.1 在 Linux 上能否启动（这次是靠 nixpkgs 的 45.3.4 绕过）、
+100+100 条 UI 消息、relay 断连重连、B/A 重启。通过记录见
+`docs/plans/2026/11/0010-s1-ui-automation/acceptance.md:18`；速率回执见同目录 `impl.md`
+（`CROSS_HOST_RATE` 1k/5k 样本，`ca33ec3`，m1/w7）。
+未验的是仓库钉的 Electron 45.4.1 原样启动失败后、补齐运行环境能否起来（这次是靠 nixpkgs 的 45.3.4 绕过）、
 `desktop-gate.sh` runner 的 Linux 行为，以及全部两进程交付门。
 
 #### 2026-11-27 在 w7 的一次性观测（无回执，不能当门禁证据）
@@ -54,8 +56,10 @@ w7：NixOS 26.11 x86_64，commit `99600e5`。
       macOS 专属判据（asuser / caffeinate / keychain）在 Linux 上的等价物或明确的「不适用」
 - [ ] 浏览器定位复用 `shell/cross-host-smoke.js:104` 已有的 `command -v google-chrome` 解析（该
       路径在 w7 上已跑通），抽成共用函数供 `ui-smoke` 使用；不新增第二套定位方式
-- [ ] Electron 版本对齐：仓库钉 45.4.1，nixpkgs 提供 45.3.4。**未定**，需 owner 选择「跟随
-      nixpkgs」或「自建 45.4.1 的 Linux 包」
+- [ ] Electron 在 Linux 上的发行形态：npm 分发的 `electron-v45.4.1-linux-x64` 缺整条 FHS 库链
+      （`libglib-2.0.so.0`、`libnspr4`、`libnss3`、`libatk`、`libcups`、`libdbus`、gtk/pango/X11 等），
+      所以起不来与版本号无关。**未定**，需 owner 选择「走 nixpkgs 的包装形态」还是「补齐 FHS 运行
+      环境」；版本对齐（45.4.1 vs nixpkgs 的 45.3.4）是随之而来的次要问题
 - [ ] 时间类门禁在 w7 的口径：先按 `PERF#RATE` 的既有模式「只报数值、无阈值」记录观测；若要给
       硬门加机器分档，按 `docs/agents/verification.md` 必须另立 ADR 并由人签字，不能作为普通待办推进
 
