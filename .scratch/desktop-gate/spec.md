@@ -18,8 +18,8 @@
 - 组件解释：`desktop-gate.sh` 不进 `check.sh`，是因为 `check.sh` 是「跑哪些门」的
   清单，而 runner 表达的是「以什么上下文跑、跑多久算超时、环境事实记在哪」。第二个
   新文件是仓库规则要求的失败用例（AGENTS.md §6），不是新抽象。
-- 工程师日解释：初估 0.5 只含实现；三轮两轴评审共提出 35 条发现，修复与复跑使实际
-  约为初估 3 倍。表中数字是估算，不是实测。
+- 工程师日解释：初估 0.5 只含实现；三轮两轴评审共提出 40 条发现（21 + 14 + 5），
+  修复与复跑使实际约为初估 3 倍。表中数字是估算，不是实测。
 
 ## 观察到的缺陷（2026-11-27，m1，commit c415a07）
 
@@ -83,7 +83,7 @@
 | S10/P4 | 标准/规格 | 声称熄屏验证但无回执 | fix：补 `display_before=off` 回执；HEAD 复跑时显示器被系统立即唤醒，如实记录 |
 | S11 | 标准 | `screencapture` 半句自设靶子 | fix：删除，改为截图路径入回执（并限定「窗口已建立时」） |
 | S12 | 标准 | `npm run` 绕过 runner；无看门狗 | fix：文档限定适用面；`passphrase-smoke` 加看门狗 |
-| P3 | 规格 | 差分结论与回执矛盾 | fix：控制变量对照（钩子 + 旧写法），红在 save 断言，回执留档 |
+| P3 | 规格 | 差分结论与回执矛盾 | fix：在 c415a07 的独立工作树里做控制变量对照，红回执锚 `head=c415a07`，复跑步骤写入 0014 `impl.md` |
 | P6 | 规格 | UI remember 路径未覆盖 | fix：Aqua 先断言 UI 写文件，再断言 bridge |
 | P7 | 规格 | DEGRADED 无回执、判红 | fix：degraded 不运行、写 INCOMPLETE、加 `YOCHAT_GATE_INJECT=degraded` 可测 |
 | P9 | 规格 | 无 plan 号与 durable 记录 | fix：建 0014，并在 0009/0010 impl 追加执行方式变更 |
@@ -97,7 +97,10 @@
 | R2-F8 | 规格 | 行数与计数仍错 | fix：本表按 `wc -l` 与 `grep -c` 实测 |
 | R2-F9 | 规格 | contrast 直跑无回执且与「每条门超时」冲突 | fix：文档改写为「每个 Electron 门禁」 |
 | R2-F10 | 规格 | 钩子进产品路径；save 吞异常无记录 | fix：`!app.isPackaged` 守卫 + `console.error` |
-| R2-F11 | 规格 | 环境透传只证名字不证值 | fix：空格与冒号路径实测，值原样可见 |
+| R2-F11 | 规格 | 环境透传只证名字不证值 | fix：空格与冒号路径实测，值原样可见（该实测锚 `ed11f6e`，转发循环此后未改） |
+| R3-F1 | 标准/规格 | verification.md 把熄屏通过挂在 b696e37 | fix：改为锚 `8ad1d44`/`6a57864`，并写明 b696e37 重试被系统唤醒 |
+| R3-F2 | 标准/规格 | degraded 回执缺锚定字段且 command 未转义、不是合法 JSON | fix：复用同一模板（head/dirty_files/session/log/耗时），`json.load` 通过 |
+| R3-F3 | 规格 | 失败用例对照无锚定、无可复跑路径 | fix：在仓库内独立工作树复跑，回执 `head=c415a07`，步骤入 0014 |
 | R2 备注 3 | 标准 | 门禁自行 setsid 的后代不在组杀范围 | defer：入已知约束，当前无门禁如此 |
 
 ## 干净态回执（HEAD `b696e37`，`dirty_files=0`）
@@ -107,11 +110,12 @@
 | `keychain-smoke` 经 runner | PASS，2.0s，`session=Aqua` |
 | `passphrase-smoke` Aqua | PASS，6.6s |
 | `passphrase-smoke` 不可用钩子 | PASS，4.7s |
-| `passphrase-smoke` Background（直跑，session=Background） | PASS，3.2s |
+| `passphrase-smoke` Background（直跑，session=Background） | PASS，2.7s（`passphrase-1795764223531`） |
 | `ui-smoke` | PASS，双向 100 条，25.7s |
 | `electron-smoke` | PASS，双向 100 条 + B/A 重启，25.0s |
 | `perf-start` | PASS，p50 1269ms / p95 1317ms / idle 741.7MB |
 | 超时 / SIGINT / SIGHUP / degraded | INCOMPLETE，exit 124 / 130 / 129 / 2，无残留 |
+| 失败用例对照（旧实现 c415a07 + 钩子） | FAIL，`head=c415a07`、`dirty_files=3`，红在 save 断言；步骤与回执见 0014 `impl.md` |
 
 熄屏回执锚在 `6a57864`（`display_before/after=off`，electron-smoke PASS）。之后产品
 代码只改了钥匙串钩子的 `isPackaged` 守卫与 save 的错误日志，不触及消息路径。在

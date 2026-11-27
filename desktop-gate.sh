@@ -137,21 +137,54 @@ start_display="$(display_state)"
 start_lock="$(lock_state)"
 mkdir -p tmp/checks
 
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+cmd_text=""
+for arg in "$@"; do
+  cmd_text+="$(printf '%q' "$arg") "
+done
+
+head="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+dirty_files="$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+node_version="$(node --version 2>/dev/null || echo unknown)"
+electron_version="$(node -p "require('$root/shell/node_modules/electron/package.json').version" 2>/dev/null || echo unknown)"
+
 # Outside Aqua and without passwordless sudo there is no way to reach the login
 # keychain, so an Electron gate cannot be judged here. Reporting FAIL would blame
 # the commit for the machine's session setup.
 if [[ "$mode" == "degraded" ]]; then
   echo "desktop-gate: DEGRADED — outside Aqua and passwordless sudo is unavailable; the gate was not run" >&2
   receipt="tmp/checks/desktop-gate-${start_epoch}.json"
+  log="tmp/checks/desktop-gate-${start_epoch}.log"
+  : > "$log"
   cat > "$receipt" <<JSON
 {
-  "command": "$(printf '%q ' "$@")",
-  "cwd": "$root",
+  "command": "$(json_escape "$cmd_text")",
+  "cwd": "$(json_escape "$root")",
+  "user": "$(json_escape "$user")",
+  "host": "$(json_escape "$(scutil --get LocalHostName 2>/dev/null || hostname)")",
+  "head": "$(json_escape "$head")",
+  "dirty_files": $dirty_files,
+  "node": "$(json_escape "$node_version")",
+  "electron": "$(json_escape "$electron_version")",
   "mode": "degraded",
-  "caller_manager": "$(launchctl managername 2>/dev/null || true)",
+  "caller_manager": "$(json_escape "$manager")",
+  "session": "$(json_escape "$manager")",
+  "forwarded_env": "",
+  "log": "$(json_escape "$log")",
+  "timeout_s": $timeout_s,
+  "caffeinate": false,
   "display_before": "$start_display",
+  "display_after": "$start_display",
   "lock_before": "$start_lock",
+  "lock_after": "$start_lock",
   "start_epoch": $start_epoch,
+  "duration_ms": 0,
   "exit_code": 2,
   "verdict": "INCOMPLETE"
 }
@@ -223,18 +256,6 @@ case "$status" in
   *) verdict="FAIL" ;;
 esac
 
-json_escape() {
-  local s="$1"
-  s="${s//\\/\\\\}"
-  s="${s//\"/\\\"}"
-  printf '%s' "$s"
-}
-
-cmd_text=""
-for arg in "$@"; do
-  cmd_text+="$(printf '%q' "$arg") "
-done
-
 forwarded=""
 for name in ${forward_names[@]+"${forward_names[@]}"}; do
   forwarded="${forwarded:+$forwarded,}$name"
@@ -244,11 +265,6 @@ session="$manager"
 if [[ "$mode" == "asuser" ]]; then
   session="$(sudo -n launchctl asuser "$uid" sudo -n -u "$user" launchctl managername 2>/dev/null || true)"
 fi
-
-head="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-dirty_files="$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
-node_version="$(node --version 2>/dev/null || echo unknown)"
-electron_version="$(node -p "require('$root/shell/node_modules/electron/package.json').version" 2>/dev/null || echo unknown)"
 
 duration_ms=$(( $(epoch_ms) - start_ms ))
 receipt="tmp/checks/desktop-gate-${start_epoch}.json"

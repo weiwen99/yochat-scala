@@ -108,11 +108,20 @@ During development, run the checks the change actually affects and reuse results
 - `passphrase-save` returns `false` for every failure, including an unwritable data directory; the reason goes to the shell log (message only, never the passphrase). `passphrase-load` returns `null` for both a missing file and an unreadable one — the pre-existing contract.
 - The runner forwards every `YOCHAT_*` variable to the gate except its own controls, so an injected run reads the same jar paths, relay endpoint, and cross-host peers as a direct one. The receipt lists the forwarded **names**; a run with `YOCHAT_SERVER_JAR="/tmp/a b/c.jar"` and `YOCHAT_RELAY="127.0.0.1:7654"` showed both values intact inside the injected session.
 - `caffeinate -dims` holds display and idle sleep for the duration.
-- `YOCHAT_GATE_TIMEOUT` (seconds, default 1800) bounds each gate through a bash watchdog that marks the run before signalling, so a timeout is INCOMPLETE whatever the child reports. Exit 124, 129 (HUP), 130 (INT), 137 and 143 all print `verdict=INCOMPLETE` and are not a pass. The gate and the watchdog each run in their own process group: a timeout, Ctrl-C, or a dropped ssh session takes the whole tree down, so the next gate does not inherit a stale instance.
+- `YOCHAT_GATE_TIMEOUT` (seconds, default 1800) bounds each gate run through the runner, via a bash watchdog that marks the run before signalling, so a timeout is INCOMPLETE whatever the child reports. Exit 124, 129 (HUP), 130 (INT), 137 and 143 all print `verdict=INCOMPLETE` and are not a pass. The gate and the watchdog each run in their own process group: a timeout, Ctrl-C, or a dropped ssh session takes the whole tree down, so the next gate does not inherit a stale instance.
 - Each run writes `tmp/checks/desktop-gate-<epoch>.json` plus a `.log` with the combined output, recording the commit and dirty-file count, tool versions, injection mode, executed session, forwarded environment names, display state, lock state, and duration. The gate's own receipt holds the measurements; compare performance numbers only at the same display state.
 - A gate that hangs is a failure, not a result. `keychain-smoke` exits 2 (unavailable), 1 (mismatch or error), or 3 (30s watchdog); `passphrase-smoke` exits 3 after a 180s watchdog. A failed `passphrase-smoke` window is screenshotted to `/tmp/yochat-passphrase.png` and the path is recorded when the window still exists (a failure before launch has no screenshot).
 - A process the gate itself detaches into another process group is not reachable by the group kill; no current gate does that.
-- Verified 2026-11-27 on m1 (commit `b696e37`, `dirty_files=0`): `electron-smoke` passed with the display off (100 messages each way, both restarts) and with the display on; `ui-smoke`, `perf-start` (p50 1269ms / p95 1317ms / idle 741.7MB), `keychain-smoke`, and all three `passphrase-smoke` paths passed. The **locked** screen state is recorded in receipts but unverified: unlocking needs the user's password, so no automated run can cover it. The display-off run is anchored at `6a57864` and again at `b696e37`'s predecessor; the only product change after the first is the keychain-hook guard, which touches no message path.
+- Verified 2026-11-27 on m1 at commit `b696e37` (`dirty_files=0`): `electron-smoke` passed
+with the display on (100 messages each way, both restarts), as did `ui-smoke`, `perf-start`
+(p50 1269ms / p95 1317ms / idle 741.7MB), `keychain-smoke`, all three `passphrase-smoke` paths,
+and the interruption cases (timeout 124, INT 130, HUP 129, degraded 2; all INCOMPLETE).
+`electron-smoke` also passed with the display **off** (100 messages each way, both restarts) at
+`8ad1d44` and `6a57864`; repeated attempts at `b696e37` had the display woken within a second, and
+their receipts record `display_before=on` rather than claiming otherwise. The product change since
+`6a57864` is the keychain-hook guard, which touches no message path.
+The **locked** screen state is recorded in receipts but unverified: unlocking needs the user's
+password, so no automated run can cover it.
 
 ## Receipts
 
