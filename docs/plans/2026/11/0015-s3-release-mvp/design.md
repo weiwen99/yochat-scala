@@ -281,7 +281,7 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
 - 形状：一个会话、100,000 条消息、正文 128 字节；最新 5,000 条走正常加密写入，更旧的 95,000
   条只用于撑大表且不会被任何门读取。
 - 门：首屏 `listRecentMessages(50)` p95 ≤ 250 ms；最坏情况搜索（唯一命中在 5,000 行扫描的
-  最旧一行）p95 ≤ 1,500 ms。2026-11-27 实测 `first_p95_ms=11`、`search_p95_ms=50`
+  最旧一行）p95 ≤ 1,500 ms。2026-11-27 实测 `first_p95_ms=25`、`search_p95_ms=48`
   （以 ADR-0013 / `store.searchbench` 输出为准）；阈值是约 20–60 倍的回归护栏。
 - 门由 `./mill store.searchbench` 执行，超阈值非零退出；`./mill store.test` 固定匹配语义、
   上限截断与查询计划（按 rowid `SEARCH`，不得 `SCAN messages`）。

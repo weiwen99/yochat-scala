@@ -87,8 +87,8 @@
 | `./mill server.e2e` | 18/18 PASS（S1 既有契约 + S3；含 1k/10k/PERF#RATE） |
 | `./mill core|store|server|ui.checkFormat`、`.fix --check` | 全绿 |
 | `./mill ui.fastLinkJS` | SUCCESS |
-| `./mill store.searchbench` | PASS（100,000 行 × 128B；`first_p50_ms=9 first_p95_ms=11 search_p50_ms=24 search_p95_ms=50 append_ms=3480`，2026-11-27，m1） |
-| `./check.sh` | **EXIT=0**（2026-11-27，m1）；S1 E2E 18/18、S3E2E、S2E2E、S2PERF、S2BPERF、SEARCH_BENCH、CONTRAST、COLD_START p50=1190ms/p95=1255ms、UI_SMOKE、ELECTRON_UI、Quint、spike crypto/storage/doobie 全 PASS |
+| `./mill store.searchbench` | PASS（100,000 行 × 128B；`first_p50_ms=11 first_p95_ms=25 search_p50_ms=27 search_p95_ms=48 append_ms=3332`，2026-11-27，m1） |
+| `./check.sh` | **EXIT=0**（2026-11-27，m1，8 分 45 秒量级）；core 145、store 198、transport 198、server 399；S1 E2E 18/18、S3E2E、S2E2E、S2PERF、S2BPERF、SEARCH_BENCH、CONTRAST、COLD_START p50=1219ms/p95=1273ms idle=762.8MB、UI_SMOKE、ELECTRON_UI、Quint、spike crypto/storage/doobie 全 PASS |
 
 回执在 `tmp/checks/`（`desktop-gate-*.json`、`ui-*.json`、`electron-ui-*.json`、
 `desktop-*.json`、`s1-e2e.log`）。工作树里 `shell/node_modules` 需要指向主检出的 node_modules
@@ -129,7 +129,7 @@
 | 需求 | 落地 |
 | --- | --- |
 | `8F32S19RPRC25471` 全文搜索 | `MessageRepository.search`：按 rowid keyset 分页、每页 256、扫描上限 5,000、结果上限 50；正文解密后内存子串匹配（`Locale.ROOT`），`scanned`/`truncated` 如实返回。`GET /api/search`（≥2 字、≤50 条，未解锁 401、坏参 400、存储失败 `store-failed`）。UI 会话列表搜索框（200 ms 去抖），结果显示联系人/片段/时间，点击切会话并清空。 |
-| `3TK81N30WS2S6JWB` 大量历史 | ADR-0013 定义形状（100,000 条 × 128 字节）与两道门（首屏 p95 ≤ 250 ms、最坏情况搜索 p95 ≤ 1,500 ms）；`./mill store.searchbench` 实测 `first_p95_ms=11`、`search_p95_ms=50`（2026-11-27，m1；唯一回执行见「验证」表），超阈值非零退出；`check.sh` 覆盖。 |
+| `3TK81N30WS2S6JWB` 大量历史 | ADR-0013 定义形状（100,000 条 × 128 字节）与两道门（首屏 p95 ≤ 250 ms、最坏情况搜索 p95 ≤ 1,500 ms）；`./mill store.searchbench` 实测 `first_p95_ms=25`、`search_p95_ms=48`（2026-11-27，m1；唯一回执行见「验证」表），超阈值非零退出；`check.sh` 覆盖。 |
 
 新增门禁：`store.searchbench`（已进 `check.sh`，超阈值非零退出）、`MessageSearchSpec`（6 条：
 匹配与新到旧、结果/扫描上限与截断语义、参数校验、删除历史后搜不到、两条生产查询的

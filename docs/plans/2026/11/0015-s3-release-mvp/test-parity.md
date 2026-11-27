@@ -64,5 +64,5 @@
 | 需求 | 旧测试 | 新测试 | 结论 |
 | --- | --- | --- | --- |
 | `8F32S19RPRC25471` 全文搜索本地历史 | `e2e/specs/contact-removal.e2e.ts`（`chat_search` 命中标记）；`e2e/specs/diagnostics.e2e.ts`（按正文检索诊断）；旧实现是明文索引 | `store/test/.../MessageSearchSpec`（6 条：大小写与新到旧、结果/扫描上限与截断语义、参数校验、删除历史后搜不到、两条生产查询的 EXPLAIN 按 rowid 且无 SCAN/TEMP B-TREE）；`ApiJsonSpec.searchable`（会话存在、可见游标、GBNV 依赖）；`ui-smoke` 的 search 阶段（命中、点击后当前会话 id 等于命中的 conversationId、清空查询）与 search-notices 阶段（截断不显示「没有匹配」、失败显示「搜索失败」） | 部分：搜索与删除本机历史的命中语义等价；旧「另一台设备搜不到」是跨设备删除传播（`K54NXXBZW1R6415F` 延后），不在本波。单联系人夹具下「点击切到对应会话」只能证明当前会话 id 与命中 id 相等，不能区分多会话目标 |
-| `3TK81N30WS2S6JWB` 大量历史仍可用 | `e2e/specs/scale.e2e.ts`（10 万条；阈值 500 ms 首屏 / 100 ms 帧 / 1 s 搜索，用户 2026-09-24 批准，UI 级测量） | `./mill store.searchbench`：100,000 条 × 128 字节；首屏 p95 ≤ 250 ms、最坏情况搜索 p95 ≤ 1,500 ms；2026-11-27 实测 `first_p95_ms=11`、`search_p95_ms=50` | 不等价、按裁决 5 重新定义：旧阈值是 UI 绘制级（DOM/帧/native 回调），本门是 store 级；两者口径不同，不比较、不继承旧数字。滚动帧与内存增长不在本波（ADR-0013 已知约束 5） |
+| `3TK81N30WS2S6JWB` 大量历史仍可用 | `e2e/specs/scale.e2e.ts`（10 万条；阈值 500 ms 首屏 / 100 ms 帧 / 1 s 搜索，用户 2026-09-24 批准，UI 级测量） | `./mill store.searchbench`：100,000 条 × 128 字节；首屏 p95 ≤ 250 ms、最坏情况搜索 p95 ≤ 1,500 ms；2026-11-27 实测 `first_p95_ms=25`、`search_p95_ms=48` | 不等价、按裁决 5 重新定义：旧阈值是 UI 绘制级（DOM/帧/native 回调），本门是 store 级；两者口径不同，不比较、不继承旧数字。滚动帧与内存增长不在本波（ADR-0013 已知约束 5） |
 
