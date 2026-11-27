@@ -9,6 +9,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { chromium } = require("playwright");
+const { chromeLaunchOptions } = require("./browser-runtime");
 
 const root = path.resolve(__dirname, "..");
 const serverJar = process.env.YOCHAT_SERVER_JAR || path.join(root, "out", "server", "assembly.dest", "out.jar");
@@ -510,7 +511,7 @@ async function main() {
     browser = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        browser = await chromium.launch({ channel: "chrome", headless: true });
+        browser = await chromium.launch(chromeLaunchOptions({ headless: true }));
         break;
       } catch (error) {
         if (attempt === 3) throw error;

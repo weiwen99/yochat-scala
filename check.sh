@@ -32,6 +32,8 @@ node --check shell/contrast-smoke.js
 node --check shell/electron-smoke.js
 node --check shell/cross-host-smoke.js
 node --check shell/passphrase-smoke.js
+node --check shell/electron-runtime.js
+node --check shell/browser-runtime.js
 bash -n desktop-gate.sh
 ./mill server.e2e
 ./mill server.s2e2e
@@ -39,11 +41,14 @@ bash -n desktop-gate.sh
 ./mill server.s2bperf
 ./mill server.assembly
 ./mill transport.assembly
-if [ ! -x shell/node_modules/.bin/electron ]; then
-  echo "desktop gate requires shell/node_modules; run npm ci in shell" >&2
+if ! node -e "require('./shell/electron-runtime').resolveElectron()" 2>/dev/null; then
+  echo "desktop gate needs an Electron binary; run npm ci in shell, or set YOCHAT_ELECTRON" >&2
+  node -e "require('./shell/electron-runtime').resolveElectron()" 2>&1 | tail -2 >&2 || true
   exit 1
 fi
-./desktop-gate.sh ./shell/node_modules/.bin/electron shell/keychain-smoke.js
+# keychain-smoke is an Electron main script; electron-runtime picks the binary
+# (npm on macOS, YOCHAT_ELECTRON / PATH / nixpkgs on Linux).
+./desktop-gate.sh node shell/electron-runtime.js shell/keychain-smoke.js
 ./desktop-gate.sh node shell/passphrase-smoke.js
 YOCHAT_KEYCHAIN_UNAVAILABLE=1 ./desktop-gate.sh node shell/passphrase-smoke.js
 node shell/contrast-smoke.js

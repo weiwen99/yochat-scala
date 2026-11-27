@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { _electron: electron } = require("playwright");
+const { resolveElectron } = require("./electron-runtime");
 
 const {
   passphrase,
@@ -41,8 +42,10 @@ let stage = "init";
 fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
 
 function launch(port, userData) {
+  const runtime = resolveElectron();
   return electron.launch({
-    args: [".", `--user-data-dir=${userData}`],
+    executablePath: runtime.executablePath,
+    args: [...runtime.args, ".", `--user-data-dir=${userData}`],
     cwd: __dirname,
     env: {
       ...process.env,

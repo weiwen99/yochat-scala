@@ -101,8 +101,11 @@ async function stopRemoteServer() {
 }
 
 async function startRemoteChrome() {
-  const binary = (await ssh(["command -v google-chrome"])).trim();
-  if (!binary) throw new Error("w7 has no google-chrome");
+  // Same lookup as the local gates, run on the remote host. A browser on PATH is
+  // the only contract; the path differs per distribution (NixOS has no /opt).
+  const { resolveChrome } = require("./browser-runtime");
+  const binary = resolveChrome((command) => ssh(["command -v " + command]).trim());
+  if (!binary) throw new Error(`${w7} has no google-chrome/chromium on PATH`);
   const profile = `${remoteData}/chrome-profile`;
   const command = `mkdir -p ${profile}; exec ${binary} --headless=new --no-sandbox --disable-dev-shm-usage --remote-debugging-port=9222 --user-data-dir=${profile} about:blank`;
   const child = spawn("ssh", ["-o", "BatchMode=yes", w7, command], { stdio: ["ignore", "pipe", "pipe"] });
@@ -250,7 +253,9 @@ async function main() {
   catch (_) { throw new Error(`B server start failed: ${remoteServer.logBuffer.slice(-500)}`); }
 
   stage = "launch-browser-a";
-  browserA = await chromium.launch({ channel: "chrome", headless: true });
+  // A is local, so it uses the same resolver as ui-smoke; B is probed over ssh.
+  const { chromeLaunchOptions } = require("./browser-runtime");
+  browserA = await chromium.launch(chromeLaunchOptions({ headless: true }));
   const contextA = await browserA.newContext();
   const pageA = await contextA.newPage();
   await pageA.setViewportSize({ width: 1280, height: 860 });

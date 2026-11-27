@@ -8,7 +8,9 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const electron = path.join(__dirname, "node_modules", ".bin", "electron");
+const { resolveElectron } = require("./electron-runtime");
+// Resolved once: the Linux lookup may shell out to nix, which is too slow per sample.
+const electronRuntime = resolveElectron();
 const basePort = Number(process.env.YOCHAT_PORT || 8791);
 const relay = process.env.YOCHAT_RELAY || "127.0.0.1:7654";
 const samples = 5;
@@ -27,7 +29,7 @@ function electronArgs() {
 }
 
 function spawnElectron(port, metric, hold) {
-  return spawn(electron, electronArgs(), {
+  return spawn(electronRuntime.executablePath, [...electronRuntime.args, ...electronArgs()], {
     cwd: __dirname,
     stdio: "ignore",
     env: {

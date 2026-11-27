@@ -14,6 +14,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { _electron: electron } = require("playwright");
+const { resolveElectron } = require("./electron-runtime");
 
 const { passphrase, serverJar, root, freePort, gitHead, sleep } = require("./ui-smoke");
 
@@ -30,11 +31,14 @@ const watchdog = setTimeout(() => {
 watchdog.unref();
 
 function sessionManager() {
-  try {
-    return execFileSync("/bin/launchctl", ["managername"], { encoding: "utf8" }).trim();
-  } catch (_) {
-    return "unknown";
+  if (process.platform === "darwin") {
+    try {
+      return execFileSync("/bin/launchctl", ["managername"], { encoding: "utf8" }).trim();
+    } catch (_) {
+      return "unknown";
+    }
   }
+  return process.env.XDG_SESSION_TYPE || "unknown";
 }
 
 function dirtyFiles() {
@@ -46,8 +50,10 @@ function dirtyFiles() {
 }
 
 function launch(port, userData) {
+  const runtime = resolveElectron();
   return electron.launch({
-    args: [".", `--user-data-dir=${userData}`],
+    executablePath: runtime.executablePath,
+    args: [...runtime.args, ".", `--user-data-dir=${userData}`],
     cwd: __dirname,
     env: { ...process.env, YOCHAT_PORT: String(port), YOCHAT_SERVER_JAR: serverJar, YOCHAT_JAVA: java }
   });
@@ -95,8 +101,20 @@ async function main() {
 
     stage = "available";
     const available = await page.evaluate(() => window.yochat.keychainAvailable());
+    // Read in the main process: the renderer has no reason to know, and this keeps
+    // the product's preload surface unchanged.
+    const backend = await app.evaluate(({ safeStorage }) =>
+      typeof safeStorage.getSelectedStorageBackend === "function"
+        ? safeStorage.getSelectedStorageBackend()
+        : process.platform
+    );
 
-    if (forcedUnavailable) {
+    // On Linux the backend is libsecret/kwallet rather than a per-app item, so a
+    // host without one proves the boolean contract instead of failing. macOS keeps
+    // the earlier rule: an Aqua session that reports "unavailable" is a fault, and
+    // only the forced hook may reach the degraded assertions there.
+    const degrade = forcedUnavailable || (process.platform !== "darwin" && available === false);
+    if (degrade) {
       stage = "unavailable-contract";
       const saved = await page.evaluate((value) => window.yochat.savePassphrase(value), passphrase);
       const loaded = await page.evaluate(() => window.yochat.loadPassphrase());
@@ -104,8 +122,18 @@ async function main() {
       if (saved !== false) throw new Error(`savePassphrase resolved ${JSON.stringify(saved)}, expected false`);
       if (loaded !== null) throw new Error(`loadPassphrase resolved ${JSON.stringify(loaded)}, expected null`);
       if (fs.existsSync(stored)) throw new Error("passphrase.bin written while the keychain was unavailable");
-      result = { mode, forcedUnavailable: true, available, saved, loaded };
-    } else if (mode === "Aqua") {
+      result = { mode, forcedUnavailable, available, backend, saved, loaded };
+    } else if (process.platform === "darwin" && mode !== "Aqua") {
+      // Outside Aqua the keychain may or may not be reachable: item creation
+      // needs an interactive session, while later reads can succeed once the
+      // item exists. The contract is a boolean, never a rejected IPC call.
+      stage = "background-contract";
+      const saved = await page.evaluate((value) => window.yochat.savePassphrase(value), passphrase);
+      if (typeof available !== "boolean") throw new Error("keychainAvailable did not resolve a boolean");
+      if (typeof saved !== "boolean") throw new Error(`savePassphrase resolved ${JSON.stringify(saved)}, expected a boolean`);
+      if (saved === false && fs.existsSync(stored)) throw new Error("passphrase.bin written although savePassphrase reported false");
+      result = { mode, available, backend, saved, stored: fs.existsSync(stored), restored: null };
+    } else {
       stage = "ui-remember";
       if (available !== true) throw new Error(`keychainAvailable resolved ${JSON.stringify(available)}, expected true`);
       if (!(await waitForFile(stored))) throw new Error('UI "remember" did not write passphrase.bin');
@@ -133,17 +161,7 @@ async function main() {
       );
       const restored = await page.locator(".unlock-form input[type=password]").first().inputValue();
       if (restored !== passphrase) throw new Error("stored passphrase was not restored before typing");
-      result = { mode, available, saved: true, loaded: true, stored: true, restored: true };
-    } else {
-      // Outside Aqua the keychain may or may not be reachable: item creation
-      // needs an interactive session, while later reads can succeed once the
-      // item exists. The contract is a boolean, never a rejected IPC call.
-      stage = "background-contract";
-      const saved = await page.evaluate((value) => window.yochat.savePassphrase(value), passphrase);
-      if (typeof available !== "boolean") throw new Error("keychainAvailable did not resolve a boolean");
-      if (typeof saved !== "boolean") throw new Error(`savePassphrase resolved ${JSON.stringify(saved)}, expected a boolean`);
-      if (saved === false && fs.existsSync(stored)) throw new Error("passphrase.bin written although savePassphrase reported false");
-      result = { mode, available, saved, stored: fs.existsSync(stored), restored: null };
+      result = { mode, available, backend, saved: true, loaded: true, stored: true, restored: true };
     }
   } catch (error) {
     failure = { stage, error: error && error.message ? error.message : String(error) };
@@ -162,6 +180,7 @@ async function main() {
     dirtyFiles: dirtyFiles(),
     node: process.version,
     session: mode,
+    platform: process.platform,
     forcedUnavailable,
     durationMs: Date.now() - started,
     screenshot: failure && fs.existsSync(screenshotPath) ? screenshotPath : null,
