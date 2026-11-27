@@ -60,12 +60,17 @@ per `docs/agents/git-workflow.md` (`s-` 前缀用于小型非计划修复). 本 
   这是既有 IPC 契约（改动前同样返回 `null`），改动需要 UI 设计与接口变更，单列。
 - `decryptStringAsync` 的 `shouldReEncrypt` 标记不处理：忽略只影响密钥轮换后的重新
   加密时机，不影响正确性。
-- 无 GNU `timeout` 的机器走 bash 看门狗：只对直接子进程发信号，孙进程可能残留；该
-  分支不产生日志文件，回执 `log` 为空。
+- 看门狗统一由 bash 实现（不再依赖 GNU `timeout`）。门禁与看门狗各自独立进程组：
+  超时、Ctrl-C 或 ssh 断连都会连带杀掉整棵树。看门狗的输出重定向到 `/dev/null`，
+  否则其 `sleep` 会继承调用方管道、让 `\| tail` 永远等不到 EOF（实测过）。
 - `DEGRADED` 模式（非 Aqua 且无免密 sudo）仍会运行门禁，keychain 类门会失败；该分支
   没有回执。`mode=direct` 路径有回执覆盖。
 - `keychain-smoke` 使用 `electron <script>` 身份（`Electron Safe Storage`），不是产品
   的钥匙串条目；产品路径由 `passphrase-smoke` 覆盖。
+- 性能门要求 8791–8797 端口空闲。`main.js` 的 `serverIsUp()` 在端口已有服务时不再拉起
+  自己的 JVM，而 idle 阶段要求进程树里必须有 JVM；因此上一次被中断的运行留下的实例会
+  让下一次性能门报「idle process tree does not contain the owned JVM」。runner 现在
+  会清理进程组，但手工中断 runner 之外的运行仍可能残留。
 
 ## 评审裁决（对象 `b500bbf`，两轴共 21 条）
 
@@ -102,7 +107,10 @@ per `docs/agents/git-workflow.md` (`s-` 前缀用于小型非计划修复). 本 
 - 环境透传：`YOCHAT_TEST_VAR=hello` 在注入会话内可见，回执 `forwarded_env` 记录。
 - `electron-smoke`：显示器开启与熄灭（`display_before=off`）两次 PASS，各 100 条双向、
   B/A 重启。
-- `perf-start` 经 runner：p50 1284ms / p95 1338ms / idle 747.2MB，PASS。
+- `perf-start` 经 runner 两次 PASS（p50 1284/1222ms，p95 1338/1239ms，idle 747.2/763.5MB）。
+  中间一次 FAIL 归因于上一次被中断运行留下的实例占住 8797，清理后复跑通过。
+- 中断语义：SIGTERM 到 runner 时判 `INCOMPLETE`（exit 143）并写回执；超时与管道输出两条
+  路径都不留孤儿，`\| tail` 能正常收尾。
 
 ## 验收
 

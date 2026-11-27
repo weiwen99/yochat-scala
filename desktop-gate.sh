@@ -129,11 +129,6 @@ else
   cmd=(caffeinate -dims "$@")
 fi
 
-timeout_bin=""
-if command -v timeout >/dev/null 2>&1; then
-  timeout_bin="$(command -v timeout)"
-fi
-
 start_epoch="$(date +%s)"
 start_ms="$(epoch_ms)"
 start_display="$(display_state)"
@@ -144,32 +139,48 @@ marker="${TMPDIR:-/tmp}/yochat-gate-timeout-$$"
 rm -f "$marker"
 log="tmp/checks/desktop-gate-${start_epoch}.log"
 
+# Job control puts the gate in its own process group, so a timeout, a Ctrl-C, or
+# a dropped ssh session can take down the whole tree. Without it, a killed gate
+# leaves an Electron and its JVM behind holding the port for the next run.
+child=""
+watchdog=""
+cleanup() {
+  if [[ -n "$watchdog" ]]; then
+    kill -TERM -"$watchdog" 2>/dev/null || true
+  fi
+  if [[ -n "$child" ]]; then
+    kill -TERM -"$child" 2>/dev/null || true
+    /bin/sleep 2 >/dev/null 2>&1 || true
+    kill -KILL -"$child" 2>/dev/null || true
+  fi
+  rm -f "$marker" || true
+  return 0
+}
+trap cleanup EXIT INT TERM HUP
+
 status=0
 set +e
-if [[ -n "$timeout_bin" ]]; then
-  # GNU timeout spends up to another 30s escalating TERM to KILL.
-  "$timeout_bin" --signal=TERM --kill-after=30 "$timeout_s" "${cmd[@]}" 2>&1 | tee "$log"
-  status=${PIPESTATUS[0]}
-else
-  # Stock macOS has no timeout(1). The watchdog marks the run before signalling,
-  # so a timeout is INCOMPLETE whatever exit code the child happens to report.
-  # The command keeps the terminal directly, so this branch has no log file.
-  log=""
-  "${cmd[@]}" &
-  child=$!
-  (
-    sleep "$timeout_s"
-    : > "$marker"
-    kill -TERM "$child" 2>/dev/null
-    sleep 30
-    kill -KILL "$child" 2>/dev/null
-  ) &
-  watchdog=$!
-  wait "$child"
-  status=$?
-  kill -TERM "$watchdog" 2>/dev/null
-  wait "$watchdog" 2>/dev/null
-fi
+set -m
+"${cmd[@]}" > >(tee "$log") 2>&1 &
+child=$!
+# The watchdog gets its own process group and no inherited output: a plain child
+# sleep would outlive the gate and keep the caller's pipe open, so a `| tail`
+# would never see EOF.
+(
+  sleep "$timeout_s"
+  : > "$marker"
+  kill -TERM -"$child" 2>/dev/null
+  sleep 30
+  kill -KILL -"$child" 2>/dev/null
+) >/dev/null 2>&1 &
+watchdog=$!
+set +m
+wait "$child"
+status=$?
+kill -TERM -"$watchdog" 2>/dev/null
+wait "$watchdog" 2>/dev/null
+watchdog=""
+sleep 1
 set -e
 
 timed_out=0
