@@ -62,7 +62,21 @@ final case class ContactRecord(
   createdAt: Long
 ):
 
+  def isActive: Boolean = data.state == ContactState.Active
+
   override def toString: String = s"ContactRecord(version=$version, confirmation=${data.confirmationState})"
+
+/** A tombstone row is kept so a deleted relationship cannot be resurrected by rolling back a row. The row version is compared with
+  * `meta["blocked-version/<hex>"]`; a missing or lower row fails closed.
+  */
+final case class BlockedPeerRecord(
+  userPub: Ed25519Public,
+  version: Long,
+  createdAt: Long,
+  updatedAt: Long
+):
+
+  override def toString: String = s"BlockedPeerRecord(version=$version)"
 
 final case class InvitationRecord(
   id: ByteVector,
@@ -164,6 +178,11 @@ final case class CompanionMessageRecord(
 
   override def toString: String =
     s"CompanionMessageRecord(sourceId=$sourceId, seq=$seq, state=$state, syncSeq=$syncSeq)"
+
+/** `inserted` distinguishes a first durable copy from a repeated delivery of the same logical message, so a caller can show one notice per
+  * original instead of one per frame.
+  */
+final case class CompanionUpsert(record: CompanionMessageRecord, inserted: Boolean)
 
 final case class StoreSnapshot(
   contacts: List[ContactRecord],

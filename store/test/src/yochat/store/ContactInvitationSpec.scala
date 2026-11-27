@@ -83,9 +83,9 @@ class ContactInvitationSpec extends FunSuite:
               sql"UPDATE contacts SET sealed = ${contactV2._1}, version = ${contactV2._2} WHERE user_pub = ${session.peerUserPub.bytes.toArray}".update.run
             )
           _                     <- store.deleteContact(session.peerUserPub, 2L, 0L)
+          tombstone             <- store.loadContact(session.peerUserPub)
           _                     <- store.transact(
-                                     sql"""INSERT INTO contacts(user_pub, sealed, version, created_at)
-                               |VALUES (${session.peerUserPub.bytes.toArray}, ${contactV2._1}, ${contactV2._2}, ${contactV2._3})""".stripMargin.update.run
+                                     sql"UPDATE contacts SET sealed = ${contactV2._1}, version = ${contactV2._2} WHERE user_pub = ${session.peerUserPub.bytes.toArray}".update.run
                                    )
           resurrected           <- store.loadContact(session.peerUserPub)
           invitationV1          <- rawInvitation(store, invitation)
@@ -111,6 +111,7 @@ class ContactInvitationSpec extends FunSuite:
           assertEquals(codec.map(_.state), Right(InvitationState.Pending))
           assertEquals(positive.map(_.version), Right(1L))
           assertEquals(StoreTestSupport.left(rolled), StorageError.StaleGeneration)
+          assertEquals(StoreTestSupport.left(tombstone), StorageError.NotFound("contact"))
           assertEquals(StoreTestSupport.left(resurrected), StorageError.StaleGeneration)
           assertEquals(StoreTestSupport.left(invitationRolled), StorageError.StaleGeneration)
           assertEquals(StoreTestSupport.left(reinserted), StorageError.WriteConflict)

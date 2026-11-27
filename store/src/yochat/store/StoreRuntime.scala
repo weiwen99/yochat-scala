@@ -125,5 +125,8 @@ private[store] object Sql:
   def deviceSyncVersionKey(peerDevicePub: ByteVector): String =
     s"device-sync-version/${peerDevicePub.toHex}"
 
+  def blockedVersionKey(userPub: ByteVector): String =
+    s"blocked-version/${userPub.toHex}"
+
   val MessageSyncSeqKey: String    = "message-sync-seq"
   val DeviceSyncEnabledKey: String = "device-sync-enabled"

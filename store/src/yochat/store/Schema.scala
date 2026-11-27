@@ -4,15 +4,17 @@ import org.typelevel.doobie.*
 import org.typelevel.doobie.free.connection as FC
 import org.typelevel.doobie.implicits.*
 
-/** Schema v5: S1/S2-A/B1 plus B2 fanout keys, logical-key dedupe and per-device delivery receipts. */
+/** Schema v6: S1/S2-A/B1 plus B2 fanout keys, logical-key dedupe, per-device delivery receipts and the S3-A blocked-peer table.
+  */
 private[store] object Schema:
 
-  val Version: Long = 5L
+  val Version: Long = 6L
 
   private val BaseTables = Vector("meta", "sessions", "messages", "contacts", "invitations", "conversations")
   private val V3Tables   = BaseTables ++ Vector("devices", "device_sync", "companion_messages")
   private val V4Tables   = V3Tables :+ "peer_device_lists"
   private val V5Tables   = V4Tables ++ Vector("delivery_receipts", "message_order")
+  private val V6Tables   = V5Tables :+ "blocked_peers"
 
   def initialize: ConnectionIO[Unit] =
     for
@@ -68,6 +70,7 @@ private[store] object Schema:
       _ <- createV3Tables
       _ <- createV4Tables
       _ <- createV5Tables
+      _ <- createV6Tables
       _ <- sql"CREATE INDEX messages_conversation_order ON messages(conversation_id, author_pub, seq)".update.run
       _ <- sql"CREATE INDEX sessions_peer_user ON sessions(peer_user_pub)".update.run
       _ <- sql"CREATE INDEX messages_sync_seq ON messages(sync_seq)".update.run
@@ -83,7 +86,8 @@ private[store] object Schema:
                    case Some(2L) => baseTablesPresent.flatMap(_ => migrateFromTwo)
                    case Some(3L) => v3TablesPresent.flatMap(_ => migrateFromThree)
                    case Some(4L) => v4TablesPresent.flatMap(_ => migrateFromFour)
-                   case Some(5L) => v5TablesPresent
+                   case Some(5L) => v5TablesPresent.flatMap(_ => migrateFromFive)
+                   case Some(6L) => v6TablesPresent
                    case Some(_)  => abort(StorageError.UnsupportedSchema)
                    case None     => abort(StorageError.UnsupportedSchema)
       lock    <- sql"SELECT value FROM meta WHERE key = 'lock-generation'".query[Long].option
@@ -103,6 +107,7 @@ private[store] object Schema:
       _ <- createV3Tables
       _ <- createV4Tables
       _ <- createV5Tables
+      _ <- createV6Tables
       _ <- sql"ALTER TABLE messages ADD COLUMN sync_seq INTEGER NOT NULL DEFAULT 0".update.run
       _ <- sql"CREATE INDEX messages_sync_seq ON messages(sync_seq)".update.run
       _ <- writeMeta("schema_version", Version)
@@ -182,6 +187,7 @@ private[store] object Schema:
              sql"ALTER TABLE companion_messages ADD COLUMN logical_key BLOB".update.run.map(_ => ())
            )
       _ <- createV5Tables
+      _ <- createV6Tables
       _ <-
         sql"CREATE UNIQUE INDEX IF NOT EXISTS companion_messages_logical_key ON companion_messages(logical_key) WHERE logical_key IS NOT NULL".update.run
       _ <- writeMeta("schema_version", Version)
@@ -197,6 +203,25 @@ private[store] object Schema:
     requiredTableCount(V5Tables).flatMap { count =>
       if count == V5Tables.size.toLong then FC.unit else abort(StorageError.UnsupportedSchema)
     }
+
+  private def migrateFromFive: ConnectionIO[Unit] =
+    for
+      _ <- createV6Tables
+      _ <- writeMeta("schema_version", Version)
+    yield ()
+
+  private def v6TablesPresent: ConnectionIO[Unit] =
+    requiredTableCount(V6Tables).flatMap { count =>
+      if count == V6Tables.size.toLong then FC.unit else abort(StorageError.UnsupportedSchema)
+    }
+
+  private def createV6Tables: ConnectionIO[Unit] =
+    sql"""CREATE TABLE IF NOT EXISTS blocked_peers (
+       |  user_pub BLOB PRIMARY KEY NOT NULL,
+       |  version INTEGER NOT NULL,
+       |  created_at INTEGER NOT NULL,
+       |  updated_at INTEGER NOT NULL
+       |)""".stripMargin.update.run.flatMap(_ => FC.unit)
 
   private def createV4Tables: ConnectionIO[Unit] =
     sql"""CREATE TABLE IF NOT EXISTS peer_device_lists (

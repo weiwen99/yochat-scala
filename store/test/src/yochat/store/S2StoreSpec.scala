@@ -132,7 +132,7 @@ final class S2StoreSpec extends FunSuite:
         val direct       = first.copy(sourceId = 0L, body = StoreTestSupport.body("once"), syncSeq = 0L, createdAt = 200L)
         ok(store.upsertCompanionMessage(first))
         val deduped = ok(store.upsertCompanionMessage(direct))
-        assertEquals(deduped.sourceId, 7L)
+        assertEquals(deduped.record.sourceId, 7L)
         assertEquals(ok(store.countCompanionMessages(conversation)), 1L)
         assertEquals(ok(store.loadCompanionMessage(7L)).logicalKey, Some(key))
 
@@ -266,7 +266,7 @@ final class S2StoreSpec extends FunSuite:
         try
           val version = statement.executeQuery("SELECT value FROM meta WHERE key = 'schema_version'")
           assert(version.next())
-          assertEquals(version.getLong(1), 5L)
+          assertEquals(version.getLong(1), Schema.Version)
           val count = statement.executeQuery("SELECT count(*) FROM messages")
           assert(count.next())
           assertEquals(count.getLong(1), 1L)
@@ -304,7 +304,7 @@ final class S2StoreSpec extends FunSuite:
         try
           val version = statement.executeQuery("SELECT value FROM meta WHERE key = 'schema_version'")
           assert(version.next())
-          assertEquals(version.getLong(1), 5L)
+          assertEquals(version.getLong(1), Schema.Version)
           val table = statement.executeQuery("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'peer_device_lists'")
           assert(table.next())
           assertEquals(table.getLong(1), 1L)

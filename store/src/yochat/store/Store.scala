@@ -3,7 +3,7 @@ package yochat.store
 import java.nio.file.Path
 import java.time.Clock
 
-import cats.effect.{IO, Resource}
+import cats.effect.{IO, Ref, Resource}
 import cats.effect.std.Semaphore
 import com.zaxxer.hikari.HikariConfig
 import org.sqlite.{SQLiteConfig, SQLiteDataSource}
@@ -23,8 +23,30 @@ enum RebindOutcome:
 final class Store private[store] (
   private[store] val runtime: StoreRuntime,
   val isNew: Boolean,
-  val identity: IdentityKeys
+  val identity: IdentityKeys,
+  private val blockedPeers: Ref[IO, Set[Ed25519Public]]
 ):
+
+  /** The in-memory blocklist is a read-through cache of `blocked_peers`; every write goes through this store, so the cache cannot drift from
+    * the row in the same process.
+    */
+  def isBlocked(userPub: Ed25519Public): IO[Boolean] =
+    blockedPeers.get.map(_.contains(userPub)) // scalafix:ok DisableSyntax.no-unsafe-get
+
+  def blockPeer(userPub: Ed25519Public, expectedLockGeneration: Long): IO[Either[StorageError, Boolean]] =
+    BlockedPeerRepository.block(runtime, userPub, expectedLockGeneration).flatMap {
+      case Right(changed) => blockedPeers.update(_ + userPub).as(Right(changed))
+      case Left(error)    => IO.pure(Left(error))
+    }
+
+  def unblockPeer(userPub: Ed25519Public, expectedLockGeneration: Long): IO[Either[StorageError, Boolean]] =
+    BlockedPeerRepository.unblock(runtime, userPub, expectedLockGeneration).flatMap {
+      case Right(changed) => blockedPeers.update(_ - userPub).as(Right(changed))
+      case Left(error)    => IO.pure(Left(error))
+    }
+
+  def listBlockedPeers: IO[Either[StorageError, List[BlockedPeerRecord]]] =
+    BlockedPeerRepository.list(runtime)
 
   def insertSession(state: RatchetState, expectedLockGeneration: Long): IO[Either[StorageError, SessionRecord]] =
     SessionRepository.insert(runtime, state, expectedLockGeneration)
@@ -270,6 +292,9 @@ final class Store private[store] (
   def loadContact(userPub: Ed25519Public): IO[Either[StorageError, ContactRecord]] =
     ContactRepository.load(runtime, userPub)
 
+  def loadContactForSync(userPub: Ed25519Public): IO[Either[StorageError, Option[ContactRecord]]] =
+    ContactRepository.loadForSync(runtime, userPub)
+
   def updateContact(
     userPub: Ed25519Public,
     data: ContactData,
@@ -292,6 +317,18 @@ final class Store private[store] (
     expectedLockGeneration: Long
   ): IO[Either[StorageError, Unit]] =
     ContactRepository.delete(runtime, userPub, expectedVersion, expectedLockGeneration)
+
+  /** Ends a relationship. Keeping history leaves sessions, messages and the conversation in place so the app can restore the archived thread;
+    * deleting history also removes the peer's sessions, because `conversations` has no peer-device column and a session without a conversation
+    * would make the next open fail.
+    */
+  def deleteRelationship(
+    userPub: Ed25519Public,
+    expectedVersion: Long,
+    deleteHistory: Boolean,
+    expectedLockGeneration: Long
+  ): IO[Either[StorageError, Unit]] =
+    RelationshipRepository.delete(runtime, userPub, expectedVersion, deleteHistory, expectedLockGeneration)
 
   def insertDevice(
     record: DeviceRecord,
@@ -338,7 +375,7 @@ final class Store private[store] (
   def upsertCompanionMessage(
     record: CompanionMessageRecord,
     order: Option[yochat.core.s2.OrderStamp] = None
-  ): IO[Either[StorageError, CompanionMessageRecord]] =
+  ): IO[Either[StorageError, CompanionUpsert]] =
     CompanionMessageRepository.upsert(runtime, record, order)
 
   def loadCompanionMessage(sourceId: Long): IO[Either[StorageError, CompanionMessageRecord]] =
@@ -698,7 +735,15 @@ object Store:
   private def create(prepared: Prepared, transactor: org.typelevel.doobie.util.transactor.Transactor[IO]): IO[Either[StorageError, Store]] =
     Semaphore[IO](1).flatMap { semaphore =>
       val runtime = new StoreRuntime(transactor, semaphore, prepared.keys, prepared.clock, prepared.paths)
-      runtime.run(Schema.initialize).map(_.map(_ => new Store(runtime, prepared.isNew, prepared.identity)))
+      for
+        initialized <- runtime.run(Schema.initialize)
+        blocked     <- initialized match
+                         case Left(error) => IO.pure(Left(error))
+                         case Right(_)    => runtime.run(BlockedPeerRepository.loadAll)
+        cache       <- blocked match
+                         case Right(values) => Ref.of[IO, Set[Ed25519Public]](values).map(Right(_))
+                         case Left(error)   => IO.pure(Left(error))
+      yield cache.map(values => new Store(runtime, prepared.isNew, prepared.identity, values))
     }
 
   private def hikari(database: Path): HikariConfig =

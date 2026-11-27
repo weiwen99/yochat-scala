@@ -12,6 +12,12 @@ import yochat.core.X25519Private
 enum ContactConfirmation:
   case Pending, Confirmed, AccountMismatch
 
+/** `Deleted` keeps the row as a tombstone; the relationship is gone but the row version still guards against rollback. `Recreated` marks a
+  * relationship that was rebuilt from a new invitation after a deletion.
+  */
+enum ContactState:
+  case Active, Deleted
+
 enum InvitationState:
   case Pending, Accepted, Declined, Expired, Consumed, PendingReply
 
@@ -22,10 +28,12 @@ final case class ContactData(
   alias: Option[String],
   note: Option[String],
   safetyVerified: Boolean,
-  confirmationState: ContactConfirmation
+  confirmationState: ContactConfirmation,
+  state: ContactState = ContactState.Active,
+  recreated: Boolean = false
 ):
 
-  override def toString: String = s"ContactData(confirmation=$confirmationState, safetyVerified=$safetyVerified)"
+  override def toString: String = s"ContactData(confirmation=$confirmationState, safetyVerified=$safetyVerified, state=$state)"
 
 final case class InvitationData(
   ephemeralPrivate: Option[X25519Private],
@@ -43,7 +51,7 @@ final case class InvitationData(
 
 private[store] object StoreDataCodec:
 
-  private val ContactVersion: Int     = 1
+  private val ContactVersion: Int     = 2
   private val InvitationVersion: Int  = 1
   private val InvitationVersion2: Int = 2
   private val InvitationVersion3: Int = 3
@@ -68,13 +76,15 @@ private[store] object StoreDataCodec:
       writer
         .u8(if value.safetyVerified then 1 else 0)
         .u8(confirmationCode(value.confirmationState))
+        .u8(contactStateCode(value.state))
+        .u8(if value.recreated then 1 else 0)
         .result
 
   def decodeContact(value: ByteVector): Either[StorageError, ContactData] =
     val reader = CodecReader(value)
     for
       (version, r1)      <- reader.u8
-      _                  <- if version == ContactVersion then Right(()) else Left(StorageError.InvalidEnvelope)
+      _                  <- if version == 1 || version == ContactVersion then Right(()) else Left(StorageError.InvalidEnvelope)
       (label, r2)        <- r1.string(MaxFieldBytes)
       (account, r3)      <- r2.string(MaxFieldBytes)
       (peer, r4)         <- readOptionString(r3)
@@ -83,9 +93,18 @@ private[store] object StoreDataCodec:
       (safety, r7)       <- r6.u8
       safetyVerified     <- if safety == 0 || safety == 1 then Right(safety == 1) else Left(StorageError.InvalidEnvelope)
       (confirmation, r8) <- r7.u8
-      state              <- confirmationFromCode(confirmation)
-      _                  <- r8.finish
-    yield ContactData(label, account, peer, alias, note, safetyVerified, state)
+      confirmationState  <- confirmationFromCode(confirmation)
+      decoded            <-
+        if version == 1 then r8.finish.map(_ => ContactData(label, account, peer, alias, note, safetyVerified, confirmationState))
+        else
+          for
+            (stateCode, r9)      <- r8.u8
+            state                <- contactStateFromCode(stateCode)
+            (recreatedCode, r10) <- r9.u8
+            recreated            <- if recreatedCode == 0 || recreatedCode == 1 then Right(recreatedCode == 1) else Left(StorageError.InvalidEnvelope)
+            _                    <- r10.finish
+          yield ContactData(label, account, peer, alias, note, safetyVerified, confirmationState, state, recreated)
+    yield decoded
 
   def encodeInvitation(value: InvitationData): Either[StorageError, ByteVector] =
     if value.payload.size > MaxPayloadBytes.toLong then Left(StorageError.InvalidArgument("payload"))
@@ -211,6 +230,17 @@ private[store] object StoreDataCodec:
       case 1 => Right(ContactConfirmation.Pending)
       case 2 => Right(ContactConfirmation.Confirmed)
       case 3 => Right(ContactConfirmation.AccountMismatch)
+      case _ => Left(StorageError.InvalidEnvelope)
+
+  private def contactStateCode(value: ContactState): Int =
+    value match
+      case ContactState.Active  => 1
+      case ContactState.Deleted => 2
+
+  private def contactStateFromCode(value: Int): Either[StorageError, ContactState] =
+    value match
+      case 1 => Right(ContactState.Active)
+      case 2 => Right(ContactState.Deleted)
       case _ => Left(StorageError.InvalidEnvelope)
 
   private def invitationCode(value: InvitationState): Int =

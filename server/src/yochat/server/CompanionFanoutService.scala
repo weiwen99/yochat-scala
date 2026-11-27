@@ -57,7 +57,7 @@ final class CompanionFanoutService(
                               case Right(lock) =>
                                 store.upsertMessageOrder(key, stamp, time.toMillis, lock).flatMap {
                                   case Left(error) => IO.pure(Left(error.code))
-                                  case Right(_)    => acknowledge(value, time.toMillis).attempt.as(Right(stored))
+                                  case Right(_)    => acknowledge(value, time.toMillis).attempt.as(Right(stored.record))
                                 }
                             }
                         }

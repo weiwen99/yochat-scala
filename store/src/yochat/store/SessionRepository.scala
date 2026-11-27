@@ -81,6 +81,33 @@ private[store] object SessionRepository:
         yield ()
     }
 
+  /** Used when deleting a relationship together with its history: no conversation row survives, so a session row without a conversation cannot
+    * break the next restore. Callers delete messages in the same transaction first.
+    */
+  def deleteForPeerProgram(runtime: StoreRuntime, userPub: Ed25519Public, lock: Long): ConnectionIO[Unit] =
+    sql"SELECT id FROM sessions WHERE peer_user_pub = ${userPub.bytes.toArray} ORDER BY id".query[Array[Byte]].to[List].flatMap { ids =>
+      ids.foldLeft(FC.unit) { (acc, raw) =>
+        acc.flatMap(_ =>
+          SessionId.from(ByteVector.view(raw)) match
+            case Left(_)      => Sql.abort(StorageError.InvalidEnvelope)
+            case Right(value) =>
+              loadOptionProgram(runtime, value).flatMap {
+                case None          => FC.unit
+                case Some(current) =>
+                  for
+                    _       <- if current.generation == lock then FC.unit else Sql.abort(StorageError.StaleGeneration)
+                    pending <- pendingCountProgram(value)
+                    _       <- if pending == 0L then FC.unit else Sql.abort(StorageError.PendingMessages)
+                    deleted <- sql"DELETE FROM sessions WHERE id = ${value.bytes.toArray} AND state_version = ${current.version}".update.run
+                    _       <- Sql.changed(deleted)
+                    next    <- Sql.nextVersion(current.version)
+                    _       <- Sql.writeMeta(Sql.sessionVersionKey(value), next)
+                  yield ()
+              }
+        )
+      }
+    }
+
   def retireProgram(
     runtime: StoreRuntime,
     sessionId: SessionId,

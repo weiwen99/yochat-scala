@@ -38,8 +38,9 @@ private[store] object SnapshotRepository:
       acc.flatMap(values =>
         Sql.eitherCore(Ed25519Public.from(raw)).flatMap { userPub =>
           ContactRepository.loadOptionProgram(runtime, userPub).flatMap {
-            case Some(record) => FC.pure(values :+ record)
-            case None         => Sql.abort(StorageError.NotFound("contact"))
+            case Some(record) if record.isActive => FC.pure(values :+ record)
+            case Some(_)                         => FC.pure(values)
+            case None                            => Sql.abort(StorageError.NotFound("contact"))
           }
         }
       )
