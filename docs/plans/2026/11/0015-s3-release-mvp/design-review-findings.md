@@ -95,3 +95,15 @@ DESIGN-DISCIPLINE R9 停轮并交人工。
 | S3-9 | P2 | 裁决 3 按 (a) 叙述，若选 (b) 有句子需作废 | fix | 裁决 3 补「若选 (b)，已知约束 3 与 A2 历史那句作废」 |
 
 第 3 轮 P1 3 条全部 fix；第 4 轮只复审本轮 diff。
+
+## 第 4 轮
+
+对象：`34ce0f5` 之后的修订。Standards 2 P1 + 1 P2，Spec 轴无独立发现。
+
+| # | 级别 | 发现 | 处置 | 关闭证据 |
+| --- | --- | --- | --- | --- |
+| S4-1 | P1 | 验收行仍写「六类入站帧落盘增量为 0」，与正文「只数行数恒真、不能用」自相矛盾；`peer_device_lists` 也是 upsert | fix | 验收改为逐项可证伪：`messages`/`companion_messages` 行数增量、`peer_device_lists` 的 version/received_at、`delivery_receipts` 的 state/updated_at、待确认项、棘轮、八种出站零帧；并写明删 guard 必须变红 |
+| S4-2 | P1 | A2→A1 的帧证据写错：`syncRequest` 无生产发送方，只有测试用；实际是 sync-status + ack | fix | 正文改为 `CompanionService.requestLoop` → `syncStatus` 与 ack，并注明 `syncRequest` 已定义未使用；裁决 3(b) 的「复用骨架」同步改 |
+| S4-3 | P2 | spec 裁决 1 仍写「含 6 部分」 | fix | 改 8 |
+
+第 4 轮 P1 2 条全部 fix。

@@ -117,8 +117,10 @@ S1/S2 之后缺两类东西：
 2. **拉黑窗口外的消息取不回**：对方重试预算耗尽（3 次 / 约 15 秒；wire 失败约 2 秒 / 在途 ≤32 条）
    后进入 Failed，不再重发；`requestResend` 不接受 Failed。与裁决 2 绑定。
 3. **关系变更只在主设备发起**：`device_sync` 的**快照数据**是 A1→A2 单向；A2→A1 已经存在
-   sync-request、sync-status、ack 三类帧（`CompanionService` 的 s2-sync-request、
-   `CompanionSyncService` 的 sync-status 与 ack、`DeviceSyncScheduler.acceptStatus/acceptAck`）。
+   sync-status 与 ack 两类帧（`CompanionService.requestLoop` 取 `receiver.statusBytes` →
+   `DeviceSyncProtocol.syncStatus`；`CompanionSyncService` 的 ack；A1 侧
+   `DeviceSyncScheduler.acceptStatus/acceptAck`）。协议里也定义了 `syncRequest`，但生产代码没有
+   发送方（只有测试用），不能当既有先例。
    `DeviceList` 不可能由 A2 发出：构建它需要 A1 才持有的用户私钥（`PeerDeviceListService.build`
    返回 `primary-user-key`）；`FanoutAck` 的方向是对端 companion → 本机 A1，不是 A2 → A1。
    缺的是「关系变更数据的上行携带与 A1 侧应用」，不是通道本身。S3-A 先在 A2 禁用这些操作并提示在主力设备操作；是否补上行是裁决 3。
@@ -294,8 +296,8 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
 2. **解除拉黑的窗口外行为**：(a) 如实告知取不回（最小改动，但 `J22VY0VTZVRBY1P6` 的验收要降级）；
    (b) 把 `XBRY5Q81Z4ZPP6ER` 的最小批准路径拉进 S3-A（+800–1,200 行，含新协议状态）。
 3. **A2 上能否发起关系变更**：(a) 先禁用并提示在主力设备操作（0 成本，可用性差）；
-   (b) 补关系变更的上行承载（+1,200–1,800 行：复用现有 sync-request/ack 骨架，加记录类型、
-   签名与 A1 侧应用）。设计按 (a) 写；若选 (b)，已知约束 3 与「A2 历史待恢复后自查」那句作废。
+   (b) 补关系变更的上行承载（+1,200–1,800 行：复用现有 sync-status/ack 骨架，加记录类型、
+   签名与 A1 侧应用；`syncRequest` 虽已定义但无生产发送方，不能直接当承载）。设计按 (a) 写；若选 (b)，已知约束 3 与「A2 历史待恢复后自查」那句作废。
 4. **搜索的存储取舍**：A 有界解密扫描 / B 明文索引 / C 不做搜索。需 ADR。
 5. **十万条指标**是否采纳；采纳则要定义数据形状与阈值（ADR）。
 6. **行预算口径**：30,000 行上限按哪个口径计（是否含 `spike/` 与 `shell/*.js`）；维持还是提高。
@@ -307,7 +309,10 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
 
 - **S3-A**
   - `./mill server.e2e` 全绿（16 条既有契约 + 新增 S3 契约）。
-  - 新增 E2E：拉黑后六类入站帧落盘增量为 0、八种出站 kind 零帧、本机存储不增长；解除拉黑后
+  - 新增 E2E：拉黑后 `messages`、`companion_messages` 行数增量为 0；`peer_device_lists` 的
+    `version`/`received_at` 不变（它是 upsert，数行数恒真）；`delivery_receipts` 的
+    `state`/`updated_at` 不变（只 UPDATE，无 INSERT）；待确认项不新增；会话棘轮不推进；
+    八种出站 kind 零帧。删掉对应的 guard 后每条断言都必须变红。解除拉黑后
     窗口内补齐、窗口外给出裁决 2 规定的行为；删除联系人询问历史、保留时消息仍在（搜索断言随
     S3-C 延后，本波只断言会话视图与本地库）；删除已拉黑保留拉黑记录且新应答不出现在界面；
     重加为未校验并提示新关系；对方换设备后拉黑与校验仍在；另一份邀请的应答作为新待确认项且
