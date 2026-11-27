@@ -4,6 +4,7 @@ Two tiers, one owner per artifact.
 
 | Artifact | Location | Format | Lifetime |
 | --- | --- | --- | --- |
+| Backlog | `TODO.md` (repo root) | markdown | items move out on start |
 | Live spec | `.scratch/<effort>/spec.md` | markdown | mutates freely |
 | Tickets | `.scratch/<effort>/issues/NN-<slug>.md` | markdown | mutates freely |
 | Design record | `docs/plans/<year>/<month>/<NNNN>-<slug>/design.md` | markdown | frozen once implementation starts |

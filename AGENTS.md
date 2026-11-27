@@ -95,6 +95,7 @@ Scala 代码必须遵守 `scala-best-practices`。写、改、重构或评审 Sc
 
 - 单上下文：根 `GLOSSARY.md` + `docs/adr/`。ADR 只在「难逆、无上下文会困惑、真实取舍」三条同时成立时写。
 - 活状态在 `.scratch/<effort>/`；冻结记录在 `docs/plans/<year>/<month>/<NNNN>-<slug>/`。markdown，不用 org。
+- 还没有 effort 目录的条目在仓根 `TODO.md`；开工即移入 `.scratch/<effort>/spec.md` 并从此删除。`TODO.md` 不记录已开工项的状态，也不重复 `README.md` 的 Status 与本文件 §10。
 - 每个计划结项必须声明它取代了哪份旧文档；评审发现必须关闭或撤回。禁止无出口的 append-only。
 - 证据纪律：一手来源、对象/版本/日期/口径；冲突并列；估算不升级为实测。
 - 采用上游做法时，同一次改动写规则 + ADR 记来源与差异 + 本文件留指针（定例）。
