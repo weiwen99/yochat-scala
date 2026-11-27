@@ -167,9 +167,9 @@ S1/S2 之后缺两类东西：
   出站（Reply 除外）同样要求；拉黑额外由 `blocked_peers` 判定。**保留历史时不删会话行**：
   `conversations` 表没有 peer device 列，删掉 session 后 `AppStateRestore` 无法把保留下来的
   历史会话映射到对端设备，应用会打不开。**删除历史时连 `sessions` 一起删**（先推进每个会话的
-  高水位），并删 `messages`、`message_order`、`delivery_receipts` 与 `conversations`（本机行为，
-  ADR-0007 已登记消息删除不在防篡改承诺内）；删除联系人同时移除该对端的待处理邀请，避免旧邀请
-  把关系重新建起来。
+  高水位），并删 `messages`、`message_order`、`delivery_receipts`、`companion_messages` 与
+  `conversations`（本机行为，ADR-0007 已登记消息删除不在防篡改承诺内）；删除联系人同时移除该
+  对端的待处理邀请，避免旧邀请把关系重新建起来。
 
 ### S3-A 关系结束
 

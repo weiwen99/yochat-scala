@@ -31,10 +31,12 @@ private[store] object RelationshipRepository:
         _       <- deleteReceivedInvitations(runtime, userPub, expectedLockGeneration)
         _       <- ContactRepository.deleteProgram(runtime, userPub, expectedVersion, expectedLockGeneration)
         convIds <- conversationIds(userPub)
+        sids    <- sessionIds(userPub)
         _       <- if deleteHistory then SessionRepository.deleteForPeerProgram(runtime, userPub, expectedLockGeneration) else FC.unit
         _       <- convIds.foldLeft(FC.unit) { (acc, conversationId) =>
                      acc.flatMap(_ => if deleteHistory then deleteHistoryRows(conversationId) else markOutgoingFailed(conversationId))
                    }
+        _       <- if deleteHistory then sids.foldLeft(FC.unit)((acc, sid) => acc.flatMap(_ => deleteMessagesBySession(sid))) else FC.unit
         _       <- if deleteHistory then convIds.foldLeft(FC.unit)((acc, id) => acc.flatMap(_ => deleteConversation(id))) else FC.unit
       yield ()
     }
@@ -62,6 +64,18 @@ private[store] object RelationshipRepository:
   private def markOutgoingFailed(conversationId: ByteVector): ConnectionIO[Unit] =
     sql"""UPDATE messages SET state = $FailedCode
          |WHERE conversation_id = ${conversationId.toArray} AND state IN ($PendingCode, $SentCode)""".stripMargin.update.run.map(_ => ())
+
+  private def sessionIds(userPub: Ed25519Public): ConnectionIO[Vector[ByteVector]] =
+    sql"SELECT id FROM sessions WHERE peer_user_pub = ${userPub.bytes.toArray} ORDER BY id"
+      .query[Array[Byte]]
+      .to[List]
+      .map(_.map(ByteVector.view).toVector)
+
+  /** Sessions and conversations are selected by different keys; delete by session too so an orphan session's sealed body and wire cannot
+    * survive a "delete history" that only knew the conversation ids.
+    */
+  private def deleteMessagesBySession(sessionId: ByteVector): ConnectionIO[Unit] =
+    sql"DELETE FROM messages WHERE session_id = ${sessionId.toArray}".update.run.map(_ => ())
 
   private def deleteHistoryRows(conversationId: ByteVector): ConnectionIO[Unit] =
     for

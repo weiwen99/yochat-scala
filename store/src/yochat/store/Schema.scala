@@ -72,7 +72,7 @@ private[store] object Schema:
       _ <- createV5Tables
       _ <- createV6Tables
       _ <- sql"CREATE INDEX messages_conversation_order ON messages(conversation_id, author_pub, seq)".update.run
-      _ <- sql"CREATE INDEX sessions_peer_user ON sessions(peer_user_pub)".update.run
+      _ <- sql"CREATE INDEX IF NOT EXISTS sessions_peer_user_id ON sessions(peer_user_pub, id)".update.run
       _ <- sql"CREATE INDEX messages_sync_seq ON messages(sync_seq)".update.run
       _ <- writeMeta("schema_version", Version)
       _ <- writeMeta("lock-generation", 0L)
@@ -223,7 +223,8 @@ private[store] object Schema:
                  |  created_at INTEGER NOT NULL,
                  |  updated_at INTEGER NOT NULL
                  |)""".stripMargin.update.run
-      _ <- sql"CREATE INDEX IF NOT EXISTS conversations_peer_user ON conversations(peer_user_pub)".update.run
+      _ <- sql"CREATE INDEX IF NOT EXISTS conversations_peer_user_id ON conversations(peer_user_pub, id)".update.run
+      _ <- sql"CREATE INDEX IF NOT EXISTS sessions_peer_user_id ON sessions(peer_user_pub, id)".update.run
     yield ()
 
   private def createV4Tables: ConnectionIO[Unit] =

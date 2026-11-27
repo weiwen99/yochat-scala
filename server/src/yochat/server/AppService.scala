@@ -155,7 +155,7 @@ final class AppService private (
                 json         <- ApiJson.state(config, value.store, appState, online, fatal, notification)
                 rendered     <- json match
                                   case Right(result) => IO.pure(result)
-                                  case Left(error)   => IO.raiseError(new RuntimeError(s"store-failed:${error.code}"))
+                                  case Left(error)   => IO.pure(ApiJson.error(ServiceError.StoreFailed(error.code)))
               yield rendered
           }
       }

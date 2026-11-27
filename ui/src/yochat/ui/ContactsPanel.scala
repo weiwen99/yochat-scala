@@ -147,7 +147,8 @@ object ContactsPanel:
                 )
               }
               .getOrElse(span(cls := "hidden", "")),
-            if !contact.safetyVerified && !contact.blocked then
+            if state.readOnly then span(cls := "hidden", "")
+            else if !contact.safetyVerified && !contact.blocked then
               button(
                 cls       := "secondary-button",
                 onClick --> (_ =>
@@ -189,16 +190,18 @@ object ContactsPanel:
                 "删除联系人"
               )
             ,
-            button(
-              cls := "text-button",
-              onClick --> (_ => {
-                ui.aliasDraft.set(contact.alias.getOrElse(""))
-                ui.aliasEditing.set(true)
-                ui.view.set(View.Chat)
-                ui.mobileList.set(false)
-              }),
-              "编辑别名"
-            )
+            if state.readOnly then span(cls := "hidden", "")
+            else
+              button(
+                cls                         := "text-button",
+                onClick --> (_ => {
+                  ui.aliasDraft.set(contact.alias.getOrElse(""))
+                  ui.aliasEditing.set(true)
+                  ui.view.set(View.Chat)
+                  ui.mobileList.set(false)
+                }),
+                "编辑别名"
+              )
           ),
           child.maybe <-- ui.confirmBlock.signal.map { confirm =>
             if confirm.contains(contact.userPub) then Some(blockConfirm(api, ui, contact)) else None

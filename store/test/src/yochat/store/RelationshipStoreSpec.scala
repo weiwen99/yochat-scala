@@ -194,3 +194,65 @@ class RelationshipStoreSpec extends munit.FunSuite:
       assertEquals(StoreTestSupport.openResult(StoreTestSupport.config(directory)), Right(()))
     finally StoreTestSupport.deleteTree(directory)
   }
+
+  test("delete history removes messages whose session has no conversation row") {
+    val directory = StoreTestSupport.temporaryDirectory("yochat-orphan-session-")
+    val session   = StoreTestSupport.state(safetyVerified = false)
+    val peer      = session.peerUserPub
+    val conv      = StoreTestSupport.conversationId(0x44)
+    try
+      StoreTestSupport.withStore(directory) { store =>
+        for
+          _        <- store.insertContact(peer, StoreTestSupport.contact(), 0L)
+          _        <- store.insertSession(session, 0L)
+          _        <- store.appendOutbound(
+                        session,
+                        1L,
+                        0L,
+                        conv,
+                        peer,
+                        session.peerDevicePub,
+                        1L,
+                        StoreTestSupport.body("orphan"),
+                        StoreTestSupport.wire(session, 1L),
+                        MessageState.Pending
+                      )
+          _        <- store.deleteRelationship(peer, 1L, deleteHistory = true, 0L)
+          messages <- store.listRecentMessages(conv, 10)
+        yield assertEquals(messages, Right(Nil))
+      }
+    finally StoreTestSupport.deleteTree(directory)
+  }
+
+  test("relationship lookups use the indexes they were added for") {
+    val directory = StoreTestSupport.temporaryDirectory("yochat-plan-")
+    try
+      StoreTestSupport.withStore(directory) { (store: Store) =>
+        val conversationPlan = StoreTestSupport.raw(store)(
+          sql"""EXPLAIN QUERY PLAN
+               |SELECT id FROM conversations WHERE peer_user_pub = zeroblob(32) ORDER BY id""".stripMargin
+            .query[(Int, Int, Int, String)]
+            .to[List]
+        ).map(_._4)
+        val sessionPlan      = StoreTestSupport.raw(store)(
+          sql"""EXPLAIN QUERY PLAN
+               |SELECT id FROM sessions WHERE peer_user_pub = zeroblob(32) ORDER BY id""".stripMargin
+            .query[(Int, Int, Int, String)]
+            .to[List]
+        ).map(_._4)
+        val blockedPlan      = StoreTestSupport.raw(store)(
+          sql"""EXPLAIN QUERY PLAN
+               |SELECT key FROM meta WHERE key >= 'blocked-version/' AND key < 'blocked-version0'""".stripMargin
+            .query[(Int, Int, Int, String)]
+            .to[List]
+        ).map(_._4)
+        assert(conversationPlan.exists(_.contains("conversations_peer_user_id")), conversationPlan.toString)
+        assert(!conversationPlan.exists(_.contains("TEMP B-TREE")), conversationPlan.toString)
+        assert(sessionPlan.exists(_.contains("sessions_peer_user_id")), sessionPlan.toString)
+        assert(!sessionPlan.exists(_.contains("TEMP B-TREE")), sessionPlan.toString)
+        assert(blockedPlan.exists(_.contains("SEARCH meta")), blockedPlan.toString)
+        assert(!blockedPlan.exists(_.contains("SCAN meta")), blockedPlan.toString)
+        IO.unit
+      }
+    finally StoreTestSupport.deleteTree(directory)
+  }

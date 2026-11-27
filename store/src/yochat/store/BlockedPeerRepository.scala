@@ -8,8 +8,9 @@ import scodec.bits.ByteVector
 
 import yochat.core.Ed25519Public
 
-/** Persistent blocked peers. A row means "this user is blocked"; unblocking bumps the row's meta high-water and deletes the row, so a
-  * rolled-back row fails closed instead of silently unblocking the peer.
+/** Persistent blocked peers. A row means "this user is blocked". Unblocking deletes the row and its meta key; `loadAll` rejects a lone row or a
+  * lone key, so a single-sided delete/rollback fails closed instead of silently unblocking the peer. A coordinated delete of both is the
+  * documented undetectable case.
   */
 private[store] object BlockedPeerRepository:
 
@@ -75,7 +76,7 @@ private[store] object BlockedPeerRepository:
                        changed <-
                          sql"DELETE FROM blocked_peers WHERE user_pub = ${userPub.bytes.toArray} AND version = ${value.version}".update.run
                        _       <- Sql.changed(changed)
-                       _       <- sql"DELETE FROM meta WHERE key = ${Sql.blockedVersionKey(userPub.bytes)}".update.run.map(_ => ())
+                       _       <- sql"DELETE FROM meta WHERE key = ${Sql.blockedVersionKey(userPub.bytes)}".update.run.flatMap(Sql.changed)
                      yield true
     yield result
 
@@ -92,7 +93,7 @@ private[store] object BlockedPeerRepository:
                      yield current + key
                    }
                  }
-      keys    <- sql"SELECT key FROM meta WHERE key LIKE 'blocked-version/%'".query[String].to[List]
+      keys    <- sql"SELECT key FROM meta WHERE key >= 'blocked-version/' AND key < 'blocked-version0'".query[String].to[List]
       _       <- keys.foldLeft(FC.unit) { (acc, key) =>
                    acc.flatMap(_ =>
                      ByteVector.fromHex(key.stripPrefix("blocked-version/")) match

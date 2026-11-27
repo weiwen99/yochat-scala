@@ -53,7 +53,7 @@ CREATE TABLE blocked_peers (
   高水位）也会失败关闭。只有「行和 `meta` 一起删/一起回滚」检测不到，见已知约束 1。
 - 首次拉黑插入 `version = 1` 并写高水位；重复拉黑是幂等 no-op（不递增版本，避免无意义的
   写放大）；解除不存在的拉黑同样是 no-op。
-- 打开实例时在同一事务内校验每一行的 `version == meta` 高水位，并校验每个
+- 打开实例时在 `loadAll` 的同一事务内校验每一行的 `version == meta` 高水位，并校验每个
   `blocked-version/*` 键都有对应行；任一不满足返回 `StaleGeneration`，`Store.open` 失败。
   高水位缺失（行存在但键不存在）返回 `MissingHighWater`。这是 ADR-0007 §6 的打开流程，
   不是新的错误语义。
@@ -92,7 +92,8 @@ CREATE TABLE blocked_peers (
 
 ### 3. 关系结束的准入规则
 
-删除联系人与拉黑都不删除 `sessions` 行（理由见「背景」）。关系结束由统一的准入判定保证：
+删除联系人与拉黑都不删除 `sessions` 行；唯一例外是「删除联系人并删除历史」
+（`deleteHistory = true`），它连会话一起删（理由见下）。关系结束由统一的准入判定保证：
 
 - **入站**：Wire、Reply、RekeyRequest/RekeyAccept、DeviceList、Fanout、FanoutAck 六个入口，
   除了各自的签名/AEAD 校验外，都要过同一个判定：
@@ -124,7 +125,10 @@ companion_messages WHERE conversation_id = ?     -- A2 库同 schema，A1 上通
 conversations     WHERE id = ?
 ```
 
-锁序沿用 ADR-0007 §5：`invitations` → `contacts` → `sessions` → `messages` → `meta`。历史删除只作用于本机；
+锁序：`invitations` → `contacts` → `sessions` → `messages` → `meta`，另有两处记录在案的例外：
+①会话墓碑的 `meta` 写与删除会话行同一步（`sessions` 步骤内部），因此 `meta` 在本操作中出现两次；
+②`conversations`、`message_order`、`delivery_receipts`、`companion_messages` 紧随 `messages`
+（它们的键都由 `messages`/会话派生）。历史删除只作用于本机；
 其他设备保留各自的历史（`K54NXXBZW1R6415F` 延后）。`messages` 删除不在 ADR-0007 的防篡改
 承诺内，这里不新增保证。
 
