@@ -69,3 +69,43 @@
 - Background 分支只能人工验证，`check.sh` 因恒注入 Aqua 而永不进入它。
 - 回执只记录透传变量的名字，不记录值（值可能含路径）；取值保真由上面那次
   「空格与冒号」实测证明。
+
+## 失败用例对照（可复跑）
+
+目的：证明 `passphrase-smoke` 的不可用分支红在 Promise 误用本身，而不是红在「缺钩子」。
+
+该反例必须在**钥匙串可用**的会话（Aqua / `desktop-gate.sh` 的 asuser 注入）里跑。旧
+handler 没有 try/catch：若加密真的失败，`page.evaluate` 会以 IPC 拒绝报错，得到的是
+另一种红，证明不了这里的命题。
+
+```sh
+cd ~/projects/yochat/worktrees/desktop-gate
+git worktree add --detach ../oldimpl c415a07      # 旧实现，独立工作树
+cd ../oldimpl
+cp ../desktop-gate/shell/passphrase-smoke.js shell/
+cp ../desktop-gate/desktop-gate.sh .
+(cd shell && npm ci)                              # 复用已有依赖也可
+# 编辑 shell/main.js 的 keychainAvailable()，只加钩子，保留旧的同步写法：
+#   function keychainAvailable() {
+#     if (process.env.YOCHAT_KEYCHAIN_UNAVAILABLE === "1") return Promise.resolve(false);
+#     return typeof safeStorage.isAsyncEncryptionAvailable === "function" ? ... ;
+#   }
+YOCHAT_KEYCHAIN_UNAVAILABLE=1 \
+  YOCHAT_SERVER_JAR=../desktop-gate/out/server/assembly.dest/out.jar \
+  ./desktop-gate.sh node shell/passphrase-smoke.js
+```
+
+结果（回执归档在 `tmp/checks/old-impl-red/`，该目录被 gitignore）：
+
+- `passphrase-1795765018473.json`：`commit=c415a07`、`dirtyFiles=3`、`session=Aqua`、
+  `verdict=FAIL`、`failure.stage=unavailable-contract`、
+  `failure.error="savePassphrase resolved true, expected false"`。
+- `desktop-gate-1795765017.json`：`head=c415a07`、`dirty_files=3`、`mode=asuser`、`exit_code=1`。
+
+红因：旧 `main.js` 的 `if (!keychainAvailable())` 对 Promise 恒为假，于是它照旧去调
+`encryptString`；本会话钥匙串可用，加密与写盘都**成功**，`passphrase-save` 解析为
+`true`，于是在「必须为 false」的断言处变红。钩子已在位（`available` 解析为 false），
+所以红点证明的是 Promise 恒真这一误用，不是钩子缺失，也不是加密失败。
+
+绿侧：`tmp/checks/passphrase-1795764275074.json`（`head=b696e37`、`dirtyFiles=0`）在同一
+断言上 `saved=false` 通过。
