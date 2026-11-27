@@ -171,10 +171,11 @@ function createWindow() {
 // safeStorage's async API is the only supported one in Electron 45; the sync
 // variants are deprecated. The probe resolves a boolean, so a caller that treats
 // the Promise as a value would see "available" even when the keychain is not.
-// YOCHAT_KEYCHAIN_UNAVAILABLE is a disabled-by-default gate hook: the unavailable
-// branch depends on machine keychain state and cannot be reproduced on demand.
+// YOCHAT_KEYCHAIN_UNAVAILABLE is a gate hook. The unavailable branch depends on
+// machine keychain history and cannot be reproduced on demand, so a packaged app
+// never honours the variable.
 async function keychainAvailable() {
-  if (process.env.YOCHAT_KEYCHAIN_UNAVAILABLE === "1") return false;
+  if (!app.isPackaged && process.env.YOCHAT_KEYCHAIN_UNAVAILABLE === "1") return false;
   try {
     return await safeStorage.isAsyncEncryptionAvailable();
   } catch (_) {
@@ -191,7 +192,10 @@ ipcMain.handle("passphrase-save", async (_event, value) => {
     const encrypted = await safeStorage.encryptStringAsync(String(value));
     await fs.promises.writeFile(target, encrypted, { mode: 0o600 });
     return true;
-  } catch (_) {
+  } catch (error) {
+    // The renderer shows "not remembered"; the reason stays in the shell log.
+    // The value is never logged.
+    console.error("passphrase-save failed:", error && error.message ? error.message : String(error));
     return false;
   }
 });

@@ -91,7 +91,6 @@ case "$inject" in
       mode="asuser"
     else
       mode="degraded"
-      echo "desktop-gate: DEGRADED — outside Aqua and passwordless sudo is unavailable; keychain gates will refuse to pass" >&2
     fi
     ;;
   asuser)
@@ -104,8 +103,11 @@ case "$inject" in
   direct)
     mode="direct"
     ;;
+  degraded)
+    mode="degraded"
+    ;;
   *)
-    echo "desktop-gate: YOCHAT_GATE_INJECT must be auto, asuser or direct" >&2
+    echo "desktop-gate: YOCHAT_GATE_INJECT must be auto, asuser, direct or degraded" >&2
     exit 2
     ;;
 esac
@@ -134,6 +136,29 @@ start_ms="$(epoch_ms)"
 start_display="$(display_state)"
 start_lock="$(lock_state)"
 mkdir -p tmp/checks
+
+# Outside Aqua and without passwordless sudo there is no way to reach the login
+# keychain, so an Electron gate cannot be judged here. Reporting FAIL would blame
+# the commit for the machine's session setup.
+if [[ "$mode" == "degraded" ]]; then
+  echo "desktop-gate: DEGRADED — outside Aqua and passwordless sudo is unavailable; the gate was not run" >&2
+  receipt="tmp/checks/desktop-gate-${start_epoch}.json"
+  cat > "$receipt" <<JSON
+{
+  "command": "$(printf '%q ' "$@")",
+  "cwd": "$root",
+  "mode": "degraded",
+  "caller_manager": "$(launchctl managername 2>/dev/null || true)",
+  "display_before": "$start_display",
+  "lock_before": "$start_lock",
+  "start_epoch": $start_epoch,
+  "exit_code": 2,
+  "verdict": "INCOMPLETE"
+}
+JSON
+  echo "DESKTOP_GATE verdict=INCOMPLETE exit=2 reason=degraded receipt=$receipt"
+  exit 2
+fi
 
 marker="${TMPDIR:-/tmp}/yochat-gate-timeout-$$"
 rm -f "$marker"
@@ -194,7 +219,7 @@ if [[ "$timed_out" -eq 1 ]]; then
 fi
 case "$status" in
   0) verdict="PASS" ;;
-  124|137|143) verdict="INCOMPLETE" ;;
+  124|129|130|137|143) verdict="INCOMPLETE" ;;
   *) verdict="FAIL" ;;
 esac
 
