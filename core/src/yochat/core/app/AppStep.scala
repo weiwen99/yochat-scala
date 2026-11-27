@@ -480,6 +480,13 @@ object Application:
             val normalized = alias.flatMap(value => Text.normalize(value.trim, "contact_alias").toOption).filter(_.nonEmpty)
             val updated    = contact.copy(alias = normalized)
             (state.copy(contacts = state.contacts.updated(userPub, updated)), Vector(AppEffect.PersistContact(updated)))
+      case AppEvent.SetContactNote(userPub, note)                                                       =>
+        state.contacts.get(userPub) match
+          case None          => (state, Vector.empty)
+          case Some(contact) =>
+            val normalized = note.flatMap(value => Text.normalize(value.trim, "contact_note").toOption).filter(_.nonEmpty)
+            val updated    = contact.copy(note = normalized)
+            (state.copy(contacts = state.contacts.updated(userPub, updated)), Vector(AppEffect.PersistContact(updated)))
       case AppEvent.InvitationCreated(invitation, ephemeralPrivate, ratchetPrivate, expectedAccount, _) =>
         val id     = invitation.fields.ephPub.bytes
         val record = AppInvitation(
@@ -1356,7 +1363,8 @@ object Application:
             }
             val withSession                    = withOrder.copy(
               sessions = withOrder.sessions.updated(sessionId, finalSession),
-              conversations = withOrder.conversations.updated(inbound.conversation.id, inbound.conversation)
+              conversations = withOrder.conversations.updated(inbound.conversation.id, inbound.conversation),
+              lateArrival = lateArrival(inbound, messageId, conversation.id, nowMs).orElse(withOrder.lateArrival)
             )
             val retired                        =
               if firstData && inbound.disposition != InboundDisposition.Overflow then retirementCandidates(state, finalSession)
@@ -1448,12 +1456,26 @@ object Application:
     error: ReceiveError
   ): (AppState, Vector[AppEffect]) =
     val nextSession = session.copy(state = error.state)
-    val effects     =
-      if nextSession == session then Vector.empty
-      else
-        Vector(AppEffect.PersistSession(nextSession)) ++
-          (if error.error == CoreError.RekeyRequired then Vector(AppEffect.StartRekey(sessionId)) else Vector.empty)
-    (state.copy(sessions = state.sessions.updated(sessionId, nextSession)), effects)
+    val persisted   = if nextSession == session then Vector.empty else Vector(AppEffect.PersistSession(nextSession))
+    val rebuild     =
+      error.error match
+        case CoreError.RekeyRequired => Vector(AppEffect.StartRekey(sessionId))
+        case CoreError.GapTooLarge   => Vector(AppEffect.Notify(Notification.ChannelRebuild), AppEffect.StartRekey(sessionId))
+        case _                       => Vector.empty
+    (state.copy(sessions = state.sessions.updated(sessionId, nextSession)), persisted ++ rebuild)
+
+  /** Messages that were buffered and only now applied are late arrivals; the notice is keyed by the original message id so the same message
+    * does not produce a second notice.
+    */
+  private def lateArrival(
+    inbound: InboundResult,
+    messageId: Long,
+    conversationId: ByteVector,
+    nowMs: Long
+  ): Option[LateArrival] =
+    if inbound.disposition == InboundDisposition.Applied then
+      inbound.applied.filter(_.id != messageId).lastOption.map(value => LateArrival(value.id, conversationId, nowMs))
+    else None
 
   private def idleTimers(state: AppState): Vector[AppEffect] =
     state.idleDeadline match

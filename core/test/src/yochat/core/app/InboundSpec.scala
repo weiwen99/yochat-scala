@@ -64,3 +64,27 @@ class InboundSpec extends FunSuite:
     assertEquals(threshold.sessions(sessionId).state.rekeyFailures, 3)
     assert(thresholdEffects.exists { case AppEffect.StartRekey(`sessionId`) => true; case _ => false })
   }
+
+  test("Q4: a flushed buffered message is reported as one late arrival keyed by its id") {
+    val peers     = AppTestSupport.connected
+    val frames    = AppTestSupport.sendFrames(peers.alice, peers.aliceState.sessions.values.head.state, 3)._2
+    val sessionId = peers.bobState.sessions.keys.head
+    val first     = Application.step(peers.bobState, AppEvent.InboundFrame(101L, sessionId, frames(0), None, TestKeys.nonce(1), 0L))
+    val third     = Application.step(first._1, AppEvent.InboundFrame(103L, sessionId, frames(2), None, TestKeys.nonce(2), 0L))
+    val second    = Application.step(third._1, AppEvent.InboundFrame(102L, sessionId, frames(1), None, TestKeys.nonce(3), 0L))
+
+    assertEquals(third._1.lateArrival, None)
+    assertEquals(second._1.lateArrival.map(_.messageId), Some(103L))
+    assertEquals(second._1.lateArrival.map(_.conversationId), Some(peers.bobState.conversations.keys.head))
+  }
+
+  test("Q4: a gap beyond the skip budget notifies once and asks the runtime to rebuild the channel") {
+    val peers     = AppTestSupport.connected
+    val frames    = AppTestSupport.sendFrames(peers.alice, peers.aliceState.sessions.values.head.state, 66)._2
+    val sessionId = peers.bobState.sessions.keys.head
+    val (next, effects) = Application.step(peers.bobState, AppEvent.InboundFrame(900L, sessionId, frames(65), None, TestKeys.nonce(1), 0L))
+
+    assert(effects.contains(AppEffect.StartRekey(sessionId)))
+    assert(effects.contains(AppEffect.Notify(Notification.ChannelRebuild)))
+    assertEquals(next.conversations.values.head.nextSeq.getOrElse(peers.alice.user.publicKey, 1L), 1L)
+  }

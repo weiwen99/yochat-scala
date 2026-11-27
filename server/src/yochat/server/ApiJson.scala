@@ -277,6 +277,7 @@ object ApiJson:
       case Notification.MessageFailed   => "message-failed"
       case Notification.QueueFull       => "queue-full"
       case Notification.InboundOverflow => "inbound-overflow"
+      case Notification.ChannelRebuild  => "channel-rebuild"
 
   private def decodeBody(value: ByteVector): String =
     new String(value.toArray, StandardCharsets.UTF_8)

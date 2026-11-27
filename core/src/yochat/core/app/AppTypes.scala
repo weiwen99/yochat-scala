@@ -34,7 +34,8 @@ final case class AppContact(
   peerChannelAccount: Option[String],
   safetyVerified: Boolean,
   confirmation: ContactConfirmation,
-  alias: Option[String] = None
+  alias: Option[String] = None,
+  note: Option[String] = None
 ):
 
   override def toString: String = s"AppContact(confirmation=$confirmation, safetyVerified=$safetyVerified)"
@@ -133,13 +134,17 @@ object TimerId:
       case _                                => None
 
 enum Notification:
-  case Waiting, MessageFailed, QueueFull, InboundOverflow, RekeyRequired, RekeyFailed
+  case Waiting, MessageFailed, QueueFull, InboundOverflow, RekeyRequired, RekeyFailed, ChannelRebuild
 
 enum SessionRetirement:
   case InitiatorAck, ResponderFirstData
 
 enum MessageTransition:
   case Sent, Delivered, Failed
+
+/** The newest message that was buffered and only applied when an earlier gap filled. */
+final case class LateArrival(messageId: Long, conversationId: ByteVector, atMs: Long):
+  override def toString: String = s"LateArrival(messageId=$messageId)"
 
 final case class MessageKey(authorPub: Ed25519Public, devicePub: Ed25519Public, seq: Long)
 
@@ -295,7 +300,8 @@ final case class AppState(
   connection: ConnectionState = ConnectionState.Offline,
   rekeyWindowStartedAtMs: Long = 0L,
   rekeyWindowAttempts: Int = 0,
-  order: Map[ByteVector, OrderClock] = Map.empty
+  order: Map[ByteVector, OrderClock] = Map.empty,
+  lateArrival: Option[LateArrival] = None
 ):
 
   override def toString: String =
