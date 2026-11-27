@@ -216,12 +216,15 @@ private[store] object Schema:
     }
 
   private def createV6Tables: ConnectionIO[Unit] =
-    sql"""CREATE TABLE IF NOT EXISTS blocked_peers (
-       |  user_pub BLOB PRIMARY KEY NOT NULL,
-       |  version INTEGER NOT NULL,
-       |  created_at INTEGER NOT NULL,
-       |  updated_at INTEGER NOT NULL
-       |)""".stripMargin.update.run.flatMap(_ => FC.unit)
+    for
+      _ <- sql"""CREATE TABLE IF NOT EXISTS blocked_peers (
+                 |  user_pub BLOB PRIMARY KEY NOT NULL,
+                 |  version INTEGER NOT NULL,
+                 |  created_at INTEGER NOT NULL,
+                 |  updated_at INTEGER NOT NULL
+                 |)""".stripMargin.update.run
+      _ <- sql"CREATE INDEX IF NOT EXISTS conversations_peer_user ON conversations(peer_user_pub)".update.run
+    yield ()
 
   private def createV4Tables: ConnectionIO[Unit] =
     sql"""CREATE TABLE IF NOT EXISTS peer_device_lists (

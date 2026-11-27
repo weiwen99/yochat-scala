@@ -82,7 +82,8 @@ private[store] object SessionRepository:
     }
 
   /** Used when deleting a relationship together with its history: no conversation row survives, so a session row without a conversation cannot
-    * break the next restore. Callers delete messages in the same transaction first.
+    * break the next restore. The caller deletes the conversation's messages in the same transaction, so the pending-message guard is not
+    * repeated here; the fixed lock order is sessions before messages.
     */
   def deleteForPeerProgram(runtime: StoreRuntime, userPub: Ed25519Public, lock: Long): ConnectionIO[Unit] =
     sql"SELECT id FROM sessions WHERE peer_user_pub = ${userPub.bytes.toArray} ORDER BY id".query[Array[Byte]].to[List].flatMap { ids =>
@@ -96,8 +97,6 @@ private[store] object SessionRepository:
                 case Some(current) =>
                   for
                     _       <- if current.generation == lock then FC.unit else Sql.abort(StorageError.StaleGeneration)
-                    pending <- pendingCountProgram(value)
-                    _       <- if pending == 0L then FC.unit else Sql.abort(StorageError.PendingMessages)
                     deleted <- sql"DELETE FROM sessions WHERE id = ${value.bytes.toArray} AND state_version = ${current.version}".update.run
                     _       <- Sql.changed(deleted)
                     next    <- Sql.nextVersion(current.version)

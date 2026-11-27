@@ -179,11 +179,6 @@ final case class CompanionMessageRecord(
   override def toString: String =
     s"CompanionMessageRecord(sourceId=$sourceId, seq=$seq, state=$state, syncSeq=$syncSeq)"
 
-/** `inserted` distinguishes a first durable copy from a repeated delivery of the same logical message, so a caller can show one notice per
-  * original instead of one per frame.
-  */
-final case class CompanionUpsert(record: CompanionMessageRecord, inserted: Boolean)
-
 final case class StoreSnapshot(
   contacts: List[ContactRecord],
   invitations: List[InvitationRecord],

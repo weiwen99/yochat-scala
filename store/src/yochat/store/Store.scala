@@ -27,8 +27,8 @@ final class Store private[store] (
   private val blockedPeers: Ref[IO, Set[Ed25519Public]]
 ):
 
-  /** The in-memory blocklist is a read-through cache of `blocked_peers`; every write goes through this store, so
-    * the cache cannot drift from the row in the same process.
+  /** The in-memory blocklist is a read-through cache of `blocked_peers`; every write goes through this store, so the cache cannot drift from
+    * the row in the same process.
     */
   def isBlocked(userPub: Ed25519Public): IO[Boolean] =
     blockedPeers.get.map(_.contains(userPub)) // scalafix:ok DisableSyntax.no-unsafe-get
@@ -298,12 +298,36 @@ final class Store private[store] (
   def listContactsForSync: IO[Either[StorageError, List[ContactRecord]]] =
     ContactRepository.listAll(runtime)
 
-  def upsertContactFromSync(
+  /** Applies one synchronized contact record and its block flag in a single transaction, so A2 never exposes a half-applied relationship.
+    */
+  def applyContactFromSync(
     userPub: Ed25519Public,
     data: ContactData,
+    blocked: Boolean,
     expectedLockGeneration: Long
-  ): IO[Either[StorageError, ContactRecord]] =
-    runtime.now.flatMap(now => runtime.run(ContactRepository.upsertFromSyncProgram(runtime, userPub, data, expectedLockGeneration, now)))
+  ): IO[Either[StorageError, Unit]] =
+    runtime.now
+      .flatMap { now =>
+        runtime.run {
+          for
+            _        <- Sql.checkLock(expectedLockGeneration)
+            existing <- ContactRepository.loadOptionProgram(runtime, userPub)
+            _        <- data.state match
+                          case ContactState.Deleted =>
+                            existing match
+                              case Some(record) if record.isActive =>
+                                ContactRepository.deleteProgram(runtime, userPub, record.version, expectedLockGeneration)
+                              case _                               => FC.unit
+                          case ContactState.Active  =>
+                            ContactRepository.upsertFromSyncProgram(runtime, userPub, data, expectedLockGeneration, now).map(_ => ())
+            _        <- if blocked then BlockedPeerRepository.blockProgram(userPub, now) else BlockedPeerRepository.unblockProgram(userPub)
+          yield ()
+        }
+      }
+      .flatMap {
+        case Right(_)    => blockedPeers.update(set => if blocked then set + userPub else set - userPub).as(Right(()))
+        case Left(error) => IO.pure(Left(error))
+      }
 
   def updateContact(
     userPub: Ed25519Public,
@@ -328,9 +352,9 @@ final class Store private[store] (
   ): IO[Either[StorageError, Unit]] =
     ContactRepository.delete(runtime, userPub, expectedVersion, expectedLockGeneration)
 
-  /** Ends a relationship. Keeping history leaves sessions, messages and the conversation in place so the app can
-    * restore the archived thread; deleting history also removes the peer's sessions, because `conversations` has
-    * no peer-device column and a session without a conversation would make the next open fail.
+  /** Ends a relationship. Keeping history leaves sessions, messages and the conversation in place so the app can restore the archived thread;
+    * deleting history also removes the peer's sessions, because `conversations` has no peer-device column and a session without a conversation
+    * would make the next open fail.
     */
   def deleteRelationship(
     userPub: Ed25519Public,
@@ -385,7 +409,7 @@ final class Store private[store] (
   def upsertCompanionMessage(
     record: CompanionMessageRecord,
     order: Option[yochat.core.s2.OrderStamp] = None
-  ): IO[Either[StorageError, CompanionUpsert]] =
+  ): IO[Either[StorageError, CompanionMessageRecord]] =
     CompanionMessageRepository.upsert(runtime, record, order)
 
   def loadCompanionMessage(sourceId: Long): IO[Either[StorageError, CompanionMessageRecord]] =
@@ -748,8 +772,8 @@ object Store:
       for
         initialized <- runtime.run(Schema.initialize)
         blocked     <- initialized match
-                         case Left(error)  => IO.pure(Left(error))
-                         case Right(_)     => runtime.run(BlockedPeerRepository.loadAll)
+                         case Left(error) => IO.pure(Left(error))
+                         case Right(_)    => runtime.run(BlockedPeerRepository.loadAll)
         cache       <- blocked match
                          case Right(values) => Ref.of[IO, Set[Ed25519Public]](values).map(Right(_))
                          case Left(error)   => IO.pure(Left(error))

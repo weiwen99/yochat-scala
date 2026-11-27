@@ -159,7 +159,8 @@ object ContactsPanel:
                 "我已当面核对"
               )
             else span(cls := "hidden", ""),
-            if contact.blocked then
+            if state.readOnly then span(cls := "ledger-note", "关系变更只在主力设备进行")
+            else if contact.blocked then
               button(
                 cls := "secondary-button",
                 onClick --> (_ =>
@@ -298,16 +299,18 @@ object ContactsPanel:
                 ),
                 div(
                   cls := "invitation-actions",
-                  button(
-                    cls := "text-button",
-                    onClick --> (_ =>
-                      api.unblockContact(peer.userPub).onComplete {
-                        case Success(_)    => ui.notify("已解除拉黑")
-                        case Failure(fail) => ui.failure(api.describeError(fail))
-                      }
-                    ),
-                    "解除拉黑"
-                  )
+                  if state.readOnly then span(cls := "ledger-note", "只在主力设备解除")
+                  else
+                    button(
+                      cls                         := "text-button",
+                      onClick --> (_ =>
+                        api.unblockContact(peer.userPub).onComplete {
+                          case Success(_)    => ui.notify("已解除拉黑")
+                          case Failure(fail) => ui.failure(api.describeError(fail))
+                        }
+                      ),
+                      "解除拉黑"
+                    )
                 )
               )
             }

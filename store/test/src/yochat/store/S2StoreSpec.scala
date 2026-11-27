@@ -132,7 +132,7 @@ final class S2StoreSpec extends FunSuite:
         val direct       = first.copy(sourceId = 0L, body = StoreTestSupport.body("once"), syncSeq = 0L, createdAt = 200L)
         ok(store.upsertCompanionMessage(first))
         val deduped = ok(store.upsertCompanionMessage(direct))
-        assertEquals(deduped.record.sourceId, 7L)
+        assertEquals(deduped.sourceId, 7L)
         assertEquals(ok(store.countCompanionMessages(conversation)), 1L)
         assertEquals(ok(store.loadCompanionMessage(7L)).logicalKey, Some(key))
 

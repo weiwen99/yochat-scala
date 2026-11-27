@@ -18,7 +18,7 @@ private[store] object CompanionMessageRepository:
     runtime: StoreRuntime,
     record: CompanionMessageRecord,
     order: Option[OrderStamp] = None
-  ): IO[Either[StorageError, CompanionUpsert]] =
+  ): IO[Either[StorageError, CompanionMessageRecord]] =
     runtime.run {
       for
         _          <- validate(record)
@@ -74,7 +74,7 @@ private[store] object CompanionMessageRepository:
                             stamp,
                             record.createdAt
                           )
-      yield CompanionUpsert(record.copy(sourceId = sourceId), existing.isEmpty)
+      yield record.copy(sourceId = sourceId)
     }
 
   def load(runtime: StoreRuntime, sourceId: Long): IO[Either[StorageError, CompanionMessageRecord]] =

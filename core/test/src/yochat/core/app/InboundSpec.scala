@@ -78,7 +78,7 @@ class InboundSpec extends FunSuite:
     assertEquals(second._1.lateArrival.map(_.conversationId), Some(peers.bobState.conversations.keys.head))
   }
 
-  test("Q4: a gap beyond the skip budget notifies once and asks the runtime to rebuild the channel") {
+  test("Q4: a gap beyond the skip budget notifies and asks the runtime to rebuild the channel") {
     val peers     = AppTestSupport.connected
     val frames    = AppTestSupport.sendFrames(peers.alice, peers.aliceState.sessions.values.head.state, 66)._2
     val sessionId = peers.bobState.sessions.keys.head
@@ -86,5 +86,5 @@ class InboundSpec extends FunSuite:
 
     assert(effects.contains(AppEffect.StartRekey(sessionId)))
     assert(effects.contains(AppEffect.Notify(Notification.ChannelRebuild)))
-    assertEquals(next.conversations.values.head.nextSeq.getOrElse(peers.alice.user.publicKey, 1L), 1L)
+    assertEquals(next.conversations.values.head.nextSeq.get(peers.alice.user.publicKey), None)
   }

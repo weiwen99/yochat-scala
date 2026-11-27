@@ -51,11 +51,15 @@ class ApiJsonSpec extends FunSuite:
       val fixture = ExecutorTestSupport.fixture()
       val state   = ExecutorTestSupport.appState(fixture)
       val config  = ServiceConfig(0, java.nio.file.Path.of("."), "127.0.0.1", 1, 60_000L)
-      val visible = ApiJson.state(config, store, state, online = true, None, Some(Notification.RekeyFailed)).unsafeRunSync()
+      val visible = ApiJson
+        .state(config, store, state, online = true, None, Some(Notification.RekeyFailed))
+        .unsafeRunSync()
+        .fold(error => fail(error.code), identity)
       assertEquals(visible("notification").str, "rekey-failed")
       val hidden = ApiJson
         .state(config, store, state.copy(lock = LockState.Locked(0L)), online = true, None, Some(Notification.RekeyFailed))
         .unsafeRunSync()
+        .fold(error => fail(error.code), identity)
       assert(hidden("notification").isNull)
       IO.unit
     }

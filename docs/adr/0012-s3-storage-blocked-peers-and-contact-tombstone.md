@@ -46,13 +46,16 @@ CREATE TABLE blocked_peers (
 )
 ```
 
-- **行存在 = 该用户被拉黑**。解除拉黑 = 先把 `meta["blocked-version/<hex user_pub>"]` 推到
-  `version + 1`，再删行。这与 ADR-0007 §4 对 `contacts`/`invitations` 的删除模式一致：
-  旧行回滚回来时版本低于高水位，打开时 `StaleGeneration`，失败关闭。
+- **行存在 = 该用户被拉黑**。解除拉黑 = 删除行和它对应的
+  `meta["blocked-version/<hex user_pub>"]` 两处；打开时除了校验每行的版本等于高水位，还要求
+  每个残留的 `blocked-version/*` 键都有一个同公钥的行。这样：
+  单行删除（不碰 `meta`）会留下孤立的键，打开即 `StaleGeneration`；单行回滚（行版本低于
+  高水位）也会失败关闭。只有「行和 `meta` 一起删/一起回滚」检测不到，见已知约束 1。
 - 首次拉黑插入 `version = 1` 并写高水位；重复拉黑是幂等 no-op（不递增版本，避免无意义的
   写放大）；解除不存在的拉黑同样是 no-op。
-- 打开实例时在同一事务内校验每一行的 `version == meta` 高水位；不相等返回 `StaleGeneration`，
-  `Store.open` 失败。高水位缺失返回 `MissingHighWater`。这是 ADR-0007 §6 的打开流程，
+- 打开实例时在同一事务内校验每一行的 `version == meta` 高水位，并校验每个
+  `blocked-version/*` 键都有对应行；任一不满足返回 `StaleGeneration`，`Store.open` 失败。
+  高水位缺失（行存在但键不存在）返回 `MissingHighWater`。这是 ADR-0007 §6 的打开流程，
   不是新的错误语义。
 - 索引：主键点查即可；`listBlockedPeers` 是全表顺序扫描，行数上界是本机拉黑过的人数，
   与联系人数量同阶，不建二级索引。
@@ -103,20 +106,25 @@ CREATE TABLE blocked_peers (
   防止旧邀请的迟到应答把关系重新建起来。
 - 删除联系人时，把该对端未完成的外发消息标为 `Failed`（保留行），避免重启时
   `AppStateRestore.outgoingFrom` 找不到会话而让应用打不开；`Failed` 行在界面显示为发送失败。
+- `deleteHistory = true` 时**额外删除该对端的 `sessions` 行**（先推进每个会话的高水位）：
+  `conversations` 表没有 peer device 列，保留一个没有会话的孤立会话会让
+  `AppStateRestore.sessionFrom` 返回 `NotFound("session-conversation")`，应用无法打开。
+  保留历史（`false`）时不删会话。
 
 ### 4. 历史删除
 
 `deleteHistory = true` 时在同一个事务里删除：
 
 ```text
-messages         WHERE conversation_id = ?
-message_order    WHERE conversation_id = ?
+sessions          WHERE peer_user_pub = ?        -- 每行先推进 session-state-version 高水位
+messages          WHERE conversation_id = ?
+message_order     WHERE conversation_id = ?
 delivery_receipts WHERE conversation_id = ?
-companion_messages WHERE conversation_id = ?   -- A2 库同 schema，A1 上通常为空
-conversations    WHERE id = ?
+companion_messages WHERE conversation_id = ?     -- A2 库同 schema，A1 上通常为空
+conversations     WHERE id = ?
 ```
 
-锁序沿用 ADR-0007 §5：`contacts` → `sessions` → `messages` → `meta`。历史删除只作用于本机；
+锁序沿用 ADR-0007 §5：`invitations` → `contacts` → `sessions` → `messages` → `meta`。历史删除只作用于本机；
 其他设备保留各自的历史（`K54NXXBZW1R6415F` 延后）。`messages` 删除不在 ADR-0007 的防篡改
 承诺内，这里不新增保证。
 
@@ -125,16 +133,19 @@ conversations    WHERE id = ?
 - 迁移是 v5 → v6：只加 `blocked_peers` 表；`contacts` 行按 codec 版本兼容读，不需要重写行。
   打开旧库后 `schema_version = 6`。
 - 拉黑名单的读写是单表点查/顺序扫描，不碰加密 BLOB；丢弃路径不会因为解密而放大。
-- 会话行在关系结束后仍保留，`peer_device_lists`、`delivery_receipts` 也保留；这是
-  「历史仍可读」与「重启可恢复」的代价，登记为已知约束：会话状态里仍留有对端的棘轮密钥，
-  它与历史消息的解密材料同寿命。
+- 保留历史时，会话行在关系结束后仍保留，`peer_device_lists`、`delivery_receipts` 也保留；
+  这是「历史仍可读」与「重启可恢复」的代价，登记为已知约束：会话状态里仍留有对端的棘轮密钥，
+  它与历史消息的解密材料同寿命。删除历史时会话行一并删除。
 - A2 只从 A1 快照接收 `state` / `recreated` / `note` / `blocked` 四个展示位；A2 不发起关系变更，
   也不删除自己的历史。
 
 ## 已知约束
 
-1. 协调回滚（行 + `meta` 一起回滚）检测不到，沿用 ADR-0007。
+1. 协调回滚（行 + `meta` 一起回滚或一起删除）检测不到，沿用 ADR-0007。单行删除与单行回滚
+   由 §1 的孤立键检查覆盖。
 2. 拉黑与删除不同步给对端；对端只观察到「发不出去 / 收不到 ACK」，这与「不产生任何响应」一致。
-3. 删除联系人不清理 `sessions`、`peer_device_lists`、`delivery_receipts`；它们不再被使用，
-   但仍在磁盘上。要清理需另立 ADR（先解决会话恢复的对端设备映射）。
+3. 保留历史时删除联系人不清理 `sessions`、`peer_device_lists`、`delivery_receipts`；它们不再
+   被使用，但仍在磁盘上。删除历史时会话行与消息一起清理。要完全清理其余行需另立 ADR。
 4. `recreated` 是展示位，不是安全门；任何安全决策不得只依赖它。
+5. `Store` 的拉黑缓存只在实例打开时从磁盘装载，写入只经过同一个实例。同一数据目录同时打开
+   第二个 `Store` 时，第二个实例的写入不会被第一个实例看见；S3-A 不支持同目录多实例。

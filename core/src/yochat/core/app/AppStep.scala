@@ -488,7 +488,9 @@ object Application:
             val updated    = contact.copy(note = normalized)
             (state.copy(contacts = state.contacts.updated(userPub, updated)), Vector(AppEffect.PersistContact(updated)))
       case AppEvent.ContactDeleted(userPub, conversationId, keepHistory)                                =>
-        val sessions      = state.sessions.filter { case (_, session) => session.state.peerUserPub != userPub }
+        val sessions      =
+          if keepHistory then state.sessions
+          else state.sessions.filter { case (_, session) => session.state.peerUserPub != userPub }
         val conversations = if keepHistory then state.conversations else state.conversations - conversationId
         val outgoing      =
           if keepHistory then state.outgoing else state.outgoing.filterNot { case (_, message) => message.conversationId == conversationId }

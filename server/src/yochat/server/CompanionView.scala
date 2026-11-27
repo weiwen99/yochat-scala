@@ -41,44 +41,48 @@ object CompanionView:
     relayHost: String,
     relayPort: Int,
     online: Boolean
-  ): IO[Value] =
-    for
-      blocked      <- store.listBlockedPeers
-      blockedSet    = blocked.toOption.getOrElse(Nil).map(_.userPub).toSet
-      contacts      = snapshot.contacts
-                        .sortBy(contact => displayName(contact).toLowerCase)
-                        .map(contact => contactJson(store, snapshot, contact, blockedSet))
-      conversations = snapshot.conversations
-                        .sortBy(value => value.conversation.id.toHex)
-                        .map(value => conversationJson(snapshot, value))
-    yield ujson.Obj(
-      "unlocked"       -> true,
-      "readOnly"       -> true,
-      "instanceExists" -> true,
-      "identity"       -> ujson.Obj(
-        "userId"   -> store.identity.userPublic.bytes.toHex,
-        "deviceId" -> store.identity.devicePublic.bytes.toHex
-      ),
-      "relay"          -> ujson.Obj(
-        "online" -> online,
-        "host"   -> relayHost,
-        "port"   -> relayPort
-      ),
-      "fatal"          -> ujson.Null,
-      "notification"   -> ujson.Null,
-      "lock"           -> ujson.Obj("locked" -> false, "generation" -> 0L),
-      "contacts"       -> ujson.Arr(contacts*),
-      "conversations"  -> ujson.Arr(conversations*),
-      "invitations"    -> ujson.Arr(),
-      "sessions"       -> ujson.Arr(),
-      "blockedPeers"   -> ujson.Arr(
-        blockedSet.toVector.sortBy(_.bytes.toHex).map { user =>
-          val name = snapshot.contacts.find(_.userPub == user).map(displayName).getOrElse(user.bytes.toHex.take(8))
-          ujson.Obj("userPub" -> user.bytes.toHex, "displayName" -> name)
-        }*
-      ),
-      "lateArrival"    -> ujson.Null
-    )
+  ): IO[Either[String, Value]] =
+    store.listBlockedPeers.map {
+      case Left(error)    => Left(error.code)
+      case Right(blocked) =>
+        val blockedSet    = blocked.map(_.userPub).toSet
+        val contacts      = snapshot.contacts
+          .sortBy(contact => displayName(contact).toLowerCase)
+          .map(contact => contactJson(store, snapshot, contact, blockedSet))
+        val conversations = snapshot.conversations
+          .sortBy(value => value.conversation.id.toHex)
+          .map(value => conversationJson(snapshot, value))
+        Right(
+          ujson.Obj(
+            "unlocked"       -> true,
+            "readOnly"       -> true,
+            "instanceExists" -> true,
+            "identity"       -> ujson.Obj(
+              "userId"   -> store.identity.userPublic.bytes.toHex,
+              "deviceId" -> store.identity.devicePublic.bytes.toHex
+            ),
+            "relay"          -> ujson.Obj(
+              "online" -> online,
+              "host"   -> relayHost,
+              "port"   -> relayPort
+            ),
+            "fatal"          -> ujson.Null,
+            "notification"   -> ujson.Null,
+            "lock"           -> ujson.Obj("locked" -> false, "generation" -> 0L),
+            "contacts"       -> ujson.Arr(contacts*),
+            "conversations"  -> ujson.Arr(conversations*),
+            "invitations"    -> ujson.Arr(),
+            "sessions"       -> ujson.Arr(),
+            "blockedPeers"   -> ujson.Arr(
+              blockedSet.toVector.sortBy(_.bytes.toHex).map { user =>
+                val name = snapshot.contacts.find(_.userPub == user).map(displayName).getOrElse(user.bytes.toHex.take(8))
+                ujson.Obj("userPub" -> user.bytes.toHex, "displayName" -> name)
+              }*
+            ),
+            "lateArrival"    -> ujson.Null
+          )
+        )
+    }
 
   def messagesJson(store: Store, conversationId: ByteVector, limit: Int): IO[Either[StorageError, Value]] =
     for

@@ -6,7 +6,7 @@ import cats.effect.IO
 import scodec.bits.ByteVector
 import ujson.Value
 
-import yochat.core.{Invitation, SafetyNumber, SessionPhase}
+import yochat.core.{Ed25519Public, Invitation, SafetyNumber, SessionPhase}
 import yochat.core.app.{AppContact, AppLimits, AppState, ContactConfirmation, Conversation, InvitationLifecycle, Notification}
 import yochat.store.{BlockedPeerRecord, MessageRecord, MessageState, StorageError, Store}
 
@@ -27,7 +27,7 @@ object ApiJson:
     online: Boolean,
     fatal: Option[AppExecutionError],
     lastNotification: Option[Notification]
-  ): IO[Value] =
+  ): IO[Either[StorageError, Value]] =
     val identity      = state.identity.map { value =>
       ujson.Obj(
         "userId"   -> value.user.publicKey.bytes.toHex,
@@ -36,29 +36,42 @@ object ApiJson:
     }
     val contacts      = state.contacts.values.toVector.sortBy(contact => displayName(contact).toLowerCase)
     val conversations = state.conversations.values.toVector.sortBy(_.id.toHex)
-    for
-      blockedRows        <- store.listBlockedPeers
-      contactValues      <- sequence(contacts.map(contact => contactJson(store, state, contact, blockedSet(blockedRows))))
-      conversationValues <- sequence(conversations.map(conversation => conversationJson(store, state, conversation)))
-    yield ujson.Obj(
-      "unlocked"      -> state.lock.isUnlocked,
-      "readOnly"      -> false,
-      "identity"      -> identity.map(value => value).getOrElse(ujson.Null),
-      "relay"         -> relayJson(config, online),
-      "fatal"         -> fatal.map(error => ujson.Str(error.code)).getOrElse(ujson.Null),
-      "notification"  -> (if state.lock.isUnlocked then lastNotification.map(value => ujson.Str(notificationCode(value))).getOrElse(ujson.Null)
-                         else ujson.Null),
-      "lock"          -> ujson.Obj(
-        "locked"     -> !state.lock.isUnlocked,
-        "generation" -> state.lock.value
-      ),
-      "contacts"      -> ujson.Arr(contactValues*),
-      "conversations" -> ujson.Arr(conversationValues*),
-      "invitations"   -> ujson.Arr(invitations(state)*),
-      "sessions"      -> ujson.Arr(sessions(state)*),
-      "blockedPeers"  -> ujson.Arr(blockedPeers(state, blockedSet(blockedRows))*),
-      "lateArrival"   -> lateArrival(state.lateArrival)
-    )
+    val loaded        = for
+      blockedRows    <- store.listBlockedPeers
+      contactRecords <- store.listContacts
+    yield (blockedRows, contactRecords)
+    loaded.flatMap {
+      case (Left(error), _)                            => IO.pure(Left(error))
+      case (_, Left(error))                            => IO.pure(Left(error))
+      case (Right(blockedRows), Right(contactRecords)) =>
+        val blocked   = blockedSet(blockedRows)
+        val recreated = contactRecords.map(record => record.userPub -> record.data.recreated).toMap
+        for
+          contactValues      <- sequence(contacts.map(contact => contactJson(store, state, contact, blocked, recreated)))
+          conversationValues <- sequence(conversations.map(conversation => conversationJson(store, state, conversation)))
+        yield Right(
+          ujson.Obj(
+            "unlocked"      -> state.lock.isUnlocked,
+            "readOnly"      -> false,
+            "identity"      -> identity.map(value => value).getOrElse(ujson.Null),
+            "relay"         -> relayJson(config, online),
+            "fatal"         -> fatal.map(error => ujson.Str(error.code)).getOrElse(ujson.Null),
+            "notification"  -> (if state.lock.isUnlocked then
+                                 lastNotification.map(value => ujson.Str(notificationCode(value))).getOrElse(ujson.Null)
+                               else ujson.Null),
+            "lock"          -> ujson.Obj(
+              "locked"     -> !state.lock.isUnlocked,
+              "generation" -> state.lock.value
+            ),
+            "contacts"      -> ujson.Arr(contactValues*),
+            "conversations" -> ujson.Arr(conversationValues*),
+            "invitations"   -> ujson.Arr(invitations(state)*),
+            "sessions"      -> ujson.Arr(sessions(state)*),
+            "blockedPeers"  -> ujson.Arr(blockedPeers(state, blocked)*),
+            "lateArrival"   -> lateArrival(state.lateArrival)
+          )
+        )
+    }
 
   def visible(record: MessageRecord, conversation: Conversation, localUser: ByteVector): Boolean =
     record.authorPub.bytes == localUser ||
@@ -118,8 +131,8 @@ object ApiJson:
   def error(error: ServiceError): Value =
     ujson.Obj("error" -> error.code)
 
-  private def blockedSet(rows: Either[StorageError, List[BlockedPeerRecord]]): Set[ByteVector] =
-    rows.toOption.getOrElse(Nil).map(_.userPub.bytes).toSet
+  private def blockedSet(rows: List[BlockedPeerRecord]): Set[ByteVector] =
+    rows.map(_.userPub.bytes).toSet
 
   private def blockedPeers(state: AppState, blocked: Set[ByteVector]): Vector[Value] =
     blocked.toVector.sortBy(_.toHex).map { user =>
@@ -144,10 +157,15 @@ object ApiJson:
         ordered(ready(values.filter(record => visible(record, conversation, localUser)), orderValues.toMap), orderValues.toMap).lastOption
       case _                                   => None
 
-  private def contactJson(store: Store, state: AppState, contact: AppContact, blocked: Set[ByteVector]): IO[Value] =
+  private def contactJson(
+    store: Store,
+    state: AppState,
+    contact: AppContact,
+    blocked: Set[ByteVector],
+    recreated: Map[Ed25519Public, Boolean]
+  ): IO[Value] =
     for
       devices   <- PeerDeviceListService.devicesFor(store, contact.userPub)
-      recreated <- store.loadContact(contact.userPub).map(_.toOption.exists(_.data.recreated))
       deviceJson = ujson.Arr(
                      devices.getOrElse(Vector.empty).map { entry =>
                        ujson.Obj(
@@ -158,7 +176,14 @@ object ApiJson:
                        )
                      }*
                    )
-      value     <- contactJsonWithDevices(store, state, contact, deviceJson, blocked.contains(contact.userPub.bytes), recreated)
+      value     <- contactJsonWithDevices(
+                     store,
+                     state,
+                     contact,
+                     deviceJson,
+                     blocked.contains(contact.userPub.bytes),
+                     recreated.getOrElse(contact.userPub, false)
+                   )
     yield value
 
   private def contactJsonWithDevices(

@@ -31,10 +31,10 @@ private[store] object RelationshipRepository:
         _       <- deleteReceivedInvitations(runtime, userPub, expectedLockGeneration)
         _       <- ContactRepository.deleteProgram(runtime, userPub, expectedVersion, expectedLockGeneration)
         convIds <- conversationIds(userPub)
+        _       <- if deleteHistory then SessionRepository.deleteForPeerProgram(runtime, userPub, expectedLockGeneration) else FC.unit
         _       <- convIds.foldLeft(FC.unit) { (acc, conversationId) =>
                      acc.flatMap(_ => if deleteHistory then deleteHistoryRows(conversationId) else markOutgoingFailed(conversationId))
                    }
-        _       <- if deleteHistory then SessionRepository.deleteForPeerProgram(runtime, userPub, expectedLockGeneration) else FC.unit
         _       <- if deleteHistory then convIds.foldLeft(FC.unit)((acc, id) => acc.flatMap(_ => deleteConversation(id))) else FC.unit
       yield ()
     }

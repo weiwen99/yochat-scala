@@ -100,7 +100,33 @@ object S3E2E:
       )
 
       val messagesA = messageCount(pair.a, handshake.aConversation)
-      s"messages_before=$before messages_after_delete=$afterDelete messages_final=$messagesA"
+
+      // Design requires the Reply entry to be covered separately: an invitation answered while blocked must not
+      // create a pending item or complete the relationship. The replier must not already hold a contact for the
+      // inviter, or the reply path never runs (the existing contact takes the AccountMismatch branch).
+      val bDeleted = http.post(s"${pair.b.base}/api/contacts/${handshake.aUser}/delete", ujson.Obj("deleteHistory" -> false))
+      ensure(bDeleted.ok, s"B delete failed: ${bDeleted.status} ${bDeleted.body}")
+      E2E.awaitTrue("B contact removed", Duration.ofSeconds(10)) {
+        !pair.b.state("contacts").arr.exists(_.obj("userPub").str == handshake.aUser)
+      }
+      val blockedAgain = http.post(s"${pair.a.base}/api/contacts/${handshake.bUser}/block", ujson.Obj())
+      ensure(blockedAgain.ok, s"third block failed: ${blockedAgain.status} ${blockedAgain.body}")
+      val (blockedInvitationId, blockedInvitationText) = pair.a.createInvitation(Some("@B"))
+      pair.b.receiveInvitation(blockedInvitationText, Some("@A"))
+      val contactsBefore     = pair.a.state("contacts").arr.size
+      val invitationsBefore  = pair.a.state("invitations").arr.size
+      pair.b.acceptInvitation(blockedInvitationId)
+      Thread.sleep(2_500L)
+      ensure(pair.a.state("contacts").arr.size == contactsBefore, "a blocked Reply created a contact")
+      ensure(pair.a.state("invitations").arr.size == invitationsBefore, "a blocked Reply changed the invitation set")
+      ensure(
+        pair.a.state("invitations").arr.exists { value =>
+          value("id").str == blockedInvitationId && value("lifecycle").str == "issued"
+        },
+        "a blocked Reply advanced the invitation lifecycle"
+      )
+
+      s"messages_before=$before messages_after_delete=$afterDelete messages_final=$messagesA blocked_reply_contacts=$contactsBefore"
     }
 
   private def contactBlocked(service: ServiceProcess, user: String): Boolean =

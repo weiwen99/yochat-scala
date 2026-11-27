@@ -46,8 +46,15 @@ object PeerDeviceListService:
           case Left(_)         => IO.unit
           case Right(sessions) =>
             val targets = sessions.map(_.state).groupBy(state => (state.peerUserPub, state.peerDevicePub)).keys.toVector
-            targets.foldLeft(IO.unit) { case (acc, (_, devicePub)) =>
-              acc *> relay.send(devicePub, RelayPayload.DeviceList(list.bytes)).attempt.void
+            targets.foldLeft(IO.unit) { case (acc, (peerUser, devicePub)) =>
+              acc *> store.isBlocked(peerUser).flatMap {
+                case true  => IO.unit
+                case false =>
+                  store.loadContact(peerUser).flatMap {
+                    case Left(_)  => IO.unit
+                    case Right(_) => relay.send(devicePub, RelayPayload.DeviceList(list.bytes)).attempt.void
+                  }
+              }
             } *> publishToCompanions(store, relay, list)
         }
     }
@@ -58,14 +65,18 @@ object PeerDeviceListService:
       case Left(_)         => IO.unit
       case Right(contacts) =>
         contacts.foldLeft(IO.unit) { (acc, contact) =>
-          acc *> store.loadPeerDeviceList(contact.userPub).flatMap {
-            case Left(_)         => IO.unit
-            case Right(peerList) =>
-              peerList.entries
-                .filter(entry => entry.role == PeerDeviceRole.Companion && entry.revokedAt.isEmpty)
-                .foldLeft(IO.unit) { (inner, entry) =>
-                  inner *> relay.send(entry.devicePub, RelayPayload.DeviceList(list.bytes)).attempt.void
-                }
+          acc *> store.isBlocked(contact.userPub).flatMap {
+            case true  => IO.unit
+            case false =>
+              store.loadPeerDeviceList(contact.userPub).flatMap {
+                case Left(_)         => IO.unit
+                case Right(peerList) =>
+                  peerList.entries
+                    .filter(entry => entry.role == PeerDeviceRole.Companion && entry.revokedAt.isEmpty)
+                    .foldLeft(IO.unit) { (inner, entry) =>
+                      inner *> relay.send(entry.devicePub, RelayPayload.DeviceList(list.bytes)).attempt.void
+                    }
+              }
           }
         }
     }

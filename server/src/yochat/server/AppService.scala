@@ -135,7 +135,7 @@ final class AppService private (
             online       <- running.relay.isOnline
             notification <- running.runtime.lastNotification
             json         <- ApiJson.state(config, running.store, state, online, fatal, notification)
-          yield Right(json)
+          yield json.left.map(error => ServiceError.StoreFailed(error.code))
       }
     }
 
@@ -153,7 +153,10 @@ final class AppService private (
                 online       <- value.relay.isOnline
                 notification <- value.runtime.lastNotification
                 json         <- ApiJson.state(config, value.store, appState, online, fatal, notification)
-              yield json
+                rendered     <- json match
+                                  case Right(result) => IO.pure(result)
+                                  case Left(error)   => IO.raiseError(new RuntimeError(s"store-failed:${error.code}"))
+              yield rendered
           }
       }
       .handleErrorWith(error => IO.pure(ApiJson.error(ServiceError.RuntimeFailed(error.getClass.getSimpleName))))
@@ -260,6 +263,9 @@ final class AppService private (
                         case Left(error)  => IO.pure[Either[ServiceError, Boolean]](Left(ServiceError.StoreFailed(error.code)))
                         case Right(value) =>
                           running.store.blockPeer(userPub, value).map(_.left.map(error => ServiceError.StoreFailed(error.code)))
+            _      <- result match
+                        case Right(_) => IO.delay(hub.publish("state")) *> running.scheduler.notifyChange
+                        case Left(_)  => IO.unit
           yield result
         }
     }
@@ -275,6 +281,9 @@ final class AppService private (
                         case Left(error)  => IO.pure[Either[ServiceError, Boolean]](Left(ServiceError.StoreFailed(error.code)))
                         case Right(value) =>
                           running.store.unblockPeer(userPub, value).map(_.left.map(error => ServiceError.StoreFailed(error.code)))
+            _      <- result match
+                        case Right(_) => IO.delay(hub.publish("state")) *> running.scheduler.notifyChange
+                        case Left(_)  => IO.unit
           yield result
         }
     }

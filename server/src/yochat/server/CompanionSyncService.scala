@@ -168,25 +168,7 @@ final class CompanionSyncService(
           recreated = bool(json, "recreated").getOrElse(false)
         )
         val blocked      = bool(json, "blocked").getOrElse(false)
-        store.loadContactForSync(userPub).flatMap {
-          case Left(error)     => IO.pure(Left(error.code))
-          case Right(existing) =>
-            val write =
-              contactState match
-                case ContactState.Deleted =>
-                  existing match
-                    case Some(record) if record.isActive => store.deleteContact(userPub, record.version, lockGeneration).map(mapStore)
-                    case _                               => IO.pure[Either[String, Unit]](Right(()))
-                case ContactState.Active  =>
-                  store.upsertContactFromSync(userPub, data, lockGeneration).map(mapStore)
-            write.flatMap {
-              case Left(error) => IO.pure(Left(error))
-              case Right(_)    =>
-                (if blocked then store.blockPeer(userPub, lockGeneration) else store.unblockPeer(userPub, lockGeneration)).map(
-                  _.map(_ => ()).left.map(_.code)
-                )
-            }
-        }
+        store.applyContactFromSync(userPub, data, blocked, lockGeneration).map(mapStore)
 
   private def applyConversation(json: Value): IO[Either[String, Unit]] =
     (parseHex(json, "id"), parseHex(json, "peerUserPub")) match

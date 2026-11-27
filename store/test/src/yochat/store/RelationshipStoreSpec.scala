@@ -63,8 +63,26 @@ class RelationshipStoreSpec extends munit.FunSuite:
       }
       assertEquals(
         StoreTestSupport.openResult(StoreTestSupport.config(directory)),
-        Left(StorageError.StaleGeneration)
+        Left(StorageError.MissingHighWater(Sql.blockedVersionKey(peer.bytes)))
       )
+    finally StoreTestSupport.deleteTree(directory)
+  }
+
+  test("deleting a blocked row without its high-water key fails the instance open") {
+    val directory = StoreTestSupport.temporaryDirectory("yochat-block-orphan-")
+    val peer      = pub(0x23)
+    try
+      StoreTestSupport.withStore(directory) { store =>
+        for
+          _ <- store.blockPeer(peer, 0L)
+          _ <- IO.delay(
+                 StoreTestSupport.raw(store)(
+                   sql"DELETE FROM blocked_peers WHERE user_pub = ${peer.bytes.toArray}".update.run
+                 )
+               )
+        yield ()
+      }
+      assertEquals(StoreTestSupport.openResult(StoreTestSupport.config(directory)), Left(StorageError.StaleGeneration))
     finally StoreTestSupport.deleteTree(directory)
   }
 
@@ -174,33 +192,5 @@ class RelationshipStoreSpec extends munit.FunSuite:
           assertEquals(sessions, Right(Nil))
       }
       assertEquals(StoreTestSupport.openResult(StoreTestSupport.config(directory)), Right(()))
-    finally StoreTestSupport.deleteTree(directory)
-  }
-
-  test("companion upsert reports first insert versus repeat") {
-    val directory = StoreTestSupport.temporaryDirectory("yochat-companion-upsert-")
-    val conv      = StoreTestSupport.conversationId()
-    val key       = yochat.core.s2.LogicalKey(conv, pub(0x31), 1L)
-    val record    = CompanionMessageRecord(
-      sourceId = 0L,
-      conversationId = conv,
-      authorPub = pub(0x32),
-      devicePub = pub(0x31),
-      seq = 1L,
-      body = StoreTestSupport.body("once"),
-      state = MessageState.Received,
-      createdAt = 1L,
-      syncSeq = 0L,
-      logicalKey = Some(key)
-    )
-    try
-      StoreTestSupport.withStore(directory) { store =>
-        for
-          first  <- store.upsertCompanionMessage(record)
-          second <- store.upsertCompanionMessage(record.copy(createdAt = 2L))
-        yield
-          assert(first.map(_.inserted).getOrElse(false))
-          assert(!second.map(_.inserted).getOrElse(true))
-      }
     finally StoreTestSupport.deleteTree(directory)
   }

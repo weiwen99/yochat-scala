@@ -153,22 +153,23 @@ S1/S2 之后缺两类东西：
 存储扩展由 **ADR-0012**（2026-11-27，owner 委派接受）定稿，不修订 ADR-0007 的 AAD 规则：
 
 - `blocked_peers` **不密封载荷**：行只有 `user_pub`（主键）、`version`、`created_at`、`updated_at`。
-  行存在即拉黑；解除拉黑先推进 `meta["blocked-version/<hex>"]` 高水位再删行（ADR-0007 §4 的删除
-  模式）。`user_pub` 是公钥、行数是 ADR-0007 已登记的泄漏项，因此不新增密封域，也不新增
-  `databaseKey` 派生节点或 AAD 标签。
-- 回滚保护：行版本必须等于 `meta` 高水位，否则打开实例即 `StaleGeneration`（失败关闭）。
-  协调回滚（行 + `meta` 一起回滚）仍是 ADR-0007 的已知约束。
+  行存在即拉黑；解除拉黑删除行与对应 `meta["blocked-version/<hex>"]` 两处。`user_pub` 是公钥、
+  行数是 ADR-0007 已登记的泄漏项，因此不新增密封域，也不新增 `databaseKey` 派生节点或 AAD 标签。
+- 回滚保护：行版本必须等于 `meta` 高水位，并且每个残留的高水位键都必须有对应行；否则打开实例
+  即 `StaleGeneration`（失败关闭）。单行删除/单行回滚被覆盖，协调回滚（行 + `meta` 一起动）
+  仍是 ADR-0007 的已知约束。
 - `contacts.sealed` 升到 codec v2：新增 `state`（`active` / `deleted`）与 `recreated` 标志；AAD 不变
   （仍是 `contact/v1` + `userPub` + `version`）。v1 行按 `active` 读。删除联系人 = 行保留、
   `state=deleted`、清空别名/备注/渠道身份、`version+1`；`listContacts`/`snapshot` 过滤 deleted。
   重加时 upsert 把同一行复活为 `state=active`、`safetyVerified=false`、`recreated=true`；
   核对安全码后 `recreated` 清除。
-- 删除联系人**不删除会话行**：`conversations` 表没有 peer device 列，删掉 session 后
-  `AppStateRestore` 无法把保留下来的历史会话映射到对端设备，应用会打不开。关系结束改由统一的
-  准入判定保证——入站六个入口要求「存在 active 联系人」，出站（Reply 除外）同样要求；
-  拉黑额外由 `blocked_peers` 判定。可选的历史删除删 `messages`、`message_order`、
-  `delivery_receipts` 与 `conversations`（本机行为，ADR-0007 已登记消息删除不在防篡改承诺内）；
-  删除联系人同时移除该对端的待处理邀请，避免旧邀请把关系重新建起来。
+- 删除联系人后关系结束由统一的准入判定保证——入站六个入口要求「存在 active 联系人」，
+  出站（Reply 除外）同样要求；拉黑额外由 `blocked_peers` 判定。**保留历史时不删会话行**：
+  `conversations` 表没有 peer device 列，删掉 session 后 `AppStateRestore` 无法把保留下来的
+  历史会话映射到对端设备，应用会打不开。**删除历史时连 `sessions` 一起删**（先推进每个会话的
+  高水位），并删 `messages`、`message_order`、`delivery_receipts` 与 `conversations`（本机行为，
+  ADR-0007 已登记消息删除不在防篡改承诺内）；删除联系人同时移除该对端的待处理邀请，避免旧邀请
+  把关系重新建起来。
 
 ### S3-A 关系结束
 
