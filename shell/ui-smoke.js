@@ -355,6 +355,22 @@ async function checkKeyboardJourney(page) {
   await page.waitForFunction(() => document.querySelector(".composer-input")?.value === "");
 }
 
+async function checkSearch(page) {
+  stage = "search";
+  const input = page.locator(".search-input");
+  await input.fill("ui-42");
+  const hit = page.locator(".search-hit").first();
+  await hit.waitFor({ timeout: 15_000 });
+  const text = await hit.innerText();
+  if (!text.includes("ui-42")) throw new Error(`search hit mismatch: ${text}`);
+  await hit.click();
+  await page.locator(".composer-input").waitFor({ timeout: 10_000 });
+  if ((await page.locator(".conversation-row.on").count()) !== 1) {
+    throw new Error("search click did not select the conversation");
+  }
+  if ((await input.inputValue()) !== "") throw new Error("search query was not cleared after selecting a hit");
+}
+
 async function checkQueueFullFeedback(page) {
   stage = "queue-full-feedback";
   const pattern = "**/api/conversations/*/messages";
@@ -614,6 +630,7 @@ async function main() {
     assertSequence(await bubbleTexts(b, ".message.peer .bubble"), "ui", 100);
     assertSequence(await bubbleTexts(a, ".message.peer .bubble"), "ui-b", 100);
     assertSequence(await bubbleTexts(b, ".message.own .bubble"), "ui-b", 100);
+    await checkSearch(a);
     await checkKeyboardJourney(a);
     await checkElectronExitReason(browser, `http://127.0.0.1:${portA}/`, serverA);
     await checkServiceDown(a, serverA);
@@ -625,6 +642,7 @@ async function main() {
       modalKeyboard: true,
       disclosure: true,
       keyboardJourney: true,
+      search: true,
       queueFullFeedback: true,
       electronExitReason: true,
       serviceDown: true
@@ -693,6 +711,7 @@ module.exports = {
   openChat,
   checkDisclosure,
   checkKeyboardJourney,
+  checkSearch,
   checkSafetyCodes,
   assertSafetyClosed,
   verifySafety,

@@ -45,6 +45,13 @@ final class HttpApi private ():
               completeResult(service.stateJson)
             }
           } ~
+          path("search") {
+            get {
+              parameters("q", "limit".as[Int].?) { (query, limit) =>
+                completeResult(service.search(query, limit.getOrElse(20)))
+              }
+            }
+          } ~
           path("unlock") {
             post {
               entity(as[String]) { body =>

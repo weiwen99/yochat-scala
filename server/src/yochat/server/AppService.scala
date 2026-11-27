@@ -161,6 +161,34 @@ final class AppService private (
       }
       .handleErrorWith(error => IO.pure(ApiJson.error(ServiceError.RuntimeFailed(error.getClass.getSimpleName))))
 
+  def search(query: String, limit: Int): IO[Either[ServiceError, Value]] =
+    val trimmed = query.trim
+    if trimmed.length < 2 || trimmed.length > 200 then IO.pure(Left(ServiceError.BadRequest("query")))
+    else
+      withUnlockedEither { running =>
+        unlockedState(running).flatMap {
+          case Left(error)  => IO.pure(Left(error))
+          case Right(state) =>
+            val bounded = math.max(1, math.min(limit, AppService.SearchResultLimit))
+            running.store.searchMessages(trimmed, bounded, AppService.SearchScanLimit).map {
+              case Left(error)    => Left(ServiceError.StoreFailed(error.code))
+              case Right(outcome) =>
+                val localUser = running.store.identity.userPublic.bytes
+                val visible   = outcome.copy(hits = outcome.hits.filter { record =>
+                  record.authorPub.bytes == localUser ||
+                  state.conversations.get(record.conversationId).exists(conversation => ApiJson.visible(record, conversation, localUser))
+                })
+                Right(
+                  ujson.Obj(
+                    "results"   -> ApiJson.searchResults(visible, trimmed, state, localUser),
+                    "scanned"   -> outcome.scanned,
+                    "truncated" -> outcome.truncated
+                  )
+                )
+            }
+        }
+      }
+
   def messages(conversationId: ByteVector, limit: Int): IO[Either[ServiceError, List[MessageRecord]]] =
     withRunningEither { running =>
       unlockedState(running).flatMap {
@@ -545,6 +573,8 @@ object AppService:
 
   private val MinPassphraseLength: Int   = 8
   private val UnlockWait: FiniteDuration = 5.seconds
+  val SearchScanLimit: Int               = 5_000
+  val SearchResultLimit: Int             = 50
 
   def create(config: ServiceConfig, hub: EventHub, clock: Clock = Clock.systemUTC()): IO[AppService] =
     for

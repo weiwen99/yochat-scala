@@ -2,8 +2,8 @@
 
 - Plan: 0015（设计记录 `docs/plans/2026/11/0015-s3-release-mvp/design.md`）
 - 需求编号用 ID 后缀；完整 ID 见 `docs/references/2026-11-20-yochat-reference-study/requirements.md`
-- Status: **S3-A 已实现并完成两轮实现评审**；八条裁决已由 owner 委派决定（见设计记录的「裁决」）；
-  S3-B 待开工，S3-C 仍阻塞于自己的 ADR。实现记录见 `impl.md`，测试映射见 `test-parity.md`。
+- Status: **S3-A/B/C 均已实现**；八条裁决已由 owner 委派决定（见设计记录的「裁决」）；
+  S3-C 的存储取舍与「大量历史」门见 ADR-0013。实现记录见 `impl.md`，测试映射见 `test-parity.md`。
 
 ## 一句话
 
@@ -59,5 +59,5 @@ S3 = 关系结束（拉黑/删除）+ 发布级可见性（通知、连接方式
 
 ## 下一步
 
-S3-B：通知（逐会话关闭、正文默认关、点击跳会话）、连接方式可见、键盘可达、使用前告知、
-迟到提示的收尾；之后 S3-C 先写搜索 ADR。
+全量 `./check.sh` 回执与推送；S3 之后的下一批按 ADR-0003 重新论证（恢复短语、消息墓碑、
+联系人分组等仍留在延后清单）。

@@ -223,6 +223,9 @@ final class ApiClient:
   def startRekey(sessionId: String): Future[Unit] =
     post(s"/api/rekey/$sessionId", ujson.Obj()).map(_ => ())
 
+  def search(query: String, limit: Int = 20): Future[SearchResults] =
+    request("GET", s"/api/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&limit=$limit", None).map(Json.parseSearch)
+
   def refresh(): Unit = loadSession()
 
   def createPairingInvite(): Future[String] =

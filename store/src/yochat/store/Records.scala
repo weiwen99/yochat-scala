@@ -210,3 +210,10 @@ final case class CutoverEvidence(
   confirmAckReceived: Boolean,
   firstNewSessionDataReceived: Boolean
 )
+
+/** Result of a bounded local search. `scanned` counts decrypted rows, so a caller can tell a full match from a truncated one instead of
+  * reporting "no results" for an unfinished scan.
+  */
+final case class SearchOutcome(hits: List[MessageRecord], scanned: Int, truncated: Boolean):
+
+  override def toString: String = s"SearchOutcome(hits=${hits.size}, scanned=$scanned, truncated=$truncated)"

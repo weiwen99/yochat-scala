@@ -39,6 +39,7 @@ bash -n desktop-gate.sh
 ./mill server.s2e2e
 ./mill server.s2perf
 ./mill server.s2bperf
+./mill store.searchbench
 ./mill server.assembly
 ./mill transport.assembly
 if ! node -e "require('./shell/electron-runtime').resolveElectron()" 2>/dev/null; then

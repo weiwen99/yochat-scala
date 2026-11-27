@@ -2,7 +2,7 @@
 
 ## 状态
 
-- **S3-A 已实现并完成两轮实现评审**；S3-B 已实现（通知、连接可见、键盘旅程、使用前告知）；S3-C 进行中。
+- **S3-A/B/C 均已实现**；S3-A 完成两轮实现评审，S3-B/C 见下节。
 - 存储扩展按 `docs/adr/0012-s3-storage-blocked-peers-and-contact-tombstone.md`；设计记录按
   `design.md` 的「裁决」冻结（2026-11-27，owner 委派）。
 - 全量 `./check.sh` 回执见 `tmp/checks/`（本文件只记已实际跑过的命令与结果）。
@@ -120,6 +120,17 @@
 （默认无正文、正文开关、逐会话静音、点击切回会话）。负例实测：删掉主进程 click 转发后，
 electron-smoke 在 notifications 阶段超时失败。
 
+## S3-C 交付（2026-11-27）
+
+| 需求 | 落地 |
+| --- | --- |
+| `8F32S19RPRC25471` 全文搜索 | `MessageRepository.search`：按 rowid keyset 分页、每页 256、扫描上限 5,000、结果上限 50；正文解密后内存子串匹配（`Locale.ROOT`），`scanned`/`truncated` 如实返回。`GET /api/search`（≥2 字、≤50 条，未解锁 401、坏参 400、存储失败 `store-failed`）。UI 会话列表搜索框（200 ms 去抖），结果显示联系人/片段/时间，点击切会话并清空。 |
+| `3TK81N30WS2S6JWB` 大量历史 | ADR-0013 定义形状（100,000 条 × 128 字节）与两道门（首屏 p95 ≤ 250 ms、最坏情况搜索 p95 ≤ 1,500 ms）；`./mill store.searchbench` 实测首屏 p50 9 / p95 10 ms、搜索 p50 32 / p95 50 ms（2026-11-27，m1），超阈值非零退出；`check.sh` 覆盖。 |
+
+新增门禁：`store.searchbench`（已进 `check.sh`）、`MessageSearchSpec`（6 条：匹配/上限/参数/
+删除后搜不到/查询计划）、`ui-smoke` 的 search 阶段。旧 `scale.e2e.ts` 的 UI 级阈值（500 ms 首屏 /
+100 ms 帧 / 1 s 搜索）不继承，口径不同（ADR-0013、裁决 5）；滚动帧与内存增长不在本波。
+
 ## 已知缺口
 
 1. **Fanout / FanoutAck / device-list 的双设备负断言**只有 store/unit 覆盖：A2 的 Fanout
@@ -130,6 +141,7 @@ electron-smoke 在 notifications 阶段超时失败。
    S3-B 的通知/可达性也不在 A2 上。
 3. **窗口外消息取不回**：裁决 2a，批准重发队列（`XBRY5Q81Z4ZPP6ER`）延后。
 4. **恢复短语与消息删除**仍延后；`contacts` 墓碑不是消息墓碑。
-5. **S3-C**：搜索与大量历史仍在实现中，见下节。
+5. **S3-C 的测量边界**：门是 store 级（解密 + 查询），不覆盖 UI 滚动帧与内存增长；很旧的命中
+   可能被 5,000 行扫描上限漏掉，界面显示 `truncated` 提示；A2 只读库不提供搜索。
 6. 同一数据目录不支持同时打开两个 `Store`；第二个实例的写入对第一个实例的拉黑缓存不可见
    （ADR-0012 已知约束 5）。

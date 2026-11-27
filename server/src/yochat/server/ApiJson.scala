@@ -131,6 +131,41 @@ object ApiJson:
   def error(error: ServiceError): Value =
     ujson.Obj("error" -> error.code)
 
+  /** One search hit. The snippet is derived on read from the decrypted body; nothing is persisted. */
+  def searchResults(
+    outcome: yochat.store.SearchOutcome,
+    query: String,
+    state: AppState,
+    localUser: ByteVector
+  ): Value =
+    val lowered = query.toLowerCase(java.util.Locale.ROOT)
+    val local   = localUser
+    ujson.Arr(
+      outcome.hits
+        .map { record =>
+          val body      = decodeBody(record.body)
+          val peer      = state.contacts.values.find(_.userPub == record.authorPub)
+          ujson.Obj(
+            "messageId"      -> record.id,
+            "conversationId" -> record.conversationId.toHex,
+            "author"         -> (if record.authorPub.bytes == local then "me" else "peer"),
+            "peerName"       -> peer.map(displayName).getOrElse(record.authorPub.bytes.toHex.take(8)),
+            "snippet"        -> snippet(body, lowered),
+            "createdAt"      -> record.createdAt
+          )
+        }*
+    )
+
+  private def snippet(body: String, loweredQuery: String): String =
+    val flat  = body.replaceAll("\\s+", " ").trim
+    val index = flat.toLowerCase(java.util.Locale.ROOT).indexOf(loweredQuery)
+    if flat.length <= 120 then flat
+    else if index < 0 then flat.take(120) + "…"
+    else
+      val start = math.max(0, index - 40)
+      val end   = math.min(flat.length, index + 80)
+      (if start > 0 then "…" else "") + flat.slice(start, end) + (if end < flat.length then "…" else "")
+
   private def blockedSet(rows: List[BlockedPeerRecord]): Set[ByteVector] =
     rows.map(_.userPub.bytes).toSet
 

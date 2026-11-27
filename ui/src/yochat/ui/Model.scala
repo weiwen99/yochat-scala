@@ -83,6 +83,21 @@ final case class PairingInspection(
   expiresAt: Long
 )
 
+final case class SearchHit(
+  messageId: Long,
+  conversationId: String,
+  author: String,
+  peerName: String,
+  snippet: String,
+  createdAt: Long
+)
+
+final case class SearchResults(hits: Vector[SearchHit], scanned: Int, truncated: Boolean)
+
+object SearchResults:
+
+  val empty: SearchResults = SearchResults(Vector.empty, 0, false)
+
 final case class Lock(locked: Boolean, generation: Long)
 
 final case class AppState(
@@ -188,6 +203,27 @@ object Json:
     array(value, "messages") match
       case values if values.nonEmpty => values.flatMap(parseMessage)
       case _                         => arrayValue(value).flatMap(parseMessage)
+
+  def parseSearch(value: Value): SearchResults =
+    SearchResults(
+      hits = array(value, "results").flatMap(parseSearchHit),
+      scanned = int(value, "scanned").getOrElse(0),
+      truncated = bool(value, "truncated").getOrElse(false)
+    )
+
+  private def parseSearchHit(value: Value): Option[SearchHit] =
+    for
+      messageId      <- long(value, "messageId")
+      conversationId <- string(value, "conversationId")
+      snippet        <- string(value, "snippet")
+    yield SearchHit(
+      messageId,
+      conversationId,
+      string(value, "author").getOrElse("peer"),
+      string(value, "peerName").getOrElse(""),
+      snippet,
+      long(value, "createdAt").getOrElse(0L)
+    )
 
   def errorCode(value: Value): Option[String] =
     string(value, "error")
