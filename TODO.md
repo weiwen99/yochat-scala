@@ -8,7 +8,7 @@ Status 与 `AGENTS.md` §10。本文件不与它们重复，也不记录已完�
 
 ## 平台
 
-Linux 门禁支持已交付，见 `.scratch/linux-support/spec.md`。结项时留下两个决定需要 owner 拍板，
+Linux 门禁支持已交付，见 `.scratch/linux-support/spec.md`。结项时留下三个决定需要 owner 拍板，
 开工前都要先写 ADR 或改文档：
 
 - [ ] **Electron 版本口径**：仓库钉 45.4.1，nixpkgs 提供 45.3.4。当前 Linux 门禁经

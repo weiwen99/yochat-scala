@@ -86,7 +86,8 @@ platform = macos | linux
   任一 `Off` 即 `off`，全 `On` 即 `on`，否则 `unknown`。
 - **锁屏状态**：macOS 读 `ioreg ... IOConsoleLocked`；Linux 读
   `loginctl show-session <id> -p LockedHint`。
-- 回执新增 `platform`、`session_type`、`display_env`、`electron_binary`。
+- 回执新增 `platform`、`session_type`、`display_env`、`keep_awake`、`reason`、
+  `electron_env`、`electron_source`、`electron_resolved`；`electron` 仍记钉住版本。
 
 ### Electron 解析（`shell/electron-runtime.js`）
 
@@ -130,7 +131,8 @@ Electron 在 Linux 上的 `safeStorage` 走 libsecret/kwallet（或 `--password-
 
 ## 测试规格等价
 
-无行为契约变化：15 条行为契约、性能门阈值、门禁清单都不动。新增的是同一批门在
+无行为契约变化：16 条行为契约（`E2E#1`–`#15`、`#17`）与 2 条性能契约（`PERF#10K`、
+`PERF#RATE`）、门禁清单都不动。新增的是同一批门在
 第二个平台上的执行能力。测试等价性体现为"m1 上逐条复跑通过"（见验收）。
 
 ## 性能门
@@ -167,7 +169,7 @@ w7 的豁免。本计划只确立两件事：功能契约能在 Linux 上跑通�
 ### m1（macOS，无回归）
 
 `keychain-smoke`、`passphrase-smoke`×2、`ui-smoke`、`electron-smoke` 全部 PASS，
-耗时与改动前一致（25.9s / 25.5s）。
+耗时与改动前同一量级（本次 26.6s / 25.4s；改动前 25.9s / 25.5s）。
 
 ## 验收
 
