@@ -80,14 +80,15 @@
 | 命令 | 结果 |
 | --- | --- |
 | `./mill core.test` | 145/145 SUCCESS（含 GapTooLarge、lateArrival） |
-| `./mill store.test` | 198/198 SUCCESS（含拉黑/墓碑/历史/孤儿会话/EXPLAIN） |
-| `./mill server.test` | 399/399 SUCCESS |
+| `./mill store.test` | 198/198 SUCCESS（含拉黑/墓碑/历史/孤儿会话/EXPLAIN；MessageSearchSpec 6 条） |
+| `./mill server.test` | 399/399 SUCCESS（含 ApiJsonSpec 的 search 可见性用例） |
 | `./mill server.s3e2e` | PASS（block/unblock/delete/re-add/Reply guard） |
 | `./mill server.s2e2e` | PASS（A2 同步与 B2 扇出未回归） |
 | `./mill server.e2e` | 18/18 PASS（S1 既有契约 + S3；含 1k/10k/PERF#RATE） |
 | `./mill core|store|server|ui.checkFormat`、`.fix --check` | 全绿 |
 | `./mill ui.fastLinkJS` | SUCCESS |
-| `./check.sh` | **EXIT=0**（2026-11-27，m1）；S1 E2E 18/18、S3E2E、S2E2E、S2PERF、S2BPERF、CONTRAST、COLD_START p50=1190ms/p95=1255ms、UI_SMOKE、ELECTRON_UI、Quint、spike crypto/storage/doobie 全 PASS |
+| `./mill store.searchbench` | PASS（100,000 行 × 128B；`first_p50_ms=9 first_p95_ms=11 search_p50_ms=24 search_p95_ms=50 append_ms=3480`，2026-11-27，m1） |
+| `./check.sh` | **EXIT=0**（2026-11-27，m1）；S1 E2E 18/18、S3E2E、S2E2E、S2PERF、S2BPERF、SEARCH_BENCH、CONTRAST、COLD_START p50=1190ms/p95=1255ms、UI_SMOKE、ELECTRON_UI、Quint、spike crypto/storage/doobie 全 PASS |
 
 回执在 `tmp/checks/`（`desktop-gate-*.json`、`ui-*.json`、`electron-ui-*.json`、
 `desktop-*.json`、`s1-e2e.log`）。工作树里 `shell/node_modules` 需要指向主检出的 node_modules
@@ -116,20 +117,26 @@
 | `Q0MQBNAVS1TB1PBW` / `386RMXBPWJYEXT9P` 使用前告知 | 添加联系人对话框内置「使用前须知」：中继可见项、对方可见公网地址与设备公钥、本机中转地址、拉黑可推断且无在线状态开关、无公开目录；版本化，点「我已了解」后收起。 |
 | `REQ_20261103_NS77FQDYNCMNF71P` | 沿用 S3-A：`lateArrival` 按消息 id 触发一次可见横幅。 |
 
-新增门禁断言：`ui-smoke` 的 disclosure 与 keyboard-journey 阶段；`electron-smoke` 的 notifications 阶段
-（默认无正文、正文开关、逐会话静音、点击切回会话）。负例实测：删掉主进程 click 转发后，
-electron-smoke 在 notifications 阶段超时失败。
+新增门禁断言：`ui-smoke` 的 disclosure、keyboard-navigation（键盘加好友对话框、键盘核对安全码、
+回到会话）与 keyboard-journey（切会话、键盘发送）阶段，以及 search（命中、点击后会话 id 相等、
+截断与失败文案）阶段；`electron-smoke` 的 notifications 阶段（conversationId、默认无正文、
+正文开关、逐会话静音、点击后当前会话 id 等于通知携带的 conversationId）。负例实测：
+删掉主进程 click 转发后，electron-smoke 在 notifications 阶段超时失败；把「截断 → 未找到」
+分支改回「没有匹配」后，ui-smoke 在 search-notices 阶段超时失败（两者均已恢复）。
 
 ## S3-C 交付（2026-11-27）
 
 | 需求 | 落地 |
 | --- | --- |
 | `8F32S19RPRC25471` 全文搜索 | `MessageRepository.search`：按 rowid keyset 分页、每页 256、扫描上限 5,000、结果上限 50；正文解密后内存子串匹配（`Locale.ROOT`），`scanned`/`truncated` 如实返回。`GET /api/search`（≥2 字、≤50 条，未解锁 401、坏参 400、存储失败 `store-failed`）。UI 会话列表搜索框（200 ms 去抖），结果显示联系人/片段/时间，点击切会话并清空。 |
-| `3TK81N30WS2S6JWB` 大量历史 | ADR-0013 定义形状（100,000 条 × 128 字节）与两道门（首屏 p95 ≤ 250 ms、最坏情况搜索 p95 ≤ 1,500 ms）；`./mill store.searchbench` 实测首屏 p50 9 / p95 10 ms、搜索 p50 32 / p95 50 ms（2026-11-27，m1），超阈值非零退出；`check.sh` 覆盖。 |
+| `3TK81N30WS2S6JWB` 大量历史 | ADR-0013 定义形状（100,000 条 × 128 字节）与两道门（首屏 p95 ≤ 250 ms、最坏情况搜索 p95 ≤ 1,500 ms）；`./mill store.searchbench` 实测 `first_p95_ms=11`、`search_p95_ms=50`（2026-11-27，m1；唯一回执行见「验证」表），超阈值非零退出；`check.sh` 覆盖。 |
 
-新增门禁：`store.searchbench`（已进 `check.sh`）、`MessageSearchSpec`（6 条：匹配/上限/参数/
-删除后搜不到/查询计划）、`ui-smoke` 的 search 阶段。旧 `scale.e2e.ts` 的 UI 级阈值（500 ms 首屏 /
-100 ms 帧 / 1 s 搜索）不继承，口径不同（ADR-0013、裁决 5）；滚动帧与内存增长不在本波。
+新增门禁：`store.searchbench`（已进 `check.sh`，超阈值非零退出）、`MessageSearchSpec`（6 条：
+匹配与新到旧、结果/扫描上限与截断语义、参数校验、删除历史后搜不到、两条生产查询的
+`EXPLAIN`——按 rowid `SEARCH`、不得 `SCAN`/`TEMP B-TREE`）、`ApiJsonSpec.searchable`
+（会话存在、可见游标、GBNV 依赖）、`ui-smoke` 的 search / search-notices 阶段。
+旧 `scale.e2e.ts` 的 UI 级阈值（500 ms 首屏 / 100 ms 帧 / 1 s 搜索）不继承，口径不同
+（ADR-0013、裁决 5）；滚动帧与内存增长不在本波，已写入 ADR-0013 已知约束 5。
 
 ## 已知缺口
 
@@ -145,3 +152,9 @@ electron-smoke 在 notifications 阶段超时失败。
    可能被 5,000 行扫描上限漏掉，界面显示 `truncated` 提示；A2 只读库不提供搜索。
 6. 同一数据目录不支持同时打开两个 `Store`；第二个实例的写入对第一个实例的拉黑缓存不可见
    （ADR-0012 已知约束 5）。
+7. 键盘旅程覆盖：加好友对话框（打开/关闭/焦点恢复）、安全码核对、切换会话、键盘发送；
+   「打开联系人详情」没有独立面板，未单独覆盖。
+8. 迟到提示只保留最近一条：同一会话连续两次迟到补入时，前一条横幅被后一条替换（design
+   已知约束 8 登记）。
+9. 通知 IPC 载荷含 `conversationId`、标题（联系人显示名）与可选正文；design 原文「不带联系人名」
+   已按实现更正，gate 只断言 `conversationId` 与正文边界，不断言标题来源。

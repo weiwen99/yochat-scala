@@ -526,8 +526,8 @@ final class Store private[store] (
   def listAllMessages(conversationId: ByteVector): IO[Either[StorageError, List[MessageRecord]]] =
     MessageRepository.listAll(runtime, conversationId, 100_000)
 
-  def searchMessages(needle: String, limit: Int, scanLimit: Int): IO[Either[StorageError, SearchOutcome]] =
-    MessageRepository.search(runtime, needle, limit, scanLimit)
+  def searchMessages(needle: String, limit: Int): IO[Either[StorageError, SearchOutcome]] =
+    MessageRepository.search(runtime, needle, limit)
 
   def upsertPeerDeviceList(
     list: yochat.core.s2.PeerDeviceList,

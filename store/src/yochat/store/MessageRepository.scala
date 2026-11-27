@@ -14,8 +14,6 @@ private[store] object MessageRepository:
   private val MaxBodyBytes: Int    = 1_048_576
   private val MaxListLimit: Int    = 1_000
   private val MaxRestoreLimit: Int = 100_000
-  private val MaxSearchLimit: Int  = 50
-  private val MaxScanLimit: Int    = 20_000
   private val SearchPageSize: Int  = 256
 
   final private case class Row(
@@ -271,65 +269,64 @@ private[store] object MessageRepository:
           }.map(_.reverse))
       }
 
-  /** Substring search over decrypted bodies, newest first. The scan is bounded by `scanLimit` rows and pages with a rowid keyset, so the cost
-    * is independent of the total history size; nothing is indexed in clear and no additional plaintext is written.
+  /** Substring search over decrypted bodies, newest first. The scan is bounded by `SearchLimits.Scan` rows and pages with a rowid keyset, so
+    * the cost is independent of the total history size; nothing is indexed in clear and no additional plaintext is written.
     */
-  def search(
+  def search(runtime: StoreRuntime, needle: String, limit: Int): IO[Either[StorageError, SearchOutcome]] =
+    searchBounded(runtime, needle, limit, SearchLimits.Scan)
+
+  /** Test seam: the same program with an explicit scan bound, still capped by the production limit. */
+  private[store] def searchBounded(
     runtime: StoreRuntime,
     needle: String,
     limit: Int,
     scanLimit: Int
   ): IO[Either[StorageError, SearchOutcome]] =
-    if needle.isEmpty || needle.length > 200 then IO.pure(Left(StorageError.InvalidArgument("needle")))
-    else if limit <= 0 || limit > MaxSearchLimit then IO.pure(Left(StorageError.InvalidArgument("limit")))
-    else if scanLimit <= 0 || scanLimit > MaxScanLimit then IO.pure(Left(StorageError.InvalidArgument("scan_limit")))
+    if needle.isEmpty || needle.length > SearchLimits.MaxNeedle then IO.pure(Left(StorageError.InvalidArgument("needle")))
+    else if limit <= 0 || limit > SearchLimits.Results then IO.pure(Left(StorageError.InvalidArgument("limit")))
+    else if scanLimit <= 0 || scanLimit > SearchLimits.Scan then IO.pure(Left(StorageError.InvalidArgument("scan_limit")))
     else runtime.run(searchProgram(runtime, needle.toLowerCase(java.util.Locale.ROOT), limit, scanLimit))
 
-  private def searchProgram(
-    runtime: StoreRuntime,
-    needle: String,
-    limit: Int,
-    scanLimit: Int
-  ): ConnectionIO[SearchOutcome] =
-    def page(
-      cursor: Option[Long],
-      size: Int
-    ): ConnectionIO[List[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]] =
+  private def searchProgram(runtime: StoreRuntime, needle: String, limit: Int, scanLimit: Int): ConnectionIO[SearchOutcome] =
+    type Row = (Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)
+    def page(cursor: Option[Long], size: Int): ConnectionIO[List[Row]]                                   =
       cursor match
         case None        =>
           sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts
-               |FROM messages ORDER BY id DESC LIMIT $size""".stripMargin
-            .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]
+               |FROM messages WHERE id <= (SELECT COALESCE(MAX(id), 0) FROM messages)
+               |ORDER BY id DESC LIMIT $size""".stripMargin
+            .query[Row]
             .to[List]
         case Some(value) =>
           sql"""SELECT id, conversation_id, session_id, author_pub, device_pub, seq, body, wire, state, created_at, attempts
                |FROM messages WHERE id < $value ORDER BY id DESC LIMIT $size""".stripMargin
-            .query[(Long, Array[Byte], Array[Byte], Array[Byte], Array[Byte], Long, Array[Byte], Array[Byte], Int, Long, Int)]
+            .query[Row]
             .to[List]
+    // `truncated` means "the result set is incomplete": either the hit limit stopped the scan or the scan
+    // limit did, and rows remain. A page that ends the table is complete even when the last row matched.
     def loop(cursor: Option[Long], scanned: Int, hits: List[MessageRecord]): ConnectionIO[SearchOutcome] =
       if hits.size >= limit then FC.pure(SearchOutcome(hits.reverse.take(limit), scanned, truncated = true))
       else if scanned >= scanLimit then FC.pure(SearchOutcome(hits.reverse.take(limit), scanned, truncated = true))
       else
         val size = math.min(SearchPageSize, scanLimit - scanned)
-        page(cursor, size).flatMap {
-          case Nil  => FC.pure(SearchOutcome(hits.reverse.take(limit), scanned, truncated = hits.size >= limit))
-          case rows =>
-            val start: ConnectionIO[(Int, List[MessageRecord])] = FC.pure((scanned, hits))
-            rows
-              .foldLeft(start) { (acc, tuple) =>
-                acc.flatMap { current =>
-                  val count = current._1
-                  val found = current._2
-                  decode(runtime, toRow(tuple)).map { record =>
-                    val body =
-                      new String(record.body.toArray, java.nio.charset.StandardCharsets.UTF_8).toLowerCase(java.util.Locale.ROOT)
-                    if body.contains(needle) then (count + 1, record :: found) else (count + 1, found)
-                  }
+        page(cursor, size).flatMap { rows =>
+          val start: ConnectionIO[(Int, List[MessageRecord])] = FC.pure((scanned, hits))
+          rows
+            .foldLeft(start) { (acc, tuple) =>
+              acc.flatMap { current =>
+                val count = current._1
+                val found = current._2
+                decode(runtime, toRow(tuple)).map { record =>
+                  val body =
+                    new String(record.body.toArray, java.nio.charset.StandardCharsets.UTF_8).toLowerCase(java.util.Locale.ROOT)
+                  if body.contains(needle) then (count + 1, record :: found) else (count + 1, found)
                 }
               }
-              .flatMap { current =>
-                loop(Some(rows.last._1), current._1, current._2)
-              }
+            }
+            .flatMap { current =>
+              if rows.size < size then FC.pure(SearchOutcome(current._2.reverse.take(limit), current._1, truncated = false))
+              else loop(Some(rows.last._1), current._1, current._2)
+            }
         }
     loop(None, 0, Nil)
 

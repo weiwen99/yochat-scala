@@ -93,7 +93,8 @@ object Shell:
   final private case class SearchState(
     query: String = "",
     results: SearchResults = SearchResults.empty,
-    searching: Boolean = false
+    searching: Boolean = false,
+    error: Option[String] = None
   )
 
   private def conversationList(api: ApiClient, ui: UiState): HtmlElement =
@@ -114,7 +115,9 @@ object Shell:
                 if token.now() == id then search.set(SearchState(query = raw, results = found, searching = false))
               case Failure(fail)  =>
                 if token.now() == id then
-                  search.set(SearchState(query = raw))
+                  // A failed search is not "no match": keep the error visible in the panel so a store or
+                  // transport failure cannot be read as "this message does not exist".
+                  search.set(SearchState(query = raw, error = Some(api.describeError(fail))))
                   ui.failure(api.describeError(fail))
             }
         }
@@ -123,9 +126,9 @@ object Shell:
       cls := "conversation-list",
       div(
         cls := "list-head",
-        div(cls       := "wordmark", "有聊", span("YOCHAT / S1")),
+        div(cls := "wordmark", "有聊", span("YOCHAT / S1")),
         div(
-          cls         := "list-title-row",
+          cls   := "list-title-row",
           h2("通信"),
           child.maybe <-- api.state.signal.map(value =>
             if value.readOnly then None
@@ -135,13 +138,19 @@ object Shell:
               )
           )
         ),
-        input(
-          cls         := "text-input small search-input",
-          aria.label  := "搜索本机历史",
-          placeholder := "搜索本机历史（至少 2 个字）",
-          value <-- search.signal.map(_.query),
-          onInput.mapToValue --> (value => runSearch(value))
-        )
+        child.maybe <-- api.state.signal.map { current =>
+          if current.readOnly then None
+          else
+            Some(
+              input(
+                cls         := "text-input small search-input",
+                aria.label  := "搜索本机历史",
+                placeholder := "搜索本机历史（至少 2 个字）",
+                value <-- search.signal.map(_.query),
+                onInput.mapToValue --> (value => runSearch(value))
+              )
+            )
+        }
       ),
       child <-- search.signal.map { current =>
         if current.query.trim.length < 2 then conversationRows(api, ui)
@@ -152,6 +161,7 @@ object Shell:
             current.query.trim,
             current.results,
             current.searching,
+            current.error,
             () => search.set(SearchState())
           )
       },
@@ -181,6 +191,7 @@ object Shell:
                 ui.view.set(View.Chat)
                 ui.mobileList.set(false)
               }),
+              onMountCallback(context => context.thisNode.ref.setAttribute("data-conversation-id", conversation.id)),
               span(cls := "avatar", contact.map(_.displayName.take(1)).getOrElse("?")),
               span(
                 cls    := "conversation-copy",
@@ -202,11 +213,18 @@ object Shell:
     query: String,
     results: SearchResults,
     searching: Boolean,
+    error: Option[String],
     clear: () => Unit
   ): HtmlElement =
     div(
       cls := "search-results",
       if searching then div(cls := "search-empty", "正在搜索本机历史…")
+      else if error.isDefined then div(cls := "search-empty", s"搜索失败：${error.getOrElse("")}。这不代表历史里没有这条消息。")
+      else if results.hits.isEmpty && results.truncated then
+        div(
+          cls := "search-empty",
+          s"已扫描 ${results.scanned} 条，未找到；更早的消息没有搜索，不能据此断定不存在。"
+        )
       else if results.hits.isEmpty then div(cls := "search-empty", s"没有匹配「$query」的消息。")
       else
         div(
@@ -214,6 +232,7 @@ object Shell:
           results.hits.map { hit =>
             button(
               cls := "search-hit",
+              onMountCallback(context => context.thisNode.ref.setAttribute("data-conversation-id", hit.conversationId)),
               onClick --> (_ => {
                 api.selectConversation(Some(hit.conversationId))
                 ui.view.set(View.Chat)
@@ -227,12 +246,9 @@ object Shell:
           }
         )
       ,
-      if results.hits.nonEmpty then
-        div(
-          cls      := "search-note",
-          s"扫描 ${results.scanned} 条" + (if results.truncated then "，只显示一部分匹配；换个词缩小范围。" else "")
-        )
-      else div(cls := "hidden", "")
+      if results.hits.nonEmpty && results.truncated then div(cls := "search-note", s"扫描 ${results.scanned} 条，结果不完整；换个词缩小范围。")
+      else if results.hits.nonEmpty then div(cls := "search-note", s"扫描 ${results.scanned} 条")
+      else div(cls                               := "hidden", "")
     )
 
   private def emptyList(ui: UiState, readOnly: Boolean): HtmlElement =

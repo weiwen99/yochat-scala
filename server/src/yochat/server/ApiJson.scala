@@ -131,6 +131,19 @@ object ApiJson:
   def error(error: ServiceError): Value =
     ujson.Obj("error" -> error.code)
 
+  /** Search shares the conversation view's admission: an active conversation, the visible cursor, and GBNV dependencies satisfied. A buffered
+    * out-of-order message must not be searchable before it is displayable.
+    */
+  def searchable(
+    record: MessageRecord,
+    conversation: Option[Conversation],
+    orders: Map[yochat.core.s2.LogicalKey, yochat.core.s2.OrderStamp],
+    localUser: ByteVector
+  ): Boolean =
+    conversation.exists { current =>
+      visible(record, current, localUser) && ready(List(record), orders).nonEmpty
+    }
+
   /** One search hit. The snippet is derived on read from the decrypted body; nothing is persisted. */
   def searchResults(
     outcome: yochat.store.SearchOutcome,
@@ -144,12 +157,18 @@ object ApiJson:
       outcome.hits
         .map { record =>
           val body      = decodeBody(record.body)
-          val peer      = state.contacts.values.find(_.userPub == record.authorPub)
+          val own       = record.authorPub.bytes == local
+          // The row title names the conversation's peer, not the message author: for own messages the
+          // author lookup would fall back to our own key, which is not a person's name.
+          val peer      = state.conversations.get(record.conversationId).flatMap(conversation => state.contacts.get(conversation.peerUserPub))
+          val name      =
+            if own then "我"
+            else peer.map(displayName).getOrElse(record.authorPub.bytes.toHex.take(8))
           ujson.Obj(
             "messageId"      -> record.id,
             "conversationId" -> record.conversationId.toHex,
-            "author"         -> (if record.authorPub.bytes == local then "me" else "peer"),
-            "peerName"       -> peer.map(displayName).getOrElse(record.authorPub.bytes.toHex.take(8)),
+            "author"         -> (if own then "me" else "peer"),
+            "peerName"       -> name,
             "snippet"        -> snippet(body, lowered),
             "createdAt"      -> record.createdAt
           )

@@ -13,7 +13,7 @@ import ujson.Value
 
 import yochat.core.{Crypto, Ed25519Public, Key32, SessionId}
 import yochat.core.app.{AppEvent, AppLimits, AppState}
-import yochat.core.s2.JoinManifest
+import yochat.core.s2.{JoinManifest, LogicalKey, OrderStamp}
 import yochat.store.{KeySource, MessageRecord, Store, StoreConfig, StorePaths}
 import yochat.transport.RelayClient
 
@@ -163,29 +163,54 @@ final class AppService private (
 
   def search(query: String, limit: Int): IO[Either[ServiceError, Value]] =
     val trimmed = query.trim
-    if trimmed.length < 2 || trimmed.length > 200 then IO.pure(Left(ServiceError.BadRequest("query")))
+    if trimmed.length < 2 || trimmed.length > yochat.store.SearchLimits.MaxNeedle then IO.pure(Left(ServiceError.BadRequest("query")))
+    else if limit < 1 || limit > yochat.store.SearchLimits.Results then IO.pure(Left(ServiceError.BadRequest("limit")))
     else
       withUnlockedEither { running =>
         unlockedState(running).flatMap {
           case Left(error)  => IO.pure(Left(error))
           case Right(state) =>
-            val bounded = math.max(1, math.min(limit, AppService.SearchResultLimit))
-            running.store.searchMessages(trimmed, bounded, AppService.SearchScanLimit).map {
-              case Left(error)    => Left(ServiceError.StoreFailed(error.code))
-              case Right(outcome) =>
-                val localUser = running.store.identity.userPublic.bytes
-                val visible   = outcome.copy(hits = outcome.hits.filter { record =>
-                  record.authorPub.bytes == localUser ||
-                  state.conversations.get(record.conversationId).exists(conversation => ApiJson.visible(record, conversation, localUser))
-                })
-                Right(
-                  ujson.Obj(
-                    "results"   -> ApiJson.searchResults(visible, trimmed, state, localUser),
-                    "scanned"   -> outcome.scanned,
-                    "truncated" -> outcome.truncated
-                  )
-                )
-            }
+            for
+              outcome <- running.store.searchMessages(trimmed, limit)
+              result  <- outcome match
+                           case Left(error)  => IO.pure(Left(ServiceError.StoreFailed(error.code)))
+                           case Right(found) =>
+                             val localUser = running.store.identity.userPublic.bytes
+                             val convIds   = found.hits.map(_.conversationId).distinct
+                             val orders    = convIds
+                               .foldLeft(
+                                 IO.pure[Either[ServiceError, Map[ByteVector, Map[LogicalKey, OrderStamp]]]](
+                                   Right(Map.empty)
+                                 )
+                               ) { (acc, conversationId) =>
+                                 acc.flatMap {
+                                   case Left(error)   => IO.pure(Left(error))
+                                   case Right(values) =>
+                                     running.store.listMessageOrders(conversationId).map {
+                                       case Left(error)    => Left(ServiceError.StoreFailed(error.code))
+                                       case Right(entries) => Right(values.updated(conversationId, entries.toMap))
+                                     }
+                                 }
+                               }
+                             orders.map(_.map { orderMap =>
+                               // Same visibility as the conversation view: an active conversation, the
+                               // visible cursor, and GBNV dependencies satisfied (a buffered out-of-order
+                               // message must not be searchable before it is displayable).
+                               val kept   = found.copy(hits = found.hits.filter { record =>
+                                 ApiJson.searchable(
+                                   record,
+                                   state.conversations.get(record.conversationId),
+                                   orderMap.getOrElse(record.conversationId, Map.empty),
+                                   localUser
+                                 )
+                               })
+                               ujson.Obj(
+                                 "results"   -> ApiJson.searchResults(kept, trimmed, state, localUser),
+                                 "scanned"   -> found.scanned,
+                                 "truncated" -> found.truncated
+                               )
+                             })
+            yield result
         }
       }
 
@@ -573,8 +598,6 @@ object AppService:
 
   private val MinPassphraseLength: Int   = 8
   private val UnlockWait: FiniteDuration = 5.seconds
-  val SearchScanLimit: Int               = 5_000
-  val SearchResultLimit: Int             = 50
 
   def create(config: ServiceConfig, hub: EventHub, clock: Clock = Clock.systemUTC()): IO[AppService] =
     for

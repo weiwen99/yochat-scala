@@ -314,7 +314,7 @@ async function checkDisclosure(page) {
   const items = page.locator(".disclosure-list li");
   if ((await items.count()) < 5) throw new Error("disclosure list is short");
   const text = await page.locator(".disclosure-body").innerText();
-  for (const needle of ["中继能看到", "公网地址", "拉黑", "在线状态", "中转地址"]) {
+  for (const needle of ["中继能看到", "公网地址", "拉黑", "在线状态", "中转地址", "不知道这些设备属于谁"]) {
     if (!text.includes(needle)) throw new Error(`disclosure missing: ${needle}`);
   }
   await page.getByRole("button", { name: "我已了解" }).click();
@@ -363,12 +363,105 @@ async function checkSearch(page) {
   await hit.waitFor({ timeout: 15_000 });
   const text = await hit.innerText();
   if (!text.includes("ui-42")) throw new Error(`search hit mismatch: ${text}`);
+  const hitConversation = await hit.getAttribute("data-conversation-id");
   await hit.click();
   await page.locator(".composer-input").waitFor({ timeout: 10_000 });
-  if ((await page.locator(".conversation-row.on").count()) !== 1) {
-    throw new Error("search click did not select the conversation");
-  }
   if ((await input.inputValue()) !== "") throw new Error("search query was not cleared after selecting a hit");
+  const activeConversation = await page
+    .locator(".conversation-row.on")
+    .first()
+    .getAttribute("data-conversation-id");
+  if (activeConversation !== hitConversation) {
+    throw new Error(`search click selected ${activeConversation}, expected ${hitConversation}`);
+  }
+  await checkSearchNotices(page);
+}
+
+/** Both failure shapes must be visible: an incomplete scan is not "no match", and a failed search is not
+  * "no match" either. The responses are injected so the UI branch is exercised without corrupting the store.
+  */
+async function checkSearchNotices(page) {
+  stage = "search-notices";
+  const input = page.locator(".search-input");
+  const pattern = "**/api/search*";
+  const panelText = () => page.locator(".search-empty").first().innerText();
+  const truncated = (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ results: [], scanned: 5000, truncated: true })
+    });
+  await page.route(pattern, truncated);
+  try {
+    await input.fill("nothing-matches");
+    await page.waitForFunction(
+      () => (document.querySelector(".search-empty")?.textContent || "").includes("未找到"),
+      null,
+      { timeout: 15_000 }
+    );
+    const text = await panelText();
+    if (!text.includes("5000")) throw new Error(`truncated empty result omitted the scan count: ${text}`);
+    if (text.includes("没有匹配")) throw new Error(`truncated scan presented as no match: ${text}`);
+  } finally {
+    await page.unroute(pattern, truncated);
+  }
+  const failed = (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "store-failed:busy" })
+    });
+  await page.route(pattern, failed);
+  try {
+    await input.fill("failing-query");
+    await page.waitForFunction(
+      () => (document.querySelector(".search-empty")?.textContent || "").includes("搜索失败"),
+      null,
+      { timeout: 15_000 }
+    );
+    const text = await panelText();
+    if (text.includes("没有匹配")) throw new Error(`failed search presented as no match: ${text}`);
+  } finally {
+    await page.unroute(pattern, failed);
+    await input.fill("");
+  }
+}
+
+async function checkKeyboardNavigation(page) {
+  stage = "keyboard-navigation";
+  const contacts = page.locator('button[aria-label="联系人"]').first();
+  await contacts.focus();
+  await page.keyboard.press("Enter");
+  await page.locator(".contacts-panel").waitFor({ timeout: 10_000 });
+  let addFriend = false;
+  for (let index = 0; index < 40 && !addFriend; index += 1) {
+    await page.keyboard.press("Tab");
+    const label = await page.evaluate(() => (document.activeElement?.getAttribute("aria-label") || document.activeElement?.innerText || "").trim());
+    if (label.includes("添加联系人")) addFriend = true;
+  }
+  if (!addFriend) throw new Error("keyboard could not reach 添加联系人");
+  await page.keyboard.press("Enter");
+  await page.locator(".modal").waitFor({ timeout: 5_000 });
+  await page.keyboard.press("Escape");
+  await page.locator(".modal").waitFor({ state: "detached", timeout: 5_000 });
+  if (await page.evaluate(() => document.activeElement?.getAttribute("aria-label")) !== "添加联系人") {
+    throw new Error("keyboard journey lost focus after closing the dialog");
+  }
+  let verify = false;
+  for (let index = 0; index < 40 && !verify; index += 1) {
+    await page.keyboard.press("Tab");
+    const label = await page.evaluate(() => (document.activeElement?.innerText || "").trim());
+    if (label.includes("我已当面核对")) verify = true;
+  }
+  if (!verify) throw new Error("keyboard could not reach 我已当面核对");
+  await page.keyboard.press("Enter");
+  // The contacts panel shows the verified state as a status chip; the chat ledger's `.safety-state`
+  // is a different view.
+  await page.locator(".status-chip.verified").first().waitFor({ timeout: 10_000 });
+  // Return to the conversation so later steps see the composer again.
+  await page.locator('button[aria-label="通信"]').first().focus();
+  await page.keyboard.press("Enter");
+  await openChat(page);
 }
 
 async function checkQueueFullFeedback(page) {
@@ -497,9 +590,10 @@ async function openChat(page) {
 
 async function verifySafety(page) {
   stage = "verify-safety";
+  if (await page.locator(".safety-state.verified").count() > 0) return;
   const safety = page.locator(".ledger button").filter({ hasText: "我已当面核对" }).first();
   await safety.click();
-  await page.locator(".safety-state.verified").waitFor();
+  await page.waitForFunction(() => document.querySelector(".safety-state.verified") !== null, null, { timeout: 20_000 });
 }
 
 async function checkSafetyCodes(a, b) {
@@ -606,7 +700,9 @@ async function main() {
     await Promise.all([openChat(a), openChat(b)]);
     await checkSafetyCodes(a, b);
     await assertSafetyClosed(a, b);
-    await Promise.all([verifySafety(a), verifySafety(b)]);
+    // A verifies through the keyboard journey; B uses the mouse path so both entry points stay covered.
+    await checkKeyboardNavigation(a);
+    await verifySafety(b);
     await Promise.all([
       a.locator('button[aria-label="发送"]').isEnabled(),
       b.locator('button[aria-label="发送"]').isEnabled()
@@ -641,6 +737,7 @@ async function main() {
       statusBanners: true,
       modalKeyboard: true,
       disclosure: true,
+      keyboardNavigation: true,
       keyboardJourney: true,
       search: true,
       queueFullFeedback: true,
@@ -653,6 +750,17 @@ async function main() {
     if (pageB) {
       await pageB.screenshot({ path: "/tmp/yochat-ui-b.png" }).catch(() => {});
       await pageB.content().then((html) => fs.writeFileSync("/tmp/yochat-ui-b.html", html)).catch(() => {});
+      await pageB
+        .evaluate(async () => {
+          const state = await (await fetch("/api/state")).json();
+          return {
+            readOnly: state.readOnly,
+            contacts: state.contacts.map((c) => ({ safetyVerified: c.safetyVerified, blocked: c.blocked })),
+            sessions: state.sessions.length
+          };
+        })
+        .then((value) => fs.writeFileSync("/tmp/yochat-ui-b-state.json", JSON.stringify(value, null, 2)))
+        .catch((error) => fs.writeFileSync("/tmp/yochat-ui-b-state.json", String(error)));
     }
   } finally {
     if (browser) await browser.close().catch(() => {});
@@ -710,6 +818,7 @@ module.exports = {
   closeModal,
   openChat,
   checkDisclosure,
+  checkKeyboardNavigation,
   checkKeyboardJourney,
   checkSearch,
   checkSafetyCodes,

@@ -52,9 +52,9 @@
 
 | 需求 | 旧测试 | 新测试 | 结论 |
 | --- | --- | --- | --- |
-| `G3JQAH0SXEXVDATA` 通知内容边界 | 旧 `specs/blocking*.e2e.ts` 不覆盖通知；旧仓库无等价断言 | `shell/electron-smoke.js` 的 notifications 阶段：通知携带 `conversationId`；默认正文固定为「有一条新消息」（不含消息文本）；打开正文开关后含正文；逐会话静音后不再产生通知；点击通知把界面切回对应会话。负例：删掉主进程 click 转发后该阶段超时失败（已实测） | 等价，覆盖三条采纳子项；「定位到具体消息」按设计不做 |
+| `G3JQAH0SXEXVDATA` 通知内容边界 | 旧 `specs/blocking*.e2e.ts` 不覆盖通知；旧仓库无等价断言 | `shell/electron-smoke.js` 的 notifications 阶段：通知携带 `conversationId`；默认正文固定为「有一条新消息」（不含消息文本）；打开正文开关后含正文；逐会话静音后不再产生通知；点击后当前会话 id 等于通知携带的 `conversationId`。负例：删掉主进程 click 转发后该阶段超时失败（已实测） | 等价，覆盖三条采纳子项；「定位到具体消息」按设计不做。gate 走探针分支（`YOCHAT_NOTIFY_CLICK`），未执行真实系统横幅点击；标题（联系人显示名）由渲染端提供，gate 不断言 |
 | `377PNHQWJ8PGCN80` 连接方式可见 | 旧 UI spec（只读快照，无正文） | `shell/ui-smoke.js` 的 keyboard-journey 阶段断言 `.head-route[data-route=relay]` 文本含「经中继」；聊天页与只读页共用 Shell | 等价 |
-| `3AEMNVEGME49ZT2R` 可达性基线 | 旧 WebdriverIO 键盘用例（快照缺正文） | `ui-smoke`：modal 焦点陷阱（既有）+ 新增 keyboard journey（键盘切到联系人、Tab 到「打开聊天」、Enter 回到会话、键盘发送）；`contrast-smoke` 保持绿；外观跟随系统由 `color-scheme` + 两套主题对比度检查覆盖 | 部分：渲染级对比度/焦点 3:1 测量按设计不做 |
+| `3AEMNVEGME49ZT2R` 可达性基线 | 旧 WebdriverIO 键盘用例（快照缺正文） | `ui-smoke`：modal 焦点陷阱（既有）+ keyboard-navigation（键盘打开/关闭加好友对话框并恢复焦点、键盘核对安全码、键盘回到会话）+ keyboard journey（键盘切到联系人、Tab 到「打开聊天」、Enter 回到会话、键盘发送）；`contrast-smoke` 保持绿；外观跟随系统由 `color-scheme` + 两套主题对比度检查覆盖 | 部分：渲染级对比度/焦点 3:1 测量按设计不做；「打开联系人详情」没有独立面板，未单独覆盖 |
 | `Q0MQBNAVS1TB1PBW` 使用前告知 | 无 | `ui-smoke` 的 disclosure 阶段：添加联系人对话框含 ≥5 条告知（中继可见项、公网地址、中转地址、拉黑可推断与在线状态、无公开目录），点「我已了解」后收起；版本存本地偏好 | 等价；首次添加与邀请生成同处一个对话框，两处都可见 |
 | `386RMXBPWJYEXT9P` 在线状态告知 | 无 | 同上：告知文案含「不提供在线状态、没有隐藏开关、单靠用户公钥不能查询在线状态」 | 等价（只告知，不做 presence） |
 | `REQ_20261103_NS77FQDYNCMNF71P` 迟到可察觉 | 旧 `history_arrival.rs`（只读快照） | S3-A 的 `InboundSpec.lateArrival` + UI 横幅按消息 id 去重；`StatusBanners` 只保留最近一条 | 部分：定位查看/锚点/重启后仍在按设计不做 |
@@ -63,6 +63,6 @@
 
 | 需求 | 旧测试 | 新测试 | 结论 |
 | --- | --- | --- | --- |
-| `8F32S19RPRC25471` 全文搜索本地历史 | `e2e/specs/contact-removal.e2e.ts`（`chat_search` 命中标记）；`e2e/specs/diagnostics.e2e.ts`（按正文检索诊断）；旧实现是明文索引 | `store/test/.../MessageSearchSpec`：大小写不敏感、按新到旧、结果/扫描上限、参数校验、删除历史后搜不到、查询计划按 rowid；`ui-smoke` 的 search 阶段：输入后出现命中、点击切到会话并清空 | 部分：搜索与删除本机历史的命中语义等价；旧「另一台设备搜不到」是跨设备删除传播（`K54NXXBZW1R6415F` 延后），不在本波 |
-| `3TK81N30WS2S6JWB` 大量历史仍可用 | `e2e/specs/scale.e2e.ts`（10 万条；阈值 500 ms 首屏 / 100 ms 帧 / 1 s 搜索，用户 2026-09-24 批准，UI 级测量） | `./mill store.searchbench`：100,000 条 × 128 字节；首屏 p95 ≤ 250 ms、最坏情况搜索 p95 ≤ 1,500 ms；2026-11-27 实测 10 ms / 50 ms | 不等价、按裁决 5 重新定义：旧阈值是 UI 绘制级（DOM/帧/native 回调），本门是 store 级；两者口径不同，不比较、不继承旧数字。滚动帧与内存增长不在本波，登记为已知缺口 |
+| `8F32S19RPRC25471` 全文搜索本地历史 | `e2e/specs/contact-removal.e2e.ts`（`chat_search` 命中标记）；`e2e/specs/diagnostics.e2e.ts`（按正文检索诊断）；旧实现是明文索引 | `store/test/.../MessageSearchSpec`（6 条：大小写与新到旧、结果/扫描上限与截断语义、参数校验、删除历史后搜不到、两条生产查询的 EXPLAIN 按 rowid 且无 SCAN/TEMP B-TREE）；`ApiJsonSpec.searchable`（会话存在、可见游标、GBNV 依赖）；`ui-smoke` 的 search 阶段（命中、点击后当前会话 id 等于命中的 conversationId、清空查询）与 search-notices 阶段（截断不显示「没有匹配」、失败显示「搜索失败」） | 部分：搜索与删除本机历史的命中语义等价；旧「另一台设备搜不到」是跨设备删除传播（`K54NXXBZW1R6415F` 延后），不在本波。单联系人夹具下「点击切到对应会话」只能证明当前会话 id 与命中 id 相等，不能区分多会话目标 |
+| `3TK81N30WS2S6JWB` 大量历史仍可用 | `e2e/specs/scale.e2e.ts`（10 万条；阈值 500 ms 首屏 / 100 ms 帧 / 1 s 搜索，用户 2026-09-24 批准，UI 级测量） | `./mill store.searchbench`：100,000 条 × 128 字节；首屏 p95 ≤ 250 ms、最坏情况搜索 p95 ≤ 1,500 ms；2026-11-27 实测 `first_p95_ms=11`、`search_p95_ms=50` | 不等价、按裁决 5 重新定义：旧阈值是 UI 绘制级（DOM/帧/native 回调），本门是 store 级；两者口径不同，不比较、不继承旧数字。滚动帧与内存增长不在本波（ADR-0013 已知约束 5） |
 

@@ -211,9 +211,18 @@ final case class CutoverEvidence(
   firstNewSessionDataReceived: Boolean
 )
 
-/** Result of a bounded local search. `scanned` counts decrypted rows, so a caller can tell a full match from a truncated one instead of
-  * reporting "no results" for an unfinished scan.
+/** Result of a bounded local search. `scanned` counts decrypted rows; `truncated` means the result set is incomplete (the hit limit or the scan
+  * limit stopped it while rows remained), so a caller cannot report "no results" for an unfinished scan.
   */
 final case class SearchOutcome(hits: List[MessageRecord], scanned: Int, truncated: Boolean):
 
   override def toString: String = s"SearchOutcome(hits=${hits.size}, scanned=$scanned, truncated=$truncated)"
+
+/** The single source of truth for search bounds (ADR-0013). Server and gates read these constants so the declared limits cannot drift from the
+  * code that enforces them.
+  */
+object SearchLimits:
+
+  val Scan: Int      = 5_000
+  val Results: Int   = 50
+  val MaxNeedle: Int = 200

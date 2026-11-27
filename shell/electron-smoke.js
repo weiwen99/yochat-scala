@@ -205,6 +205,13 @@ async function main() {
       throw new Error(`default notification leaked the body: ${firstNotice.body}`);
     }
     await pageA.locator(".composer-input").waitFor({ timeout: 15_000 });
+    const selectedAfterClick = await pageA
+      .locator(".conversation-row.on")
+      .first()
+      .getAttribute("data-conversation-id");
+    if (selectedAfterClick !== conversationA) {
+      throw new Error(`notification click selected ${selectedAfterClick}, expected ${conversationA}`);
+    }
     await pageA.locator(".notify-body-toggle").check();
     await pageA.locator('button[aria-label="联系人"]').first().click();
     await sendNotice("notify-with-body");

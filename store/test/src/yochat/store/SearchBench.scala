@@ -21,7 +21,7 @@ object SearchBench:
   private val FirstScreenLimit     = 50
   private val FirstScreenRuns      = 20
   private val SearchRuns           = 10
-  private val SearchScanLimit      = 5_000
+  private val SearchScanLimit      = yochat.store.SearchLimits.Scan
   private val FirstScreenP95Ms     = 250L
   private val SearchP95Ms          = 1_500L
 
@@ -42,7 +42,7 @@ object SearchBench:
           firstSamples  <- samples(FirstScreenRuns)(store.listRecentMessages(conv, FirstScreenLimit).map(_.toOption))
           searchSamples <- samples(SearchRuns)(
                              store
-                               .searchMessages("needle-once", 20, SearchScanLimit)
+                               .searchMessages("needle-once", 20)
                                .map {
                                  case Right(value) if value.hits.exists(_.seq == 1L) => Some(value)
                                  case _                                              => None
