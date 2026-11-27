@@ -77,3 +77,21 @@ Standards 3 P1 + 5 备注，Spec 5 P1 + 4 备注。
 
 第 2 轮 P1 8 条全部 fix；P2 6 条 fix。第 3 轮只复审 diff 与关闭项；若 P1 仍不降，按
 DESIGN-DISCIPLINE R9 停轮并交人工。
+
+## 第 3 轮
+
+对象：`af77189` 之后的修订；范围 `git diff af77189..HEAD`。Standards 3 P1 + 3 P2，Spec 轴 P1=0。
+
+| # | 级别 | 发现 | 处置 | 关闭证据 |
+| --- | --- | --- | --- | --- |
+| S3-1 | P1 | FanoutAck 行的判据编造（`authorizedCompanion` 本来就按联系人匹配），且「行数增量 0」恒真（`markAcked` 只 UPDATE） | fix | 行内改为「不增长行数但能翻转回执状态」；断言改为「`state`/`updated_at` 不变」，并写明只数行数恒真、不能用 |
+| S3-2 | P1 | A2→A1 帧清单多报两类：DeviceList 需 A1 用户私钥、FanoutAck 方向相反 | fix | 改为 sync-request / sync-status / ack 三类，并给出为什么另两类不在该方向 |
+| S3-3 | P1 | 通知三条断言挂在 `server.e2e` 上，而它看不见窗口；点击跳转还缺 IPC 改动 | fix | 断言移到 `./desktop-gate.sh node shell/electron-smoke.js`；补 `notify` 带 `conversationId` 与 main→renderer 转发的改动；写明 `ui-smoke` 走 Chrome 不能承担 |
+| S3-4 | P2 | 部分采纳计数应为 8（G3JQ 改判后），四处仍写 7，S3-B 标题仍写 3 | fix | design/spec/meta 全部改 8，S3-B 标题改 4 |
+| S3-5 | P2 | Wire 列举漏 `RekeyConfirmAck` | fix | 改为五类并逐一列出 |
+| S3-6 | P2 | contacts 墓碑写成「只保留 user_pub+state+version」，当前表没有 state 列 | fix | 改为「保留行 + 密封载荷只写 state=deleted + version 递增」，并写明这是 codec 变更、并入存储 ADR 与 store.test |
+| S3-7 | P2 | findings 第 2 轮 P2-9 声称已改成条件句，实际未改 | fix | 已知约束 1 实际改为条件句，并加「消息墓碑 vs 联系人墓碑」的域限定 |
+| S3-8 | P2 | 设计正文与目标表不同步（NS77、通知） | fix | 两处正文补齐不重复提醒与点击跳转 |
+| S3-9 | P2 | 裁决 3 按 (a) 叙述，若选 (b) 有句子需作废 | fix | 裁决 3 补「若选 (b)，已知约束 3 与 A2 历史那句作废」 |
+
+第 3 轮 P1 3 条全部 fix；第 4 轮只复审本轮 diff。

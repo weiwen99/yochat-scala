@@ -25,7 +25,7 @@
 
 | 维度 | 需求给的 | 本计划产出 | 倍率 |
 | --- | --- | --- | --- |
-| 需求条数 | 35 条候选 | 采纳 15（其中 7 条部分采纳）、阻塞待 ADR 2、延后 18 | 0.4× |
+| 需求条数 | 35 条候选 | 采纳 15（其中 8 条部分采纳）、阻塞待 ADR 2、延后 18 | 0.4× |
 | 表数 | 0（现 12） | +1（`blocked_peers`） | 需解释 |
 | 组件数 | 0 | +1（拉黑名单面板） | 需解释 |
 | 配置项 | 0 | +2（通知正文开关、隐私告知已读版本） | 需解释 |
@@ -76,7 +76,7 @@ S1/S2 之后缺两类东西：
 | `9MKG1QMBXQAG6C12` 无法提供的消息有可验证答复 | **部分**：解除拉黑窗口外那条答复 |
 | `0P17VCWKG2FZ26SZ` 别名与备注私有 | **部分**，逐句：①「别名为主显示」已满足（`displayName = alias orElse peerChannelAccount orElse 短公钥`）；①后半句「仍可看到对方自设的用户别名」不成立——v1 没有用户别名，它随 `Z1P2TGCMD0K4W1XP` 延后；②「按别名/备注/用户别名任一检索」本波做前两项（联系人列表在内存，过滤即可），「用户别名」同上延后；③「两者不出现在发给对方的数据」已满足（密封载荷）。备注写入路径本波补 |
 
-### S3-B 发布级可见性（6 条，其中 3 条部分）
+### S3-B 发布级可见性（6 条，其中 4 条部分）
 
 | 需求 | 采纳范围 |
 | --- | --- |
@@ -110,14 +110,18 @@ S1/S2 之后缺两类东西：
 
 **已知约束**（范围外的保证，不是待补的洞）：
 
-1. **没有墓碑**：S2b 的扇出会把删过的消息再带回。S3 不做消息删除，所以「删除消息」在 S3 之后
-   仍不可用。出处：`requirements.md` 的「消息默认永久保存 vs 用户删除」段。
+1. **没有消息墓碑**：S3 不做消息删除，所以「删除消息」在 S3 之后仍不可用。若将来做，扇出与
+   重传需要消息墓碑才不会把删过的消息再带回。这里说的是**消息**墓碑；本波为联系人删除引入的
+   contacts 墓碑是另一件事（见「关系变更的同步」）。出处：`requirements.md` 的「消息默认永久
+   保存 vs 用户删除」段。
 2. **拉黑窗口外的消息取不回**：对方重试预算耗尽（3 次 / 约 15 秒；wire 失败约 2 秒 / 在途 ≤32 条）
    后进入 Failed，不再重发；`requestResend` 不接受 Failed。与裁决 2 绑定。
 3. **关系变更只在主设备发起**：`device_sync` 的**快照数据**是 A1→A2 单向；A2→A1 已经存在
-   sync-status、ack、DeviceList、FanoutAck 四类帧（`CompanionService`、`CompanionSyncService`、
-   `DeviceSyncScheduler.acceptStatus/acceptAck`），缺的是「关系变更数据的上行携带与 A1 侧应用」，
-   不是通道本身。S3-A 先在 A2 禁用这些操作并提示在主力设备操作；是否补上行是裁决 3。
+   sync-request、sync-status、ack 三类帧（`CompanionService` 的 s2-sync-request、
+   `CompanionSyncService` 的 sync-status 与 ack、`DeviceSyncScheduler.acceptStatus/acceptAck`）。
+   `DeviceList` 不可能由 A2 发出：构建它需要 A1 才持有的用户私钥（`PeerDeviceListService.build`
+   返回 `primary-user-key`）；`FanoutAck` 的方向是对端 companion → 本机 A1，不是 A2 → A1。
+   缺的是「关系变更数据的上行携带与 A1 侧应用」，不是通道本身。S3-A 先在 A2 禁用这些操作并提示在主力设备操作；是否补上行是裁决 3。
 4. v1 的 16 条行为契约不变；S3 只新增契约。
 5. 不改中继语义；入站丢弃发生在应用层。
 6. 自动更新、安装包矩阵、Windows、签名公证不在 S3。
@@ -147,20 +151,22 @@ S1/S2 之后缺两类东西：
 
 | 入口 | 代码位置 | 落盘点 | 拉黑判定 |
 | --- | --- | --- | --- |
-| Wire（内含 Data / DataAck / Gap / RekeyConfirm） | `AppRuntime.translateInbound` → `AppStep` | `messages`、重传与缺口状态 | 帧头无 `user_pub`，须先 `sessions.get(sessionId)` 取 `peer_user_pub` 再查 `blocked_peers` |
+| Wire（内含 Data / RekeyConfirm / RekeyConfirmAck / DataAck / Gap 五类） | `AppRuntime.translateInbound` → `AppStep` | `messages`、重传与缺口状态 | 帧头无 `user_pub`，须先 `sessions.get(sessionId)` 取 `peer_user_pub` 再查 `blocked_peers` |
 | Reply | `AppRuntime` 的 `replyEvent` | `contacts` / 待确认项 | 应答对一次性公钥密封，**必须先开箱**才知道 user_pub；开箱后立即丢弃，不落盘、不生成待确认 |
 | RekeyRequest / RekeyAccept | `AppRuntime` 独立分支 | 会话棘轮 | 按会话的 `peer_user_pub` 判定，命中即丢弃 |
 | DeviceList | `translateInbound` 返回 `None` → `CompanionSyncService` | `peer_device_lists` | 命中即丢弃，不更新设备列表 |
 | Fanout | `CompanionFanoutService.receive` | **`companion_messages`（正文）** | 命中即丢弃，否则「不增长本机存储」直接失败 |
-| FanoutAck | `DeviceSyncScheduler.listenRequests` → `FanoutService.handleAck` | **`delivery_receipts`** | 发送方是**对端 companion 设备**；`handleAck` 只校验 `authorizedCompanion`、不看联系人，因此必须加判定，否则被拉黑者可无界写行 |
+| FanoutAck | `DeviceSyncScheduler.listenRequests` → `FanoutService.handleAck` | `delivery_receipts`（**纯 UPDATE，无 INSERT**） | 发送方是**对端 companion 设备**。`authorizedCompanion` 已按联系人列表匹配设备，但**不排除拉黑**；`handleAck` 只做 `markAcked`，因此它不会增长行数，却能把本机已发出的回执翻成「已确认」。判定仍要加，断言写成「该行的 `state`/`updated_at` 不变」 |
 
 表的范围是**对端可发起的帧**。第 7 种 `DeviceSync` 只由本人设备发出（`CompanionSyncService.receive`
 落 `contacts/conversations/messages` 与 `device_sync` 检查点），不按联系人判定，**不加 guard**；
 它仍需通过自有设备鉴权，这是既有行为。
 
 实现要求：判定收敛到一个 store 层 guard（`isBlocked(userPub)`），上表六处入口都调它，不许各写一份。
-`## 验收` 给一条「被拉黑者持续发送时，这六类对端帧的落盘行数增量为 0」的可证伪断言
-（`messages`、`companion_messages`、`peer_device_lists`、`delivery_receipts`、待确认项、会话棘轮）。
+`## 验收` 给一条可证伪断言：被拉黑者持续发送时，`messages`、`companion_messages`、
+`peer_device_lists` 的行数增量为 0，待确认项不新增，会话棘轮不推进，`delivery_receipts` 的
+`state`/`updated_at` 不变。删掉 guard 后这条必须变红——只数行数的写法对 `delivery_receipts`
+恒真，不能用。
 
 **出站拦截**：任何以被拉黑公钥为收端的帧一律不发。现有出站 kind 八种：Data、Reply、
 RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发送前统一查
@@ -188,11 +194,15 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
 接收端 `applyContact` 只 upsert、**没有删除分支**。所以：
 
 - 联系人记录在 `records` 这层 JSON 里（`DeviceSyncProtocol` 把整个 `records` 密封），记录本身
-  没有版本字段，因此加 `state` 字段是**密文内的向后兼容扩展**：旧接收端忽略未知键，外层信封
-  `version == 1` 不变（改外层版本会让 A2 的 `open` 直接失败）。
+  没有版本字段（行有 `contacts.version` 列，是行级乐观锁，两者不同），因此加 `state` 是**密文内
+  的扩展**：旧接收端忽略未知键，外层信封 `version == 1` 不变（改外层版本会让 A2 的 `open` 直接
+  失败）。本地 `ContactData` 自身是严格版本化编解码，加字段要走 `ContactVersion` 提升。
 - `deleted` 需要墓碑：现有发送端快照来自 `store.contacts`，删除即删行，快照里不会出现该记录。
-  本波把删除实现为 contacts 墓碑行（只保留 `user_pub` + `state` + `version`），墓碑随同步下发；
-  接收端 `applyContact` 目前只 upsert 且硬编码 `note = None`，要重写为保护性合并：blocked 不被
+  本波把删除实现为 contacts 墓碑：**保留行**，密封载荷只写 `state=deleted`（清空别名、备注、
+  渠道身份），`contacts.version` 递增。这需要 `ContactData` 增加 `state`、`ContactVersion` 提升
+  并兼容读旧行——是一次存储 codec 变更，必须并入存储 ADR 与 `store.test` 的迁移测试，不能只写
+  「加一列」（当前 `contacts` 表没有 `state` 列，`sealed/created_at` 都是 NOT NULL）。
+- 接收端 `applyContact` 目前只 upsert 且硬编码 `note = None`，要重写为保护性合并：blocked 不被
   active 覆盖、deleted 只删关系不删历史、`note` 保留。
 - 删除历史仍只在本机执行：本机删除即删 `messages`；其他设备保留各自历史（`K54NXXBZW1R6415F` 延后），
   且 A2 不做关系操作（已知约束 3），所以 A2 上的历史只能等 A2 恢复能力后自查。
@@ -217,9 +227,12 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
 
 ### S3-B 发布级可见性
 
-- **通知**（`G3JQAH0SXEXVDATA`）：逐会话关闭通知；正文开关默认关。挂在现有 `shell/main.js` 的
-  通知载荷（当前只发联系人标签与「有一条新消息」）。E2E 断言：正文关闭时载荷不含正文；逐会话
-  关闭时该会话不产生通知。
+- **通知**（`G3JQAH0SXEXVDATA`）：逐会话关闭；正文开关默认关；点击通知跳到对应会话。
+  改动：`notify` 的 IPC 载荷增加 `conversationId`（只带不透明标识，不带正文与联系人名），
+  `shell/main.js` 的 `notification.on("click")` 除 `restore/show/focus` 外经新 IPC 通知渲染端选中
+  会话。三条都是渲染层/主进程行为，`server.e2e` 看不见窗口，断言放在 Electron 级 gate
+  （`./desktop-gate.sh node shell/electron-smoke.js`，Playwright `_electron` 可在主进程注入并断言）。
+  `ui-smoke` 走 Chrome、没有 Electron `Notification`，不能承担这条。
 - **连接方式**（`377PNHQWJ8PGCN80`）：只显示经中继与中继在线状态，复用现有状态。
 - **可达性**（`3AEMNVEGME49ZT2R`，部分）：键盘走完主流程、切换会话、打开联系人详情；焦点顺序
   可预测；跟随系统外观。**不覆盖**：渲染级对比度与焦点 3:1 测量（现有 `contrast-smoke` 是 token
@@ -229,8 +242,8 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
   中转不知道设备属于谁且看不到用户公钥，以及本机中转的网络地址；「拉黑可被推断、我们不提供在线状态、
   没有隐藏开关、用户公钥本身不能用来查询在线状态」（`386RMXBPWJYEXT9P` 的告知部分并入此处）。版本化重提示是显式追加项，
   约 80 行 + 1 个本地配置，不需要可去掉。
-- **迟到可察觉**（`REQ_20261103_NS77FQDYNCMNF71P`，部分）：补一个 notice code 与 E2E 断言，
-  不改排序逻辑。
+- **迟到可察觉**（`REQ_20261103_NS77FQDYNCMNF71P`，部分）：出现可见提示，且同一原件不重复提醒；
+  不改排序逻辑。「定位并逐条查看 / 锚点与草稿 / 重启后仍在」不做（已知约束 8）。
 
 ### S3-C 历史可用性（阻塞）
 
@@ -276,12 +289,13 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
 
 ## 待裁决（owner）
 
-1. **范围**：采纳 15（含 7 条部分）/ 阻塞 2 / 延后 18 是否接受。最容易被认为必须有而被延后的
+1. **范围**：采纳 15（含 8 条部分）/ 阻塞 2 / 延后 18 是否接受。最容易被认为必须有而被延后的
    是「恢复短语」与「消息删除」。
 2. **解除拉黑的窗口外行为**：(a) 如实告知取不回（最小改动，但 `J22VY0VTZVRBY1P6` 的验收要降级）；
    (b) 把 `XBRY5Q81Z4ZPP6ER` 的最小批准路径拉进 S3-A（+800–1,200 行，含新协议状态）。
 3. **A2 上能否发起关系变更**：(a) 先禁用并提示在主力设备操作（0 成本，可用性差）；
-   (b) 给 `device_sync` 补反向通道（+1,200–1,800 行，含格式版本与签名）。
+   (b) 补关系变更的上行承载（+1,200–1,800 行：复用现有 sync-request/ack 骨架，加记录类型、
+   签名与 A1 侧应用）。设计按 (a) 写；若选 (b)，已知约束 3 与「A2 历史待恢复后自查」那句作废。
 4. **搜索的存储取舍**：A 有界解密扫描 / B 明文索引 / C 不做搜索。需 ADR。
 5. **十万条指标**是否采纳；采纳则要定义数据形状与阈值（ADR）。
 6. **行预算口径**：30,000 行上限按哪个口径计（是否含 `spike/` 与 `shell/*.js`）；维持还是提高。
@@ -302,8 +316,9 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
   - `./mill store.test`：`blocked_peers` 迁移、回滚、高水位（若采纳）测试。
   - 被拉黑者持续发送的负载测试：丢弃路径无排队放大。
 - **S3-B**
-  - `./mill server.e2e`：通知载荷不含正文（默认关）；逐会话关闭生效；点击通知打开对应会话
-    （深链只带会话标识，不带正文与联系人名）。
+  - `./desktop-gate.sh node shell/electron-smoke.js` 新增断言：通知载荷不含正文（默认关）；
+    逐会话关闭后该会话不产生通知；点击通知后渲染端选中的会话等于通知携带的 `conversationId`。
+    删掉主进程的 click 转发后这条必须变红。
   - `node shell/contrast-smoke.js` 保持绿；键盘旅程的 E2E 用
     `./desktop-gate.sh node shell/ui-smoke.js` 的同一套驱动。
   - 首次添加联系人与邀请生成处的告知可见。
