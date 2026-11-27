@@ -2,16 +2,19 @@
 # desktop-gate.sh — run an Electron desktop gate inside the logged-in GUI session.
 #
 # Electron's safeStorage reaches the login keychain only from the Aqua session.
-# Over ssh, `launchctl managername` reports "Background" and safeStorage reports
-# encryption unavailable: keychain gates fail there for a session-context reason,
-# not because the screen is locked. This runner joins the Aqua session when it
-# has to, keeps the display awake, bounds the run, and records the environment in
-# a receipt beside the gate's own receipt.
+# Over ssh, `launchctl managername` reports "Background" and creating a keychain
+# item fails with errSecInteractionNotAllowed: keychain gates fail there for a
+# session-context reason, not because the screen is locked. This runner joins the
+# Aqua session when it has to, keeps the display awake, bounds the run, and
+# records the environment in a receipt beside the gate's own receipt.
 #
 # It decides *how* to run a gate. check.sh still decides *which* gates run.
 #
 # Usage: ./desktop-gate.sh <command> [args...]
-# Env:   YOCHAT_GATE_TIMEOUT  seconds before the gate is judged INCOMPLETE (default 1800)
+# Env:
+#   YOCHAT_GATE_TIMEOUT  seconds before the gate is judged INCOMPLETE (default 1800)
+#   YOCHAT_GATE_INJECT   auto (default) | asuser | direct
+#   YOCHAT_*             forwarded to the gate unchanged (e.g. YOCHAT_SERVER_JAR)
 
 set -euo pipefail
 
@@ -70,23 +73,6 @@ lock_state() {
   esac
 }
 
-manager="$(launchctl managername 2>/dev/null || true)"
-if [[ "$manager" == "Aqua" ]]; then
-  mode="direct"
-elif sudo -n true 2>/dev/null; then
-  mode="asuser"
-else
-  mode="degraded"
-  echo "desktop-gate: DEGRADED — outside Aqua and passwordless sudo is unavailable; keychain gates will report unavailable (exit 2)" >&2
-fi
-
-if [[ "$mode" == "asuser" ]]; then
-  cmd=(sudo -n launchctl asuser "$uid" sudo -n -u "$user" \
-       env "HOME=$HOME" "PATH=$PATH" "USER=$user" caffeinate -dims "$@")
-else
-  cmd=(caffeinate -dims "$@")
-fi
-
 epoch_ms() {
   if command -v perl >/dev/null 2>&1; then
     perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'
@@ -94,6 +80,54 @@ epoch_ms() {
     printf '%s000\n' "$(date +%s)"
   fi
 }
+
+manager="$(launchctl managername 2>/dev/null || true)"
+inject="${YOCHAT_GATE_INJECT:-auto}"
+case "$inject" in
+  auto)
+    if [[ "$manager" == "Aqua" ]]; then
+      mode="direct"
+    elif sudo -n true 2>/dev/null; then
+      mode="asuser"
+    else
+      mode="degraded"
+      echo "desktop-gate: DEGRADED — outside Aqua and passwordless sudo is unavailable; keychain gates will refuse to pass" >&2
+    fi
+    ;;
+  asuser)
+    if ! sudo -n true 2>/dev/null; then
+      echo "desktop-gate: YOCHAT_GATE_INJECT=asuser needs passwordless sudo" >&2
+      exit 2
+    fi
+    mode="asuser"
+    ;;
+  direct)
+    mode="direct"
+    ;;
+  *)
+    echo "desktop-gate: YOCHAT_GATE_INJECT must be auto, asuser or direct" >&2
+    exit 2
+    ;;
+esac
+
+# Gates read YOCHAT_* configuration (jar paths, relay endpoint, cross-host peers,
+# rate caps). Session injection must not silently replace them with defaults, so
+# forward every YOCHAT_* variable except this runner's own controls.
+forward_env=()
+forward_names=()
+while IFS='=' read -r name value; do
+  case "$name" in
+    YOCHAT_GATE_INJECT|YOCHAT_GATE_TIMEOUT) ;;
+    YOCHAT_*) forward_env+=("$name=$value"); forward_names+=("$name") ;;
+  esac
+done < <(env)
+
+if [[ "$mode" == "asuser" ]]; then
+  cmd=(sudo -n launchctl asuser "$uid" sudo -n -u "$user" \
+       env "HOME=$HOME" "PATH=$PATH" "USER=$user" ${forward_env[@]+"${forward_env[@]}"} caffeinate -dims "$@")
+else
+  cmd=(caffeinate -dims "$@")
+fi
 
 timeout_bin=""
 if command -v timeout >/dev/null 2>&1; then
@@ -106,26 +140,50 @@ start_display="$(display_state)"
 start_lock="$(lock_state)"
 mkdir -p tmp/checks
 
+marker="${TMPDIR:-/tmp}/yochat-gate-timeout-$$"
+rm -f "$marker"
+log="tmp/checks/desktop-gate-${start_epoch}.log"
+
 status=0
 set +e
 if [[ -n "$timeout_bin" ]]; then
-  "$timeout_bin" --signal=TERM --kill-after=30 "$timeout_s" "${cmd[@]}"
-  status=$?
+  # GNU timeout spends up to another 30s escalating TERM to KILL.
+  "$timeout_bin" --signal=TERM --kill-after=30 "$timeout_s" "${cmd[@]}" 2>&1 | tee "$log"
+  status=${PIPESTATUS[0]}
 else
+  # Stock macOS has no timeout(1). The watchdog marks the run before signalling,
+  # so a timeout is INCOMPLETE whatever exit code the child happens to report.
+  # The command keeps the terminal directly, so this branch has no log file.
+  log=""
   "${cmd[@]}" &
   child=$!
-  ( sleep "$timeout_s"; kill -TERM "$child" 2>/dev/null ) &
+  (
+    sleep "$timeout_s"
+    : > "$marker"
+    kill -TERM "$child" 2>/dev/null
+    sleep 30
+    kill -KILL "$child" 2>/dev/null
+  ) &
   watchdog=$!
   wait "$child"
   status=$?
-  kill "$watchdog" 2>/dev/null
+  kill -TERM "$watchdog" 2>/dev/null
   wait "$watchdog" 2>/dev/null
 fi
 set -e
 
+timed_out=0
+if [[ -f "$marker" ]]; then
+  timed_out=1
+fi
+rm -f "$marker"
+
+if [[ "$timed_out" -eq 1 ]]; then
+  status=124
+fi
 case "$status" in
   0) verdict="PASS" ;;
-  124|137) verdict="INCOMPLETE" ;;
+  124|137|143) verdict="INCOMPLETE" ;;
   *) verdict="FAIL" ;;
 esac
 
@@ -141,6 +199,21 @@ for arg in "$@"; do
   cmd_text+="$(printf '%q' "$arg") "
 done
 
+forwarded=""
+for name in ${forward_names[@]+"${forward_names[@]}"}; do
+  forwarded="${forwarded:+$forwarded,}$name"
+done
+
+session="$manager"
+if [[ "$mode" == "asuser" ]]; then
+  session="$(sudo -n launchctl asuser "$uid" sudo -n -u "$user" launchctl managername 2>/dev/null || true)"
+fi
+
+head="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+dirty_files="$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+node_version="$(node --version 2>/dev/null || echo unknown)"
+electron_version="$(node -p "require('$root/shell/node_modules/electron/package.json').version" 2>/dev/null || echo unknown)"
+
 duration_ms=$(( $(epoch_ms) - start_ms ))
 receipt="tmp/checks/desktop-gate-${start_epoch}.json"
 cat > "$receipt" <<JSON
@@ -149,8 +222,15 @@ cat > "$receipt" <<JSON
   "cwd": "$(json_escape "$root")",
   "user": "$(json_escape "$user")",
   "host": "$(json_escape "$(scutil --get LocalHostName 2>/dev/null || hostname)")",
+  "head": "$(json_escape "$head")",
+  "dirty_files": $dirty_files,
+  "node": "$(json_escape "$node_version")",
+  "electron": "$(json_escape "$electron_version")",
   "mode": "$mode",
-  "manager": "$(json_escape "$manager")",
+  "caller_manager": "$(json_escape "$manager")",
+  "session": "$(json_escape "$session")",
+  "forwarded_env": "$(json_escape "$forwarded")",
+  "log": "$(json_escape "$log")",
   "timeout_s": $timeout_s,
   "caffeinate": true,
   "display_before": "$start_display",
@@ -164,5 +244,5 @@ cat > "$receipt" <<JSON
 }
 JSON
 
-echo "DESKTOP_GATE verdict=$verdict exit=$status duration_ms=$duration_ms mode=$mode display=$start_display receipt=$receipt"
+echo "DESKTOP_GATE verdict=$verdict exit=$status duration_ms=$duration_ms mode=$mode session=$session display=$start_display receipt=$receipt"
 exit "$status"

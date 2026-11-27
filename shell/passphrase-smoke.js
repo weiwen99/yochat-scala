@@ -1,13 +1,13 @@
 "use strict";
 
-// Proves the desktop passphrase path against the real IPC handlers and preload
-// bridge, in the session it actually runs in.
+// Drives the real preload bridge and IPC handlers of the desktop shell.
 //
-// Aqua: unlocking with "remember" writes passphrase.bin; a relaunch on the same
-// user-data directory prefills the field from the keychain.
-// Background (ssh without GUI injection): the keychain is unreachable, so
-// savePassphrase must resolve false instead of rejecting. That rejection was the
-// defect this gate was written for.
+// Default: unlocking with "remember" (checked by default) must write
+// passphrase.bin; an explicit bridge save must resolve true; a relaunch on the
+// same user-data directory must prefill the field from the keychain. Outside
+// Aqua only the contract is asserted: the calls resolve to booleans instead of
+// rejecting. YOCHAT_KEYCHAIN_UNAVAILABLE=1 forces the unavailable branch and
+// asserts save=false / load=null.
 
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -18,14 +18,30 @@ const { _electron: electron } = require("playwright");
 const { passphrase, serverJar, root, freePort, gitHead, sleep } = require("./ui-smoke");
 
 const java = process.env.YOCHAT_JAVA || "java";
+const forcedUnavailable = process.env.YOCHAT_KEYCHAIN_UNAVAILABLE === "1";
 const receiptPath = path.join(root, "tmp", "checks", `passphrase-${Date.now()}.json`);
+const screenshotPath = "/tmp/yochat-passphrase.png";
 const started = Date.now();
+
+const watchdog = setTimeout(() => {
+  console.error("PASSPHRASE timeout");
+  process.exit(3);
+}, 180_000);
+watchdog.unref();
 
 function sessionManager() {
   try {
     return execFileSync("/bin/launchctl", ["managername"], { encoding: "utf8" }).trim();
   } catch (_) {
     return "unknown";
+  }
+}
+
+function dirtyFiles() {
+  try {
+    return execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim().split("\n").filter(Boolean).length;
+  } catch (_) {
+    return -1;
   }
 }
 
@@ -64,6 +80,7 @@ async function waitForFile(target, timeoutMs = 10_000) {
 async function main() {
   const mode = sessionManager();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "yochat-passphrase-"));
+  const stored = path.join(dir, "passphrase.bin");
   let app = null;
   let result = null;
   let failure = null;
@@ -76,14 +93,29 @@ async function main() {
     stage = "unlock";
     await unlockAndEnter(page);
 
-    stage = "save-through-bridge";
-    const saved = await page.evaluate((value) => window.yochat.savePassphrase(value), passphrase);
-    const stored = path.join(dir, "passphrase.bin");
+    stage = "available";
+    const available = await page.evaluate(() => window.yochat.keychainAvailable());
 
-    if (mode === "Aqua") {
-      if (saved !== true) throw new Error(`savePassphrase resolved ${JSON.stringify(saved)}, expected true`);
-      if (!(await waitForFile(stored))) throw new Error("passphrase.bin was not written");
+    if (forcedUnavailable) {
+      stage = "unavailable-contract";
+      const saved = await page.evaluate((value) => window.yochat.savePassphrase(value), passphrase);
+      const loaded = await page.evaluate(() => window.yochat.loadPassphrase());
+      if (available !== false) throw new Error(`keychainAvailable resolved ${JSON.stringify(available)}, expected false`);
+      if (saved !== false) throw new Error(`savePassphrase resolved ${JSON.stringify(saved)}, expected false`);
+      if (loaded !== null) throw new Error(`loadPassphrase resolved ${JSON.stringify(loaded)}, expected null`);
+      if (fs.existsSync(stored)) throw new Error("passphrase.bin written while the keychain was unavailable");
+      result = { mode, forcedUnavailable: true, available, saved, loaded };
+    } else if (mode === "Aqua") {
+      stage = "ui-remember";
+      if (available !== true) throw new Error(`keychainAvailable resolved ${JSON.stringify(available)}, expected true`);
+      if (!(await waitForFile(stored))) throw new Error('UI "remember" did not write passphrase.bin');
       if (fs.statSync(stored).size === 0) throw new Error("passphrase.bin is empty");
+
+      stage = "save-through-bridge";
+      const saved = await page.evaluate((value) => window.yochat.savePassphrase(value), passphrase);
+      if (saved !== true) throw new Error(`savePassphrase resolved ${JSON.stringify(saved)}, expected true`);
+      const loaded = await page.evaluate(() => window.yochat.loadPassphrase());
+      if (loaded !== passphrase) throw new Error("loadPassphrase did not return the saved value");
 
       stage = "relaunch";
       await app.close();
@@ -101,20 +133,23 @@ async function main() {
       );
       const restored = await page.locator(".unlock-form input[type=password]").first().inputValue();
       if (restored !== passphrase) throw new Error("stored passphrase was not restored before typing");
-      result = { mode, saved: true, stored: true, restored: true };
+      result = { mode, available, saved: true, loaded: true, stored: true, restored: true };
     } else {
       // Outside Aqua the keychain may or may not be reachable: item creation
       // needs an interactive session, while later reads can succeed once the
       // item exists. The contract is a boolean, never a rejected IPC call.
+      stage = "background-contract";
+      const saved = await page.evaluate((value) => window.yochat.savePassphrase(value), passphrase);
+      if (typeof available !== "boolean") throw new Error("keychainAvailable did not resolve a boolean");
       if (typeof saved !== "boolean") throw new Error(`savePassphrase resolved ${JSON.stringify(saved)}, expected a boolean`);
       if (saved === false && fs.existsSync(stored)) throw new Error("passphrase.bin written although savePassphrase reported false");
-      result = { mode, saved, stored: fs.existsSync(stored), restored: null };
+      result = { mode, available, saved, stored: fs.existsSync(stored), restored: null };
     }
   } catch (error) {
     failure = { stage, error: error && error.message ? error.message : String(error) };
     if (app) {
       const pages = app.windows();
-      if (pages.length > 0) await pages[0].screenshot({ path: "/tmp/yochat-passphrase.png" }).catch(() => {});
+      if (pages.length > 0) await pages[0].screenshot({ path: screenshotPath }).catch(() => {});
     }
   } finally {
     if (app) await app.close().catch(() => {});
@@ -124,9 +159,12 @@ async function main() {
   const receipt = {
     command: "shell/passphrase-smoke.js",
     commit: gitHead(),
+    dirtyFiles: dirtyFiles(),
     node: process.version,
     session: mode,
+    forcedUnavailable,
     durationMs: Date.now() - started,
+    screenshot: failure && fs.existsSync(screenshotPath) ? screenshotPath : null,
     result,
     failure,
     verdict: failure ? "FAIL" : "PASS"
@@ -138,7 +176,7 @@ async function main() {
     console.error(`PASSPHRASE_RECEIPT path=${receiptPath}`);
     process.exit(1);
   }
-  console.log(`PASSPHRASE PASS mode=${mode} duration_ms=${receipt.durationMs}`);
+  console.log(`PASSPHRASE PASS mode=${mode} unavailable=${forcedUnavailable} duration_ms=${receipt.durationMs}`);
   console.log(`PASSPHRASE_RECEIPT path=${receiptPath}`);
 }
 

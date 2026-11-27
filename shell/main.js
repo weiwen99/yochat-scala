@@ -171,7 +171,10 @@ function createWindow() {
 // safeStorage's async API is the only supported one in Electron 45; the sync
 // variants are deprecated. The probe resolves a boolean, so a caller that treats
 // the Promise as a value would see "available" even when the keychain is not.
+// YOCHAT_KEYCHAIN_UNAVAILABLE is a disabled-by-default gate hook: the unavailable
+// branch depends on machine keychain state and cannot be reproduced on demand.
 async function keychainAvailable() {
+  if (process.env.YOCHAT_KEYCHAIN_UNAVAILABLE === "1") return false;
   try {
     return await safeStorage.isAsyncEncryptionAvailable();
   } catch (_) {

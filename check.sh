@@ -45,8 +45,9 @@ if [ ! -x shell/node_modules/.bin/electron ]; then
 fi
 ./desktop-gate.sh ./shell/node_modules/.bin/electron shell/keychain-smoke.js
 ./desktop-gate.sh node shell/passphrase-smoke.js
+YOCHAT_KEYCHAIN_UNAVAILABLE=1 ./desktop-gate.sh node shell/passphrase-smoke.js
+node shell/contrast-smoke.js
 ./desktop-gate.sh node shell/perf-start.js
-./desktop-gate.sh node shell/contrast-smoke.js
 ./desktop-gate.sh node shell/ui-smoke.js
 ./desktop-gate.sh node shell/electron-smoke.js
 if [ "${YOCHAT_CROSS_HOST:-0}" = "1" ]; then

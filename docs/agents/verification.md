@@ -100,16 +100,17 @@ During development, run the checks the change actually affects and reuse results
 
 ## Desktop gates
 
-Run every Electron gate through `./desktop-gate.sh <command> [args...]` (`check.sh` does).
+`check.sh` and any automated batch run every Electron gate through `./desktop-gate.sh <command> [args...]`. The `npm run` scripts in `shell/` are developer entry points: they skip the timeout, the session injection, and the receipt.
 
-- **Keychain items are created from an interactive session.** On macOS `safeStorage` is backed by a per-app keychain item. Creating it needs the Aqua session; over ssh (`launchctl managername` reports `Background`) creation fails with `errSecInteractionNotAllowed`. Once the item exists with an ACL that allows the app, later Background reads can succeed — so a gate must not depend on which state it finds. The runner removes the ambiguity: it joins the Aqua session with `launchctl asuser` when it has passwordless sudo, runs directly when already in Aqua, and prints `DEGRADED` when it can do neither.
+- **Keychain items are created from an interactive session.** On macOS `safeStorage` is backed by a per-app keychain item. Creating it needs the Aqua session; over ssh (`launchctl managername` reports `Background`) creation fails with `errSecInteractionNotAllowed`. Once the item exists with an ACL that allows the app, later Background reads can succeed — so a gate must not depend on which state it finds. The runner removes the ambiguity: it joins the Aqua session with `launchctl asuser` when it has passwordless sudo, runs directly when already in Aqua, and prints `DEGRADED` when it can do neither. `YOCHAT_GATE_INJECT=asuser|direct` overrides the choice.
 - The keychain identity is per app. `electron <script>` uses `Electron Safe Storage`; the product (`electron .` in `shell/`) uses its own item. `keychain-smoke` probes the raw `safeStorage` layer, `passphrase-smoke` drives the real app's IPC handlers in whichever session it runs.
+- `passphrase-smoke` asserts the Aqua path (remember writes the file, save resolves true, a relaunch prefills the field) and, with `YOCHAT_KEYCHAIN_UNAVAILABLE=1`, the degraded path (available false, save false, load null, no file). `check.sh` runs both. The hook is disabled by default and exists because the unavailable state depends on machine keychain history.
+- The runner forwards every `YOCHAT_*` variable to the gate except its own controls, so an injected run reads the same jar paths, relay endpoint, and cross-host peers as a direct one. The receipt lists the forwarded names.
 - `caffeinate -dims` holds display and idle sleep for the duration.
-- `YOCHAT_GATE_TIMEOUT` (seconds, default 1800) bounds each gate. Exit 124/137 prints `verdict=INCOMPLETE` and is not a pass.
-- Each run writes `tmp/checks/desktop-gate-<epoch>.json` with the injection mode, display state, lock state, and duration. The gate's own receipt holds the measurements; compare performance numbers only at the same display state.
-- A gate that hangs is a failure, not a result. `keychain-smoke` exits 2 (unavailable), 1 (mismatch or error), or 3 (30s watchdog).
-- `screencapture` is denied by TCC to ssh and injected sessions alike; failure evidence comes from Playwright's `page.screenshot`, which needs no TCC grant.
-- Verified 2026-11-27 on m1: `electron-smoke` passed with the display off (100 messages each way, both restarts) and with the display on; `passphrase-smoke` passed in Aqua (save, restart, prefilled) and in Background (boolean contract). The **locked** screen state is recorded in receipts but unverified: unlocking needs the user's password, so no automated run can cover it.
+- `YOCHAT_GATE_TIMEOUT` (seconds, default 1800) bounds each gate. Exit 124/137/143 prints `verdict=INCOMPLETE` and is not a pass. Without GNU `timeout`, the watchdog marks the run before signalling, so a timeout stays INCOMPLETE whatever the child reports.
+- Each run writes `tmp/checks/desktop-gate-<epoch>.json` with the commit and dirty-file count, tool versions, injection mode, executed session, forwarded environment names, display state, lock state, and duration. The gate's own receipt holds the measurements; compare performance numbers only at the same display state.
+- A gate that hangs is a failure, not a result. `keychain-smoke` exits 2 (unavailable), 1 (mismatch or error), or 3 (30s watchdog); `passphrase-smoke` exits 3 after a 180s watchdog. Failure screenshots go to `/tmp/yochat-passphrase.png` and their path is recorded in the gate receipt.
+- Verified 2026-11-27 on m1: `electron-smoke` passed with the display off (100 messages each way, both restarts) and with the display on; `passphrase-smoke` passed in Aqua (remember, save, load, restart), in Background (boolean contract), and with the unavailable hook. The **locked** screen state is recorded in receipts but unverified: unlocking needs the user's password, so no automated run can cover it.
 
 ## Receipts
 
