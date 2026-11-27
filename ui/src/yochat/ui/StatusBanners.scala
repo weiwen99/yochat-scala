@@ -10,6 +10,16 @@ object StatusBanners:
       child.maybe <-- api.error.signal.map(_.map(message => banner("error", "本机服务", message, None))),
       child.maybe <-- api.notice.signal
         .map(_.filterNot(_ == "waiting").map(code => banner("notice", "状态", noticeText(code), Some(() => api.dismissNotice())))),
+      child.maybe <-- api.lateNotice.signal.map(
+        _.map(_ =>
+          banner(
+            "notice",
+            "迟到补入",
+            "有一条消息在较早的缺口补齐后才到达；它已按顺序显示，不会重排你正在读的内容。",
+            Some(() => api.dismissLateArrival())
+          )
+        )
+      ),
       child.maybe <-- api.state.signal.map { state =>
         if state.conversations.exists(_.waiting) then Some(banner("notice", "状态", "有消息正在等待较早的消息，服务会自动继续。", None))
         else None
@@ -42,6 +52,7 @@ object StatusBanners:
       case "message-failed"   => "有消息重试失败，正文仍保留在本机。"
       case "rekey-failed"     => "加密通道重建失败，服务会在重新连接后再次尝试。"
       case "rekey-required"   => "对方要求重建加密通道。"
+      case "channel-rebuild"  => "消息间隔超过通道允许的跳号，通道正在重建；间隔期间的消息可能取不回。"
       case other              => s"本机状态需要处理（$other）。"
 
   private def fatalText(code: String): String =

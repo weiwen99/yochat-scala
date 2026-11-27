@@ -49,7 +49,15 @@ object ChatPanel:
             span(cls := "avatar large", child.text <-- contact.map(_.map(_.displayName.take(1)).getOrElse("?"))),
             div(
               h1(child.text <-- contact.map(_.map(_.displayName).getOrElse("通信"))),
-              p(child.text <-- contact.map(_.map(value => if value.safetyVerified then "安全码已核对" else "安全码尚未核对").getOrElse("正在恢复本机状态")))
+              p(
+                child.text <-- contact.map(
+                  _.map { value =>
+                    if value.blocked then "已拉黑 · 不能发送也不能接收"
+                    else if value.safetyVerified then "安全码已核对"
+                    else "安全码尚未核对"
+                  }.getOrElse("关系已结束 · 仅保留本机历史")
+                )
+              )
             )
           ),
           div(
@@ -186,9 +194,12 @@ object ChatPanel:
         span(
           child.text <-- state.map { value =>
             val contact = api.selectedContact.now()
-            if !contact.exists(_.safetyVerified) then "先在右侧核对安全码，正文才会发送"
-            else if !value.relay.online then "中继离线；消息会留在本机，恢复后自动继续"
-            else "Enter 发送 · Shift+Enter 换行"
+            contact match
+              case None                                     => "关系已结束；这段历史只在本机"
+              case Some(current) if current.blocked         => "已拉黑该联系人；解除后才能发送"
+              case Some(current) if !current.safetyVerified => "先在右侧核对安全码，正文才会发送"
+              case Some(_) if !value.relay.online           => "中继离线；消息会留在本机，恢复后自动继续"
+              case Some(_)                                  => "Enter 发送 · Shift+Enter 换行"
           }
         ),
         span("正文只保存在本机")
@@ -274,20 +285,42 @@ object ChatPanel:
         ),
         sectionTag(
           cls := "ledger-section",
-          h3("联系人备注"),
+          h3("联系人别名"),
           child <-- ui.aliasEditing.signal.map { editing =>
             if editing then aliasEditor(api, ui, contact)
             else
               div(
                 cls := "alias-row",
-                span(cls     := "alias-value", contact.alias.getOrElse("未设置备注")),
+                span(cls     := "alias-value", contact.alias.getOrElse("未设置别名")),
+                button(
+                  cls        := "icon-button",
+                  aria.label := "编辑别名",
+                  title      := "编辑别名",
+                  onClick --> (_ => {
+                    ui.aliasDraft.set(contact.alias.getOrElse(""))
+                    ui.aliasEditing.set(true)
+                  }),
+                  Icons("edit")
+                )
+              )
+          }
+        ),
+        sectionTag(
+          cls := "ledger-section",
+          h3("联系人备注"),
+          child <-- ui.noteEditing.signal.map { editing =>
+            if editing then noteEditor(api, ui, contact)
+            else
+              div(
+                cls := "alias-row",
+                span(cls     := "alias-value", contact.note.filter(_.nonEmpty).getOrElse("未设置备注")),
                 button(
                   cls        := "icon-button",
                   aria.label := "编辑备注",
                   title      := "编辑备注",
                   onClick --> (_ => {
-                    ui.aliasDraft.set(contact.alias.getOrElse(""))
-                    ui.aliasEditing.set(true)
+                    ui.noteDraft.set(contact.note.getOrElse(""))
+                    ui.noteEditing.set(true)
                   }),
                   Icons("edit")
                 )
@@ -334,6 +367,36 @@ object ChatPanel:
                 case Success(_)    =>
                   ui.notify("备注已保存")
                   ui.aliasEditing.set(false)
+                case Failure(fail) => ui.failure(api.describeError(fail))
+              }
+            }),
+            "保存"
+          )
+        )
+      )
+
+    private def noteEditor(api: ApiClient, ui: UiState, contact: Contact): HtmlElement =
+      div(
+        cls := "alias-editor",
+        textArea(
+          cls         := "text-input small",
+          value <-- ui.noteDraft,
+          onInput.mapToValue --> ui.noteDraft,
+          placeholder := "只在本机与本人设备上可见",
+          rows        := 3,
+          autoFocus   := true
+        ),
+        div(
+          cls         := "alias-actions",
+          button(cls := "text-button", onClick --> (_ => ui.noteEditing.set(false)), "取消"),
+          button(
+            cls      := "secondary-button small",
+            onClick --> (_ => {
+              val value = ui.noteDraft.now().trim
+              api.setNote(contact.userPub, if value.isEmpty then None else Some(value)).onComplete {
+                case Success(_)    =>
+                  ui.notify("备注已保存")
+                  ui.noteEditing.set(false)
                 case Failure(fail) => ui.failure(api.describeError(fail))
               }
             }),

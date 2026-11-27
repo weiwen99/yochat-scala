@@ -23,11 +23,13 @@ final class ApiClient:
   val selectedContact: Var[Option[Contact]]           = Var(None)
   val canSend: Var[Boolean]                           = Var(false)
   val devices: Var[Vector[Device]]                    = Var(Vector.empty)
+  val lateNotice: Var[Option[LateArrival]]            = Var(None)
 
-  private val socket: Var[Option[dom.WebSocket]]   = Var(None)
-  private val dismissedNotice: Var[Option[String]] = Var(None)
-  private val serverExited: Var[Boolean]           = Var(false)
-  private val sessionRequestId: Var[Long]          = Var(0L)
+  private val socket: Var[Option[dom.WebSocket]]      = Var(None)
+  private val dismissedNotice: Var[Option[String]]    = Var(None)
+  private val dismissedLateArrival: Var[Option[Long]] = Var(None)
+  private val serverExited: Var[Boolean]              = Var(false)
+  private val sessionRequestId: Var[Long]             = Var(0L)
 
   def start(): Unit =
     listenForServerExit()
@@ -37,6 +39,10 @@ final class ApiClient:
   def dismissNotice(): Unit =
     dismissedNotice.set(notice.now())
     notice.set(None)
+
+  def dismissLateArrival(): Unit =
+    dismissedLateArrival.set(lateNotice.now().map(_.messageId))
+    lateNotice.set(None)
 
   def selectConversation(id: Option[String]): Unit =
     activeConversation.set(id)
@@ -51,6 +57,7 @@ final class ApiClient:
         val next = Json.parseState(value)
         state.set(next)
         updateNotice(next.notification)
+        updateLateArrival(next.lateArrival)
         if unlocked.now() != next.unlocked then unlocked.set(next.unlocked)
         if loading.now() then loading.set(false)
         if !serverExited.now() then error.set(None)
@@ -91,6 +98,8 @@ final class ApiClient:
         if !serverExited.now() then error.set(None)
         notice.set(None)
         dismissedNotice.set(None)
+        lateNotice.set(None)
+        dismissedLateArrival.set(None)
         loadSession()
       case Failure(fail) => if !serverExited.now() then error.set(Some(message(fail)))
     }
@@ -171,6 +180,23 @@ final class ApiClient:
   def verifySafety(userPub: String): Future[Unit] =
     post(s"/api/contacts/$userPub/safety", ujson.Obj()).map(_ => ())
 
+  def blockContact(userPub: String): Future[Unit] =
+    post(s"/api/contacts/$userPub/block", ujson.Obj()).map(_ => loadSession())
+
+  def unblockContact(userPub: String): Future[Unit] =
+    post(s"/api/contacts/$userPub/unblock", ujson.Obj()).map(_ => loadSession())
+
+  def setNote(userPub: String, note: Option[String]): Future[Unit] =
+    post(
+      s"/api/contacts/$userPub/note",
+      ujson.Obj("note" -> note.map(value => ujson.Str(value)).getOrElse(ujson.Null))
+    ).map(_ => ())
+
+  def deleteContact(userPub: String, deleteHistory: Boolean): Future[Boolean] =
+    post(s"/api/contacts/$userPub/delete", ujson.Obj("deleteHistory" -> deleteHistory)).map { value =>
+      Json.bool(value, "blockRecordKept").getOrElse(false)
+    }
+
   def sendMessage(conversationId: String, body: String): Future[Unit] =
     post(s"/api/conversations/$conversationId/messages", ujson.Obj("body" -> body)).map { _ =>
       loadMessages(conversationId)
@@ -217,7 +243,7 @@ final class ApiClient:
     val contact = conv.flatMap(value => current.contactFor(value))
     if selectedConversation.now() != conv then selectedConversation.set(conv)
     if selectedContact.now() != contact then selectedContact.set(contact)
-    val allowed = !current.readOnly && conv.isDefined && contact.exists(_.safetyVerified)
+    val allowed = !current.readOnly && conv.isDefined && contact.exists(value => value.safetyVerified && !value.blocked)
     if canSend.now() != allowed then canSend.set(allowed)
 
   private def loadMessages(conversationId: String): Unit =
@@ -254,6 +280,12 @@ final class ApiClient:
     js.timers.setTimeout(750) {
       if socket.now().isEmpty then connectSocket()
     }
+
+  private def updateLateArrival(value: Option[LateArrival]): Unit =
+    value match
+      case None                                                              => lateNotice.set(None)
+      case Some(item) if dismissedLateArrival.now().contains(item.messageId) => ()
+      case Some(item)                                                        => lateNotice.set(Some(item))
 
   private def updateNotice(value: Option[String]): Unit =
     if value.isEmpty then

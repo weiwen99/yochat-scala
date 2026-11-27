@@ -23,14 +23,21 @@ final case class Contact(
   channelAccount: String,
   peerChannelAccount: Option[String],
   alias: Option[String],
+  note: Option[String],
   safetyCode: String,
   safetyVerified: Boolean,
   confirmation: String,
   conversationId: Option[String],
   lastMessage: String,
   lastMessageAt: Long,
+  blocked: Boolean,
+  recreated: Boolean,
   devices: Vector[PeerDevice] = Vector.empty
 )
+
+final case class BlockedPeer(userPub: String, displayName: String)
+
+final case class LateArrival(messageId: Long, conversationId: String)
 
 final case class Conversation(
   id: String,
@@ -90,7 +97,9 @@ final case class AppState(
   contacts: Vector[Contact],
   conversations: Vector[Conversation],
   invitations: Vector[Invitation],
-  sessions: Vector[Session]
+  sessions: Vector[Session],
+  blockedPeers: Vector[BlockedPeer] = Vector.empty,
+  lateArrival: Option[LateArrival] = None
 ):
 
   def contactFor(conversation: Conversation): Option[Contact] =
@@ -115,7 +124,9 @@ object AppState:
     contacts = Vector.empty,
     conversations = Vector.empty,
     invitations = Vector.empty,
-    sessions = Vector.empty
+    sessions = Vector.empty,
+    blockedPeers = Vector.empty,
+    lateArrival = None
   )
 
 final case class ChatMessage(
@@ -143,7 +154,9 @@ object Json:
       contacts = array(value, "contacts").flatMap(parseContact),
       conversations = array(value, "conversations").flatMap(parseConversation),
       invitations = array(value, "invitations").flatMap(parseInvitation),
-      sessions = array(value, "sessions").flatMap(parseSession)
+      sessions = array(value, "sessions").flatMap(parseSession),
+      blockedPeers = array(value, "blockedPeers").flatMap(parseBlockedPeer),
+      lateArrival = field(value, "lateArrival").flatMap(parseLateArrival)
     )
 
   def parseDevices(value: Value): Vector[Device] =
@@ -208,14 +221,26 @@ object Json:
       string(value, "channelAccount").getOrElse(""),
       string(value, "peerChannelAccount"),
       string(value, "alias"),
+      string(value, "note"),
       string(value, "safetyCode").getOrElse(""),
       bool(value, "safetyVerified").getOrElse(false),
       string(value, "confirmation").getOrElse("pending"),
       string(value, "conversationId"),
       string(value, "lastMessage").getOrElse(""),
       long(value, "lastMessageAt").getOrElse(0L),
+      bool(value, "blocked").getOrElse(false),
+      bool(value, "recreated").getOrElse(false),
       value.obj.get("devices").toVector.flatMap(_.arr).flatMap(parsePeerDevice)
     )
+
+  private def parseBlockedPeer(value: Value): Option[BlockedPeer] =
+    string(value, "userPub").map(user => BlockedPeer(user, string(value, "displayName").getOrElse(user.take(8))))
+
+  private def parseLateArrival(value: Value): Option[LateArrival] =
+    for
+      messageId      <- long(value, "messageId")
+      conversationId <- string(value, "conversationId")
+    yield LateArrival(messageId, conversationId)
 
   private def parsePeerDevice(value: Value): Option[PeerDevice] =
     string(value, "devicePub").map(device =>

@@ -21,9 +21,26 @@ object ContactsPanel:
           else Some(button(cls := "primary-button", onClick --> (_ => ui.addFriend.set(true)), Icons("plus"), "添加联系人"))
         )
       ),
-      child <-- api.state.signal.map { state =>
-        if state.contacts.isEmpty then empty(ui, state.readOnly) else contactList(api, ui, state)
+      child.maybe <-- api.state.signal.map(state =>
+        if state.readOnly || state.contacts.isEmpty then None
+        else
+          Some(
+            input(
+              cls         := "text-input small contact-filter",
+              aria.label  := "筛选联系人",
+              placeholder := "按名称、账号、备注筛选",
+              value <-- ui.contactFilter,
+              onInput.mapToValue --> ui.contactFilter
+            )
+          )
+      ),
+      child <-- api.state.signal.combineWith(ui.contactFilter.signal).map { case (state, filter) =>
+        val visible = state.contacts.filter(contact => matches(contact, filter))
+        if state.contacts.isEmpty then empty(ui, state.readOnly)
+        else if visible.isEmpty then div(cls := "contacts-empty", p("没有匹配的联系人。"))
+        else contactList(api, ui, state, visible)
       },
+      blockedSection(api, ui),
       child <-- api.state.signal.map(state => invitationSection(ui, state)),
       div(
         cls := "contacts-foot",
@@ -31,6 +48,17 @@ object ContactsPanel:
         span("安全码由双方用户公钥导出，不经过中继")
       )
     )
+
+  private def matches(contact: Contact, filter: String): Boolean =
+    val needle = filter.trim.toLowerCase
+    needle.isEmpty ||
+    Vector(
+      contact.displayName,
+      contact.alias.getOrElse(""),
+      contact.note.getOrElse(""),
+      contact.channelAccount,
+      contact.peerChannelAccount.getOrElse("")
+    ).exists(_.toLowerCase.contains(needle))
 
   private def empty(ui: UiState, readOnly: Boolean): HtmlElement =
     div(
@@ -47,10 +75,10 @@ object ContactsPanel:
       if readOnly then div() else button(cls := "primary-button", onClick --> (_ => ui.addFriend.set(true)), "开始加好友")
     )
 
-  private def contactList(api: ApiClient, ui: UiState, state: AppState): HtmlElement =
+  private def contactList(api: ApiClient, ui: UiState, state: AppState, contacts: Vector[Contact]): HtmlElement =
     div(
       cls := "contact-stack",
-      state.contacts.map { contact =>
+      contacts.map { contact =>
         val conversation = contact.conversationId.flatMap(id => state.conversations.find(_.id == id))
         articleTag(
           cls := "contact-card",
@@ -63,14 +91,29 @@ object ContactsPanel:
               p(s"${contact.channelLabel} · ${contact.channelAccount}")
             ),
             span(
-              cls    := (if contact.safetyVerified then "status-chip verified" else "status-chip"),
-              if contact.safetyVerified then "安全码已核对" else "待核对安全码"
+              cls    :=
+                (if contact.blocked then "status-chip blocked"
+                 else if contact.safetyVerified then "status-chip verified"
+                 else "status-chip"),
+              if contact.blocked then "已拉黑"
+              else if contact.safetyVerified then "安全码已核对"
+              else "待核对安全码"
             )
           ),
+          if contact.recreated then
+            p(
+              cls      := "ledger-note",
+              "这是删除后重新建立的关系：安全码需要重新核对，旧记录不会自动继承。"
+            )
+          else div(cls := "hidden", ""),
           div(
             cls := "contact-codes",
             div(span(cls := "code-label", "安全码"), span(cls := "code-value", if contact.safetyCode.isEmpty then "—" else contact.safetyCode)),
-            div(span(cls := "code-label", "对方账号"), span(cls := "code-value plain", contact.peerChannelAccount.getOrElse("未记录")))
+            div(span(cls := "code-label", "对方账号"), span(cls := "code-value plain", contact.peerChannelAccount.getOrElse("未记录"))),
+            div(
+              span(cls := "code-label", "备注"),
+              span(cls := "code-value plain", contact.note.filter(_.nonEmpty).getOrElse("未设置"))
+            )
           ),
           if contact.devices.nonEmpty then
             div(
@@ -81,8 +124,8 @@ object ContactsPanel:
                   cls    := "code-value plain",
                   contact.devices
                     .map(device =>
-                      (if device.name.nonEmpty then device.name else device.devicePub.take(8)) + (if device.revokedAt.isDefined then "（已吊销）"
-                                                                                                  else "")
+                      (if device.name.nonEmpty then device.name else device.devicePub.take(8)) +
+                        (if device.revokedAt.isDefined then "（已吊销）" else "")
                     )
                     .mkString(" · ")
                 )
@@ -104,7 +147,7 @@ object ContactsPanel:
                 )
               }
               .getOrElse(span(cls := "hidden", "")),
-            if !contact.safetyVerified then
+            if !contact.safetyVerified && !contact.blocked then
               button(
                 cls       := "secondary-button",
                 onClick --> (_ =>
@@ -116,6 +159,35 @@ object ContactsPanel:
                 "我已当面核对"
               )
             else span(cls := "hidden", ""),
+            if contact.blocked then
+              button(
+                cls := "secondary-button",
+                onClick --> (_ =>
+                  api.unblockContact(contact.userPub).onComplete {
+                    case Success(_)    => ui.notify("已解除拉黑；拉黑期间对方放弃重试的消息取不回")
+                    case Failure(fail) => ui.failure(api.describeError(fail))
+                  }
+                ),
+                "解除拉黑"
+              )
+            else
+              button(
+                cls := "text-button",
+                onClick --> (_ => ui.confirmBlock.set(Some(contact.userPub))),
+                "拉黑"
+              )
+            ,
+            if state.readOnly then span(cls := "hidden", "")
+            else
+              button(
+                cls                         := "text-button danger",
+                onClick --> (_ => {
+                  ui.deleteHistory.set(false)
+                  ui.confirmDelete.set(Some(contact.userPub))
+                }),
+                "删除联系人"
+              )
+            ,
             button(
               cls := "text-button",
               onClick --> (_ => {
@@ -124,12 +196,124 @@ object ContactsPanel:
                 ui.view.set(View.Chat)
                 ui.mobileList.set(false)
               }),
-              "编辑备注"
+              "编辑别名"
             )
-          )
+          ),
+          child.maybe <-- ui.confirmBlock.signal.map { confirm =>
+            if confirm.contains(contact.userPub) then Some(blockConfirm(api, ui, contact)) else None
+          },
+          child.maybe <-- ui.confirmDelete.signal.map { confirm =>
+            if confirm.contains(contact.userPub) then Some(deleteConfirm(api, ui, contact)) else None
+          }
         )
       }
     )
+
+  private def blockConfirm(api: ApiClient, ui: UiState, contact: Contact): HtmlElement =
+    div(
+      cls := "confirm-box",
+      p(cls := "ledger-note", "对方无法从协议上证明自己被拉黑，但会察觉到消息一直发不出去。"),
+      p(cls := "ledger-note", "拉黑只绑定这一把用户公钥；对方换一份邀请重加时，那是新建立的关系。"),
+      div(
+        cls := "alias-actions",
+        button(cls := "text-button", onClick --> (_ => ui.confirmBlock.set(None)), "取消"),
+        button(
+          cls      := "secondary-button",
+          onClick --> (_ =>
+            api.blockContact(contact.userPub).onComplete {
+              case Success(_)    =>
+                ui.confirmBlock.set(None)
+                ui.notify("已拉黑；不再接收也不再发送")
+              case Failure(fail) => ui.failure(api.describeError(fail))
+            }
+          ),
+          "确认拉黑"
+        )
+      )
+    )
+
+  private def deleteConfirm(api: ApiClient, ui: UiState, contact: Contact): HtmlElement =
+    div(
+      cls := "confirm-box",
+      p(
+        cls := "ledger-note",
+        if contact.blocked then "删除后关系结束，拉黑记录会保留，直到你在已拉黑列表里解除。"
+        else "删除后关系结束；对方再发消息不会进来。"
+      ),
+      label(
+        cls := "checkbox-row",
+        input(
+          typ := "checkbox",
+          checked <-- ui.deleteHistory,
+          onChange.mapToChecked --> ui.deleteHistory
+        ),
+        span("同时删除本机这段会话的历史（其他设备各自保留）")
+      ),
+      div(
+        cls := "alias-actions",
+        button(cls := "text-button", onClick --> (_ => ui.confirmDelete.set(None)), "取消"),
+        button(
+          cls      := "secondary-button danger",
+          onClick --> (_ => {
+            val history = ui.deleteHistory.now()
+            api.deleteContact(contact.userPub, history).onComplete {
+              case Success(kept) =>
+                ui.confirmDelete.set(None)
+                api.selectConversation(None)
+                ui.notify(if kept then "联系人已删除；拉黑记录保留" else "联系人已删除")
+              case Failure(fail) => ui.failure(api.describeError(fail))
+            }
+          }),
+          "确认删除"
+        )
+      )
+    )
+
+  private def blockedSection(api: ApiClient, ui: UiState): HtmlElement =
+    div(child <-- api.state.signal.map { state =>
+      if state.blockedPeers.isEmpty then div(cls := "hidden", "")
+      else
+        div(
+          cls                                    := "invitation-section",
+          div(
+            cls := "section-title",
+            h2("已拉黑"),
+            p("这里的人不能给你发消息，你也不能给他们发。解除拉黑只补齐对方仍在重试的消息；更早的取不回。")
+          ),
+          div(
+            cls := "invitation-list",
+            state.blockedPeers.map { peer =>
+              div(
+                cls := "invitation-row",
+                div(
+                  cls := "invitation-main",
+                  span(cls := "direction-mark received"),
+                  div(
+                    span(cls := "invitation-title", peer.displayName),
+                    span(
+                      cls    := "invitation-sub",
+                      if state.contacts.exists(_.userPub == peer.userPub) then "关系仍在，仅停止通信" else "关系已删除，拉黑记录保留"
+                    )
+                  )
+                ),
+                div(
+                  cls := "invitation-actions",
+                  button(
+                    cls := "text-button",
+                    onClick --> (_ =>
+                      api.unblockContact(peer.userPub).onComplete {
+                        case Success(_)    => ui.notify("已解除拉黑")
+                        case Failure(fail) => ui.failure(api.describeError(fail))
+                      }
+                    ),
+                    "解除拉黑"
+                  )
+                )
+              )
+            }
+          )
+        )
+    })
 
   private def lifecycleLabel(value: String): String =
     value match
@@ -149,7 +333,12 @@ object ContactsPanel:
       ),
       if state.invitations.isEmpty then
         if state.readOnly then div(cls := "invitation-empty", "只读设备不处理邀请。")
-        else div(cls                   := "invitation-empty", "没有待处理的邀请。", button(cls := "text-button", onClick --> (_ => ui.addFriend.set(true)), "添加联系人"))
+        else
+          div(
+            cls                        := "invitation-empty",
+            "没有待处理的邀请。",
+            button(cls := "text-button", onClick --> (_ => ui.addFriend.set(true)), "添加联系人")
+          )
       else
         div(
           cls := "invitation-list",
