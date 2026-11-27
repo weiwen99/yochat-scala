@@ -107,3 +107,15 @@ DESIGN-DISCIPLINE R9 停轮并交人工。
 | S4-3 | P2 | spec 裁决 1 仍写「含 6 部分」 | fix | 改 8 |
 
 第 4 轮 P1 2 条全部 fix。
+
+## 第 5 轮
+
+对象：`7a0d24b` 之后的修订（本轮只报 P1）。P1 3 条。
+
+| # | 级别 | 发现 | 处置 | 关闭证据 |
+| --- | --- | --- | --- | --- |
+| S5-1 | P1 | 正文仍把 `peer_device_lists` 行数增量写成断言，与验收及同段自述矛盾（该表是 upsert，数行数恒真） | fix | 正文改为与验收同一份逐项清单，删掉该表行数项，并注明两张表数行数恒真 |
+| S5-2 | P1 | 「同一原件不重复提醒由现有去重保证」不成立：`notice` 按 code 单值、dismiss 后永久吞掉；`upsertCompanionMessage` 不区分首次与重复 | fix | 改为显式改动：触发键是原件（`logicalKey`/消息 id），需 store 暴露 insert/update 或 `alreadyPresent`；已知约束 8 同步改 |
+| S5-3 | P1 | 「待确认项不新增」在常规 Reply 下恒真（只有 `Issued|AwaitingReply` 的邀请才产生待确认项），Reply guard 零覆盖 | fix | 验收加 Reply 子场景：拉黑期间另发邀请并应答，解封前不生成待确认项、contacts version 不变；并说明普通 Reply 不能当覆盖证据 |
+
+第 5 轮 P1 3 条全部 fix。

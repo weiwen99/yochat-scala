@@ -85,7 +85,11 @@ S1/S2 之后缺两类东西：
 | `3AEMNVEGME49ZT2R` 主界面布局与可达性基线 | **部分**：键盘走完「启动→加好友→安全码→发消息→切换会话→打开联系人详情」、焦点顺序、外观跟随系统；**渲染级对比度与焦点指示测量**、以及「发起搜索」入口随 S3-C 延后 |
 | `Q0MQBNAVS1TB1PBW` 实际暴露的信息须在使用前如实告知 | 全条：出现在**首次添加联系人流程**与邀请生成处；清单含中转可见项与本机中转网络地址 |
 | `386RMXBPWJYEXT9P` 在线状态可被持钥者查知须说明 | **部分**：只做告知（不提供隐藏开关、不声称能隐藏），**不做 presence** |
-| `REQ_20261103_NS77FQDYNCMNF71P` 迟到补入可察觉且不漏读 | **部分**：「不漏读」由 S2b GBNV 覆盖；「可察觉」只做到「有迟到补入时出现可见提示且同一原件不重复提醒」。来源验收里的「定位并逐条查看」「保留锚点与草稿」「重启后仍可见」不做，见已知约束 8 |
+| `REQ_20261103_NS77FQDYNCMNF71P` 迟到补入可察觉且不漏读 | **部分**：「不漏读」由 S2b GBNV 覆盖；「可察觉」只做到「有迟到补入时出现可见提示；同一原件只提示一次」。这条要显式改动：
+现有 `notice` 是按 code 的单值，dismiss 后同 code 永久不再出现（`ApiClient`），既不按原件去重、
+又会吞掉不同原件的提示；store 的 `upsertCompanionMessage` 对同一 `logicalKey` 也只返回
+`Right(record)`、不区分首次与重复。因此需要「首次落盘」这一信号（upsert 返回 insert/update，
+或新增 `alreadyPresent(key)`），触发键是原件（`logicalKey` / 消息 id），不是 code。来源验收里的「定位并逐条查看」「保留锚点与草稿」「重启后仍可见」不做，见已知约束 8 |
 
 ### S3-C 历史可用性（2 条，阻塞）
 
@@ -131,7 +135,8 @@ S1/S2 之后缺两类东西：
    验证不在本波（`contrast-smoke` 是 token 级门，不是完整 WCAG 审计）；「发起搜索」入口随 S3-C
    延后。来源验收里这两项是有意降级，不是遗漏。
 8. **迟到补入只做到可见提示**：「定位并逐条查看」「排序更新保留消息锚点与草稿」「重启后待查看
-   状态仍在」需要持久化的 UI 状态与导航，本波不做；同一原件的重复提醒由现有去重保证。
+   状态仍在」需要持久化的 UI 状态与导航，本波不做。提示的触发键是原件（`logicalKey`/消息 id），
+   需要 store 暴露首次/重复信号；现有 `notice` 按 code 去重，不能直接复用。
 9. 行预算：A+B 估算 3,500–5,500 行（19,614 → 23,100–25,100）。若 18 条延后项再做，总量
    31,300–37,600，**下界已超上限**，必须先删等量死代码或另立 ADR 提高上限。
 
@@ -165,10 +170,10 @@ S1/S2 之后缺两类东西：
 它仍需通过自有设备鉴权，这是既有行为。
 
 实现要求：判定收敛到一个 store 层 guard（`isBlocked(userPub)`），上表六处入口都调它，不许各写一份。
-`## 验收` 给一条可证伪断言：被拉黑者持续发送时，`messages`、`companion_messages`、
-`peer_device_lists` 的行数增量为 0，待确认项不新增，会话棘轮不推进，`delivery_receipts` 的
-`state`/`updated_at` 不变。删掉 guard 后这条必须变红——只数行数的写法对 `delivery_receipts`
-恒真，不能用。
+`## 验收` 用与下表同一份逐项清单，不写成「一条断言」：`messages` 与 `companion_messages` 的行数
+增量、`peer_device_lists` 的 `version`/`received_at`、`delivery_receipts` 的 `state`/`updated_at`、
+待确认项列表、会话棘轮进度、八种出站 kind 的发送计数。每删掉对应入口的 guard，该项必须变红。
+注意 `peer_device_lists` 是 upsert、`delivery_receipts` 只有 UPDATE，对这两张表数行数恒真。
 
 **出站拦截**：任何以被拉黑公钥为收端的帧一律不发。现有出站 kind 八种：Data、Reply、
 RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发送前统一查
@@ -317,7 +322,10 @@ RekeyRequest、RekeyAccept、DeviceSync、DeviceList、Fanout、FanoutAck。发�
     S3-C 延后，本波只断言会话视图与本地库）；删除已拉黑保留拉黑记录且新应答不出现在界面；
     重加为未校验并提示新关系；对方换设备后拉黑与校验仍在；另一份邀请的应答作为新待确认项且
     既有记录 version 不变；备注可写入并按别名/备注过滤联系人（按用户别名检索不在本波）；迟到
-    补入出现一次可见提示且同一原件不重复提醒。
+    补入出现可见提示，同一原件只提示一次。
+  - Reply 入口单独一条子场景：**拉黑期间**对方另发一份邀请并应答，解封前不得生成新的待确认项、
+    `contacts` 行 version 不变；解封后该应答才作为新待确认项出现。普通已建立关系的 Reply 不产生
+    待确认项，因此不能拿它当 Reply guard 的覆盖证据。
   - `./mill store.test`：`blocked_peers` 迁移、回滚、高水位（若采纳）测试。
   - 被拉黑者持续发送的负载测试：丢弃路径无排队放大。
 - **S3-B**

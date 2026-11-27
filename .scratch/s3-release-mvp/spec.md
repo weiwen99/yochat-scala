@@ -18,7 +18,7 @@ S3 = 关系结束（拉黑/删除）+ 发布级可见性（通知、连接方式
 
 **S3-B 发布级可见性（6，其中 4 条部分）**
 `G3JQAH0SXEXVDATA`（部分：逐会话关闭、正文默认关、点击跳转会话；不含定位到消息）`377PNHQWJ8PGCN80` `3AEMNVEGME49ZT2R`（部分）`Q0MQBNAVS1TB1PBW`
-`386RMXBPWJYEXT9P`（部分：只做告知，不做 presence）`REQ_20261103_NS77FQDYNCMNF71P`（部分：只做可见提示与不重复提醒）
+`386RMXBPWJYEXT9P`（部分：只做告知，不做 presence）`REQ_20261103_NS77FQDYNCMNF71P`（部分：只做可见提示；触发键是原件，需 store 暴露首次/重复信号）
 
 **S3-C 历史可用性（2，阻塞）**
 `8F32S19RPRC25471` `3TK81N30WS2S6JWB`
